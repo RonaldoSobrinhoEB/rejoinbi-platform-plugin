@@ -1,32 +1,48 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.16",
+  "version": "0.4.17",
   "description": "Operate Rejoin BI tenants, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
-    "name": "Ronaldo Sobrinho"
+    "name": "Ronaldo Sobrinho",
+    "url": "https://github.com/RonaldoSobrinhoEB"
   },
+  "homepage": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
+  "repository": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
+  "license": "Proprietary",
+  "keywords": [
+    "rejoinbi",
+    "business-intelligence",
+    "dashboards",
+    "echarts",
+    "data-engine",
+    "bi-studio",
+    "workspace",
+    "admin-automation",
+    "codex"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Rejoin BI Platform",
-    "shortDescription": "Develop and publish Rejoin BI dashboards.",
+    "shortDescription": "Develop, publish, and administer Rejoin BI tenants",
     "longDescription": "Helps Codex connect to Rejoin BI tenants, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, automate platform/admin configuration including users, pages, RLS, messaging, Cloudflare, Codex keys, system, upload gateway, and safely preview workspace/page cleanup using the platform API. Before any other action, validate a full tenant host and confirm authentication/permission.",
     "developerName": "Ronaldo Sobrinho",
     "category": "Engineering",
     "capabilities": [
+      "Interactive",
       "Read",
-      "Write",
-      "Interactive"
+      "Write"
     ],
+    "websiteURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
+    "privacyPolicyURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin/blob/main/docs/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin/blob/main/docs/TERMS.md",
     "defaultPrompt": [
-      "Validate tenant host subdomain.rejoinbi.com.br",
-      "List all Rejoin BI workspaces",
-      "Inventory BI Studio and Data Engine",
-      "Publish this ECharts dashboard",
-      "Map and automate Rejoin BI platform configuration",
-      "Preview deleting this Rejoin BI workspace"
+      "Connect to my Rejoin BI tenant",
+      "List Rejoin BI workspaces",
+      "Inventory BI Studio and Data Engine"
     ],
     "brandColor": "#004090",
     "composerIcon": "./assets/app-icon.svg",
-    "logo": "./assets/app-icon.svg"
+    "logo": "./assets/app-icon.svg",
+    "screenshots": []
   }
 }

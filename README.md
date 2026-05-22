@@ -1,6 +1,19 @@
 # Rejoin BI Platform Plugin
 
-Codex personal plugin for Rejoin BI tenants under `rejoinbi.com.br`.
+Codex plugin for Rejoin BI tenants under `rejoinbi.com.br`.
+
+## Codex Marketplace Compatibility
+
+This repository is a root plugin artifact, matching the structure used by Codex plugin ingestion:
+
+- `.codex-plugin/plugin.json`
+- `skills/`
+- `scripts/`
+- `docs/`
+- `examples/`
+- `assets/app-icon.svg`
+
+Submit it as artifact type `PLUGIN`, branch `main`, with sparse path empty or `.`. Do not submit it as a marketplace wrapper. See `docs/MARKETPLACE_SUBMISSION.md` for the local validation checklist.
 
 ## Core Rule For Dashboards
 
