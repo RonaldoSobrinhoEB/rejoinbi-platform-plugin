@@ -19,10 +19,13 @@ python .\scripts\rejoinbi.py delete-workspace --workspace codex-suite --yes --co
 The plan shows:
 
 - Resolved workspace id/name/status.
+- Whether the workspace is password-protected.
 - Direct pages attached to the workspace.
 - All pages that will be reached by parent, real-parent, fictitious-parent, fictitious, or hierarchy references.
 - Parent-child-grandchild tree.
 - Linked pages outside the workspace.
+
+Password-protected workspaces are never removed by this plugin. When a workspace exposes any password/protected flag, `delete-workspace --yes` is blocked even when every confirmation value is correct. The user must remove that workspace manually in the Rejoin BI platform after reviewing the security impact.
 
 Deletion is blocked when linked pages outside the workspace are found. Add `--allow-linked-pages` only after reviewing those pages and confirming they are safe to remove.
 

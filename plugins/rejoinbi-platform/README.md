@@ -51,7 +51,7 @@ python .\scripts\rejoinbi.py delete-page --page-id codex-suite-overview
 python .\scripts\rejoinbi.py delete-page --page-id codex-suite-overview --yes --confirm-page-id codex-suite-overview --cascade
 ```
 
-If the plan shows pages linked from another workspace, deletion is blocked until `--allow-linked-pages` is provided. Fictitious pages cannot be deleted directly; delete the original page or workspace instead.
+If the plan shows the workspace is password-protected, deletion is always blocked. The plugin must return that it cannot remove the workspace because of the password and that removal needs to be done manually in Rejoin BI for security. If the plan shows pages linked from another workspace, deletion is blocked until `--allow-linked-pages` is provided. Fictitious pages cannot be deleted directly; delete the original page or workspace instead.
 
 ## Share Package
 

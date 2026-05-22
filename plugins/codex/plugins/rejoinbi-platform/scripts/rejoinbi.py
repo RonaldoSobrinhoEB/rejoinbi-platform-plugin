@@ -63,6 +63,26 @@ RESERVED_WORKSPACE_NAMES = {
     "sistema",
     "system",
 }
+WORKSPACE_PASSWORD_FIELDS = (
+    "has_password",
+    "tem_senha",
+    "password_protected",
+    "senha_protegida",
+    "requires_password",
+    "require_password",
+    "password_required",
+    "protected",
+    "locked",
+    "is_locked",
+)
+WORKSPACE_PASSWORD_VALUE_FIELDS = (
+    "password",
+    "senha",
+    "workspace_password",
+    "container_password",
+    "password_hash",
+    "senha_hash",
+)
 
 
 class RejoinBIError(RuntimeError):
@@ -170,6 +190,47 @@ def print_payload(payload: Any, as_json: bool = True) -> None:
 
 def as_bool_flag(value: bool) -> str:
     return "yes" if value else "no"
+
+
+def truthy_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    raw = str(value).strip().lower()
+    if raw in {"", "0", "false", "no", "nao", "não", "off", "none", "null"}:
+        return False
+    return raw in {"1", "true", "yes", "sim", "s", "on", "locked", "protected", "password"}
+
+
+def protected_secret_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    raw = str(value).strip()
+    if raw.lower() in {"", "0", "false", "no", "nao", "não", "off", "none", "null"}:
+        return False
+    return True
+
+
+def workspace_password_indicators(workspace: dict[str, Any]) -> list[str]:
+    indicators: list[str] = []
+    for field in WORKSPACE_PASSWORD_FIELDS:
+        if field in workspace and truthy_flag(workspace.get(field)):
+            indicators.append(field)
+    for field in WORKSPACE_PASSWORD_VALUE_FIELDS:
+        if field in workspace and protected_secret_present(workspace.get(field)):
+            indicators.append(field)
+    return sorted(set(indicators))
+
+
+def workspace_password_protected(workspace: dict[str, Any]) -> bool:
+    return bool(workspace_password_indicators(workspace))
 
 
 def render_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]]) -> str:
@@ -1485,6 +1546,8 @@ def resolve_page_from_pages(pages: list[dict[str, Any]], selector: str) -> dict[
 
 def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> dict[str, Any]:
     workspace_id = workspace.get("id")
+    password_indicators = workspace_password_indicators(workspace)
+    password_protected = bool(password_indicators)
     pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
     direct_ids = {page_id(page) for page in pages if page_id(page) and is_page_in_workspace(page, workspace_id)}
     related_ids = collect_related_page_ids(pages, direct_ids, DELETE_WORKSPACE_REFERENCE_FIELDS)
@@ -1505,9 +1568,19 @@ def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> 
             "id": workspace_id,
             "name": workspace.get("name"),
             "active": bool(workspace.get("is_active")),
-            "locked": bool(workspace.get("has_password") or workspace.get("password")),
+            "locked": password_protected,
+            "password_protected": password_protected,
+            "password_indicators": password_indicators,
             "status": workspace.get("deploy_status") or "",
         },
+        "blocked": password_protected,
+        "manual_deletion_required": password_protected,
+        "security_message": (
+            "Workspace protegido por senha detectado. O plugin nunca remove workspaces com senha; "
+            "remova manualmente pela plataforma apos revisao de seguranca."
+            if password_protected
+            else ""
+        ),
         "delete_endpoint": f"/plataforma/api/containers/{workspace_id}",
         "destructive": True,
         "dry_run_default": True,
@@ -1523,6 +1596,7 @@ def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> 
         "guards": [
             "Exact --confirm-name must match the resolved workspace name when --yes is used.",
             "Optional --confirm-id must match the resolved workspace id when provided.",
+            "Password-protected workspaces are never deleted by this plugin; remove them manually in the platform.",
             "External linked pages block deletion unless --allow-linked-pages is provided.",
             "Reserved workspace names block deletion unless --force-reserved is provided.",
         ],
@@ -1581,7 +1655,7 @@ def cmd_workspaceall(args: argparse.Namespace) -> int:
                 "id": item.get("id"),
                 "name": item.get("name"),
                 "active": as_bool_flag(bool(item.get("is_active"))),
-                "locked": as_bool_flag(bool(item.get("has_password"))),
+                "locked": as_bool_flag(workspace_password_protected(item)),
                 "status": item.get("deploy_status") or "",
                 "last_upload": item.get("last_upload") or "",
             })
@@ -2015,6 +2089,11 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
         errors.append(f"--confirm-name must exactly match resolved workspace name: {workspace_name}")
     if args.confirm_id and safe_str(args.confirm_id) != workspace_id:
         errors.append(f"--confirm-id must exactly match resolved workspace id: {workspace_id}")
+    if plan.get("workspace", {}).get("password_protected") or plan.get("workspace", {}).get("locked"):
+        errors.append(
+            "Workspace protegido por senha detectado. O plugin nao pode remover esse workspace; "
+            "remova manualmente pela plataforma para evitar problema de seguranca."
+        )
     if normalize_text(workspace_name) in RESERVED_WORKSPACE_NAMES and not args.force_reserved:
         errors.append("Workspace name is reserved/protected. Use --force-reserved only after manual review.")
     external = plan.get("pages", {}).get("external_linked_pages") or []
