@@ -10,14 +10,15 @@ Use the "Adicionar marketplace" dialog with:
 - Referencia do Git: `main`
 - Caminhos esparsos: leave empty
 
-Codex validates the marketplace from the repository root, so the root `marketplace.json`
-points to `plugins/codex/plugins/rejoinbi-platform`.
+Codex validates the marketplace from the repository root and can discover the canonical
+`.agents/plugins/marketplace.json`. A compatibility `marketplace.json` is also available
+at the repository root.
 
 If your Codex build requires sparse paths, use both paths below, each on its own line:
 
 ```text
-marketplace.json
-plugins/codex/plugins/rejoinbi-platform
+.agents/plugins/marketplace.json
+.agents/plugins/plugins/rejoinbi-platform
 ```
 
 ## Plugin
