@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.17",
+  "version": "0.4.18",
   "description": "Operate Rejoin BI tenants, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",

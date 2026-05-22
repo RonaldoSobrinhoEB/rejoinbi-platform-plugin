@@ -3235,6 +3235,23 @@ def project_query_from_ref(ref: dict[str, str]) -> dict[str, str]:
     return {}
 
 
+def resolve_bi_project_id_from_uid(client: RejoinBIClient, project_uid: str) -> str:
+    uid = safe_str(project_uid)
+    if not uid:
+        return ""
+    data, _ = client.request("GET", "/plataforma/api/bi/projects", timeout=60)
+    for project in extract_inventory_items(data, ("projects", "items", "data", "result", "results")):
+        if not isinstance(project, dict):
+            continue
+        candidate_uid = safe_str(first_present_value(project, ("uid", "project_uid", "projectUid")))
+        if candidate_uid != uid:
+            continue
+        project_id = safe_str(first_present_value(project, ("id", "project_id", "projectId")))
+        if project_id:
+            return project_id
+    return ""
+
+
 def payload_summary(payload: Any) -> dict[str, Any]:
     if isinstance(payload, list):
         return {"type": "list", "count": len(payload)}
@@ -3776,6 +3793,14 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         query_params["project_id"] = args.project_id
     if getattr(args, "project_uid", None):
         query_params["project_uid"] = args.project_uid
+    if query_params.get("project_uid") and not query_params.get("project_id"):
+        resolved_project_id = resolve_bi_project_id_from_uid(client, safe_str(query_params["project_uid"]))
+        if resolved_project_id:
+            query_params["project_id"] = resolved_project_id
+    if payload.get("project_uid") and not payload.get("project_id"):
+        resolved_project_id = resolve_bi_project_id_from_uid(client, safe_str(payload["project_uid"]))
+        if resolved_project_id:
+            payload["project_id"] = resolved_project_id
     if args.action == "inventory":
         result = build_studio_inventory(client, args)
         if getattr(args, "output", None):
