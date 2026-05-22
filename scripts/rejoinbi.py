@@ -310,7 +310,7 @@ def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
     command = str(getattr(args, "command", "") or "").strip()
     if command in MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT:
         return True
-    if command in {"cloudflare", "codex-keys", "data-engine", "email", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
+    if command in {"codex-keys", "data-engine", "email", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
         action = str(getattr(args, "action", "") or "").strip()
         read_only_actions = {
             "capabilities",
@@ -3608,54 +3608,6 @@ def cmd_whatsapp_manager(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_cloudflare(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    payload = parse_json_payload(args)
-    if not isinstance(payload, dict):
-        raise RejoinBIError("Cloudflare payload must be a JSON object.")
-    if args.domain is not None:
-        payload["domain"] = args.domain
-    if args.subdomain is not None:
-        payload["subdomain"] = args.subdomain
-    if args.server_ip is not None:
-        payload["server_ip"] = args.server_ip
-    if args.configure_root:
-        payload["configure_root"] = True
-    if args.record_type is not None:
-        payload["type"] = args.record_type
-    if args.name is not None:
-        payload["name"] = args.name
-    if args.content is not None:
-        payload["content"] = args.content
-    if args.ttl is not None:
-        payload["ttl"] = args.ttl
-    if args.proxied is not None:
-        payload["proxied"] = args.proxied
-    if args.comment is not None:
-        payload["comment"] = args.comment
-    if args.mode is not None:
-        payload["mode"] = args.mode
-    if args.token is not None:
-        payload["token"] = args.token
-
-    action_map = {
-        "status": lambda: ("GET", "/plataforma/api/cloudflare/status", False, {}),
-        "dns-records": lambda: ("GET", "/plataforma/api/cloudflare/dns-records", False, compact_params(type=args.record_type, name=args.name)),
-        "configure": lambda: ("POST", "/plataforma/api/cloudflare/configure", True, {}),
-        "create-dns-record": lambda: ("POST", "/plataforma/api/cloudflare/dns-record", True, {}),
-        "ssl-mode": lambda: ("GET", "/plataforma/api/cloudflare/ssl-mode", False, {}),
-        "set-ssl-mode": lambda: ("POST", "/plataforma/api/cloudflare/ssl-mode", True, {}),
-        "verify-token": lambda: ("POST", "/plataforma/api/cloudflare/verify-token", False, {}),
-    }
-    method, path, destructive, params = action_map[args.action]()
-    if destructive:
-        require_yes(args, f"{args.action} changes Cloudflare DNS/SSL configuration and requires --yes.")
-    request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    data, _ = client.request(method, path_with_query(path, params), json=request_payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
 def cmd_codex_keys(args: argparse.Namespace) -> int:
     client = make_client(args)
     payload = parse_json_payload(args)
@@ -4868,7 +4820,6 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         {"name": "python-versions", "method": "GET", "path": "/plataforma/api/python-versions", "required": False},
         {"name": "gateway-pairings", "method": "GET", "path": "/plataforma/api/gateway/pairings", "required": False},
         {"name": "route-map-routes", "method": "GET", "path": "/plataforma/api/route-mapping/routes", "required": False},
-        {"name": "cloudflare-status", "method": "GET", "path": "/plataforma/api/cloudflare/status", "required": False},
         {"name": "codex-keys-stats", "method": "GET", "path": "/plataforma/api/codex/keys/stats", "required": False},
         {"name": "data-engine-status", "method": "GET", "path": "/plataforma/data-engine/api/status", "required": False},
         {"name": "system-database-status", "method": "GET", "path": "/plataforma/api/database/status", "required": False},
@@ -5812,29 +5763,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_payload_args(p)
     p.set_defaults(func=cmd_whatsapp_manager)
-
-    p = sub.add_parser("cloudflare", help="Manage Cloudflare DNS/SSL tenant configuration")
-    p.add_argument("action", choices=[
-        "status", "dns-records", "configure", "create-dns-record",
-        "ssl-mode", "set-ssl-mode", "verify-token",
-    ])
-    p.add_argument("--domain")
-    p.add_argument("--subdomain")
-    p.add_argument("--server-ip")
-    p.add_argument("--configure-root", action="store_true")
-    p.add_argument("--record-type")
-    p.add_argument("--name")
-    p.add_argument("--content")
-    p.add_argument("--ttl", type=int)
-    p.add_argument("--proxied", dest="proxied", action="store_true", default=None)
-    p.add_argument("--not-proxied", dest="proxied", action="store_false")
-    p.add_argument("--comment")
-    p.add_argument("--mode")
-    p.add_argument("--token")
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    add_payload_args(p)
-    p.set_defaults(func=cmd_cloudflare)
 
     p = sub.add_parser("codex-keys", help="Manage Codex/AI provider connections and usage")
     p.add_argument("action", choices=[

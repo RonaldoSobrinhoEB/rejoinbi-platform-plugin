@@ -36,7 +36,6 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Audit: `/plataforma/api/audit/*` and `/audit-cleanup` are available through `audit` and `audit-export`.
 - System state: `/plataforma/api/sleep-manager/*` is available through `sleep-manager`.
 - E-mail and WhatsApp managers: `/plataforma/api/email/*` and `/plataforma/api/whatsapp/*` are available through `email` and `whatsapp`.
-- Cloudflare/domain management: `/plataforma/api/cloudflare/*` is available through `cloudflare`.
 - Codex/AI provider connections: `/plataforma/api/codex/keys*` and `/api/codex/auth-*` are available through `codex-keys`.
 - Runtime/system diagnostics and cache controls: `/plataforma/api/*` status/cache/runtime endpoints are available through `system-admin` and `route-map`.
 - Upload gateway and capability endpoints: `/plataforma/api/gateway/*`, `/upload-capabilities`, `/python-versions`, and `/upload-status/<id>` are available through `upload-admin`.
@@ -119,7 +118,6 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance ve
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls pages
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" email sessions
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" whatsapp sessions
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" cloudflare status
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" codex-keys list
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" upload-admin capabilities
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" system-admin database-status
@@ -138,7 +136,6 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br whatsapp create-group --data-file C:\path\whatsapp-group.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --data-file C:\path\rls-config.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br sleep-manager set-config --data-file C:\path\sleep-config.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br cloudflare set-ssl-mode --mode full --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br codex-keys create --data-file C:\path\codex-key.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine create-db-connection --data-file C:\path\db-connection.json --yes
 ```

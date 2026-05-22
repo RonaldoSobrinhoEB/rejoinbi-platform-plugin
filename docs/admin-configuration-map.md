@@ -30,7 +30,6 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Configuracao IA | `GET/POST/DELETE /plataforma/api/ai-config`, `POST /plataforma/api/ai-config/cleanup` | `ai-config`, `set-ai-config`, `delete-ai-config`, `cleanup-ai-config` |
 | Chaves Codex/IA | `/plataforma/api/codex/keys*`, `/plataforma/api/codex/auth-*` | `codex-keys stats`, `codex-keys list`, `codex-keys create`, `codex-keys update`, `codex-keys delete`, `codex-keys usage` |
 | Sistema de Auditoria | `GET /plataforma/api/audit/*`, `GET /plataforma/api/audit/export`, `POST /plataforma/api/audit-cleanup` | `audit logs`, `audit dashboard`, `audit health`, `audit log`, `audit cleanup`, `audit-export` |
-| Cloudflare/Dominio | `/plataforma/api/cloudflare/*` | `cloudflare status`, `cloudflare dns-records`, `cloudflare configure`, `cloudflare create-dns-record`, `cloudflare ssl-mode`, `cloudflare set-ssl-mode` |
 | Gateway/Upload | `/plataforma/api/python-versions`, `/upload-capabilities`, `/gateway/*`, `/upload-status/<id>`, `/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
 | Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
 | Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `studio-inventory`, `data-engine inventory`, `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
@@ -98,7 +97,6 @@ python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
 python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
 python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
 python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config.json --yes
-python .\scripts\rejoinbi.py cloudflare set-ssl-mode --mode full --yes
 python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
 python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes
 ```

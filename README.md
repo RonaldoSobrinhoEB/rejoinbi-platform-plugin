@@ -56,7 +56,6 @@ python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.j
 python .\scripts\rejoinbi.py audit dashboard
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
 python .\scripts\rejoinbi.py rls pages
-python .\scripts\rejoinbi.py cloudflare status
 python .\scripts\rejoinbi.py codex-keys stats
 python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py data-engine status
@@ -110,10 +109,6 @@ python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json -
 python .\scripts\rejoinbi.py whatsapp sessions
 python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
 
-python .\scripts\rejoinbi.py cloudflare status
-python .\scripts\rejoinbi.py cloudflare dns-records --record-type A
-python .\scripts\rejoinbi.py cloudflare set-ssl-mode --mode full --yes
-
 python .\scripts\rejoinbi.py codex-keys list
 python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
 python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50
@@ -133,7 +128,7 @@ python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
 
 `smoke-admin` runs a read-only API check across the main configuration areas and writes a reusable JSON report. `studio-inventory` links BI Studio projects to Data Engine status, SQL Server driver support, sessions, database connections, repository tree, datasets, and files. It is read-only and redacts passwords, tokens, API keys, secrets, and connection strings. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
 
-For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Cloudflare, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
+For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 
 ## Safe Destructive Commands
 
