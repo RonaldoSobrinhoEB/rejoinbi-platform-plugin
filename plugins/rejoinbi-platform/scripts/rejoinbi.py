@@ -8,6 +8,7 @@ It stores cookies after login but never persists passwords or PIN values.
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
 import html
 import json
@@ -22,6 +23,7 @@ import time
 import unicodedata
 from contextlib import ExitStack
 from datetime import datetime, timezone
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -65,6 +67,35 @@ RESERVED_WORKSPACE_NAMES = {
 
 class RejoinBIError(RuntimeError):
     pass
+
+
+@lru_cache(maxsize=8)
+def plugin_asset_data_uri(name: str) -> str:
+    path = PLUGIN_ROOT / "assets" / name
+    try:
+        if not path.is_file():
+            return ""
+        mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+    except Exception:
+        return ""
+
+
+def auth_error_messages(error: str) -> tuple[str, str]:
+    clean = " ".join(str(error or "").split())
+    if not clean:
+        return "", ""
+    lower = clean.lower()
+    if "http 401" in lower or "email ou senha" in lower or "invalid" in lower:
+        return "Email ou senha invalidos.", "Confira as credenciais do tenant e tente novamente."
+    if "pin" in lower:
+        return "Nao foi possivel validar o PIN.", "Confira o codigo informado e tente novamente."
+    if "perfil" in lower or "administrador" in lower or "master" in lower:
+        return "Perfil sem permissao para este plugin.", clean
+    if "timed out" in lower or "timeout" in lower:
+        return "Tempo de conexao esgotado.", "Abra esta janela novamente pelo Codex e conclua o login."
+    return "Nao foi possivel concluir a conexao.", clean
 
 
 def utc_now() -> str:
@@ -302,25 +333,55 @@ def auth_html(
     safe_base_url = html.escape(base_url)
     safe_state = html.escape(state)
     safe_email = html.escape(email)
-    error_block = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    logo_uri = plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
+    logo_markup = f'<img src="{logo_uri}" alt="" class="brand-logo">' if logo_uri else '<span class="brand-fallback">RJ</span>'
+    favicon_link = f'<link rel="icon" type="image/png" href="{logo_uri}">' if logo_uri else ""
+    error_title, error_detail = auth_error_messages(error)
+    safe_error_title = html.escape(error_title)
+    safe_error_detail = html.escape(error_detail)
+    safe_error_raw = html.escape(str(error or ""))
+    error_details = ""
+    if error and safe_error_raw and safe_error_raw != safe_error_detail:
+        error_details = f"""
+          <details>
+            <summary>Detalhes tecnicos</summary>
+            <code>{safe_error_raw}</code>
+          </details>
+        """
+    error_block = ""
+    if error_title:
+        error_block = f"""
+        <section class="alert alert-error" role="alert">
+          <strong>{safe_error_title}</strong>
+          <span>{safe_error_detail}</span>
+          {error_details}
+        </section>
+        """
     if require_pin:
         form = f"""
-        <form method="post" action="/pin">
+        <form class="auth-form" method="post" action="/pin">
           <input type="hidden" name="state" value="{safe_state}">
-          <label>PIN de seguranca</label>
-          <input name="pin" inputmode="numeric" autocomplete="one-time-code" autofocus required>
-          <button type="submit">Concluir conexao</button>
+          <div class="field">
+            <label for="pin">PIN de seguranca</label>
+            <input id="pin" name="pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" autofocus required>
+          </div>
+          <p class="field-note">Use o codigo exibido pelo tenant para finalizar esta sessao.</p>
+          <button type="submit"><span>Concluir conexao</span></button>
         </form>
         """
     else:
         form = f"""
-        <form method="post" action="/login">
+        <form class="auth-form" method="post" action="/login">
           <input type="hidden" name="state" value="{safe_state}">
-          <label>Email</label>
-          <input name="email" type="email" value="{safe_email}" autocomplete="username" autofocus required>
-          <label>Senha</label>
-          <input name="password" type="password" autocomplete="current-password" required>
-          <button type="submit">Conectar Rejoin BI</button>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" value="{safe_email}" autocomplete="username" spellcheck="false" autofocus required>
+          </div>
+          <div class="field">
+            <label for="password">Senha</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </div>
+          <button type="submit"><span>Conectar Rejoin BI</span></button>
         </form>
         """
     page = f"""<!doctype html>
@@ -329,132 +390,367 @@ def auth_html(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{safe_title}</title>
+  {favicon_link}
   <style>
     :root {{
-      color-scheme: light dark;
+      color-scheme: dark;
+      --bg-root: #050505;
+      --bg-alt: #0a0a0a;
+      --bg-card: #0f0f0f;
+      --bg-card-soft: #141414;
+      --bg-field: #171717;
+      --border-base: #222222;
+      --border-light: #333333;
+      --primary-solid: #ef4444;
+      --primary-deep: #dc2626;
+      --primary-dim: #7f1d1d;
+      --text-main: #f7f7f7;
+      --text-muted: #e0e0e0;
+      --text-secondary: #a3a3a3;
+      --text-dim: #777777;
+      --success: #22c55e;
+      --warning: #f59e0b;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0b1115;
-      color: #eef6f4;
+      background: var(--bg-root);
+      color: var(--text-muted);
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
+    html {{
+      min-height: 100%;
+      background: var(--bg-root);
     }}
     body {{
       min-height: 100vh;
       margin: 0;
       display: grid;
       place-items: center;
+      overflow-x: hidden;
       background:
-        radial-gradient(circle at top left, rgba(15, 118, 110, .22), transparent 32rem),
-        linear-gradient(135deg, #0b1115 0%, #101820 58%, #151615 100%);
+        radial-gradient(ellipse at 50% -20%, rgba(239, 68, 68, 0.24) 0%, rgba(239, 68, 68, 0.06) 38%, transparent 72%),
+        linear-gradient(180deg, rgba(5, 5, 5, 0.98) 0%, rgba(10, 10, 10, 1) 100%);
+    }}
+    body::before {{
+      content: "";
+      position: fixed;
+      inset: -20vh -20vw;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(220, 38, 38, 0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(220, 38, 38, 0.055) 1px, transparent 1px);
+      background-size: 56px 56px;
+      transform: perspective(760px) rotateX(62deg) translateY(-80px) scale(1.8);
+      transform-origin: top center;
+      mask-image: linear-gradient(to bottom, black 0%, black 58%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, black 0%, black 58%, transparent 100%);
+    }}
+    .auth-shell {{
+      width: min(100%, 1040px);
+      padding: 44px 22px;
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
     }}
     main {{
-      width: min(440px, calc(100vw - 32px));
-      border: 1px solid rgba(255, 255, 255, .12);
-      border-radius: 18px;
-      background: rgba(16, 24, 32, .92);
-      box-shadow: 0 24px 72px rgba(0, 0, 0, .38);
-      padding: 28px;
+      width: min(520px, 100%);
+      border: 1px solid var(--border-base);
+      border-radius: 16px;
+      background:
+        radial-gradient(circle at top right, rgba(239, 68, 68, 0.15), transparent 38%),
+        linear-gradient(180deg, rgba(15, 15, 15, 0.98), rgba(8, 8, 8, 0.98));
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+      overflow: hidden;
+      position: relative;
     }}
-    .badge {{
-      display: inline-flex;
+    main::before {{
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 160px;
+      height: 3px;
+      border-radius: 999px;
+      transform: translateX(-50%);
+      background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.95), transparent);
+    }}
+    .panel-inner {{
+      padding: 32px;
+    }}
+    .brand-row {{
+      display: flex;
       align-items: center;
-      gap: 8px;
-      color: #90f2df;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: .08em;
+      gap: 12px;
+      margin-bottom: 24px;
+    }}
+    .brand-logo,
+    .brand-fallback {{
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      flex: 0 0 auto;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: #111111;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+    }}
+    .brand-logo {{
+      object-fit: cover;
+      object-position: center;
+    }}
+    .brand-fallback {{
+      display: inline-grid;
+      place-items: center;
+      color: var(--primary-solid);
+      font-weight: 800;
+    }}
+    .brand-copy {{
+      min-width: 0;
+    }}
+    .eyebrow {{
+      margin: 0 0 2px;
+      color: #fca5a5;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      line-height: 1.2;
       text-transform: uppercase;
     }}
-    .badge::before {{
+    .brand-name {{
+      margin: 0;
+      color: var(--text-main);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.35;
+    }}
+    .status-line {{
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 30px;
+      padding: 5px 10px;
+      margin-bottom: 16px;
+      border: 1px solid rgba(239, 68, 68, 0.34);
+      border-radius: 999px;
+      background: rgba(220, 38, 38, 0.11);
+      color: #fecaca;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .status-dot {{
       content: "";
-      width: 10px;
-      height: 10px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      background: #22c55e;
-      box-shadow: 0 0 20px rgba(34, 197, 94, .8);
+      background: var(--success);
+      box-shadow: 0 0 16px rgba(34, 197, 94, 0.72);
+      flex: 0 0 auto;
     }}
     h1 {{
-      margin: 18px 0 8px;
-      font-size: 28px;
-      line-height: 1.12;
+      margin: 0 0 10px;
+      color: var(--text-main);
+      font-size: 30px;
+      line-height: 1.15;
       letter-spacing: 0;
+      font-weight: 800;
     }}
-    p {{
+    .lead {{
       margin: 0 0 18px;
-      color: #adc0bd;
-      line-height: 1.55;
+      max-width: 64ch;
+      color: var(--text-secondary);
+      font-size: 15px;
+      line-height: 1.65;
     }}
     .tenant {{
-      margin: 18px 0;
-      padding: 12px 14px;
+      display: grid;
+      gap: 6px;
+      margin: 18px 0 20px;
+      padding: 14px 15px;
       border-radius: 12px;
-      background: rgba(255, 255, 255, .06);
-      color: #d7fffa;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+    }}
+    .tenant span {{
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }}
+    .tenant strong {{
+      color: var(--text-main);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 14px;
+      font-weight: 600;
       overflow-wrap: anywhere;
+    }}
+    .alert {{
+      display: grid;
+      gap: 5px;
+      margin: 0 0 18px;
+      padding: 13px 14px;
+      border-radius: 12px;
+      line-height: 1.45;
+    }}
+    .alert strong {{
+      color: var(--text-main);
       font-size: 14px;
     }}
-    form {{
+    .alert span {{
+      color: #fecaca;
+      font-size: 14px;
+    }}
+    .alert-error {{
+      border: 1px solid rgba(239, 68, 68, 0.34);
+      background: rgba(127, 29, 29, 0.28);
+    }}
+    details {{
+      margin-top: 5px;
+      color: #fca5a5;
+      font-size: 12px;
+    }}
+    summary {{
+      cursor: pointer;
+      width: fit-content;
+      font-weight: 700;
+    }}
+    code {{
+      display: block;
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.26);
+      color: #f5b6b6;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }}
+    .auth-form {{
       display: grid;
-      gap: 12px;
+      gap: 14px;
+    }}
+    .field {{
+      display: grid;
+      gap: 7px;
     }}
     label {{
-      color: #d6e4e1;
+      color: var(--text-muted);
       font-size: 13px;
       font-weight: 700;
     }}
     input {{
       width: 100%;
       box-sizing: border-box;
-      min-height: 46px;
+      min-height: 50px;
       border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, .14);
-      background: rgba(255, 255, 255, .08);
-      color: #fff;
-      padding: 0 13px;
+      border: 1px solid var(--border-light);
+      background: var(--bg-field);
+      color: var(--text-main);
+      padding: 0 14px;
       font: inherit;
       outline: none;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
     }}
     input:focus {{
-      border-color: #2dd4bf;
-      box-shadow: 0 0 0 3px rgba(45, 212, 191, .16);
+      border-color: rgba(239, 68, 68, 0.78);
+      background: #1b1b1b;
+      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+    }}
+    .field-note {{
+      margin: -4px 0 0;
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.5;
     }}
     button {{
-      margin-top: 4px;
-      min-height: 48px;
-      border: 0;
+      margin-top: 2px;
+      min-height: 52px;
+      border: 1px solid rgba(239, 68, 68, 0.28);
       border-radius: 10px;
-      background: #14b8a6;
-      color: #03110f;
+      background: linear-gradient(135deg, var(--primary-solid), var(--primary-deep));
+      color: #fff7f7;
       font: inherit;
       font-weight: 800;
       cursor: pointer;
+      box-shadow: 0 10px 28px rgba(220, 38, 38, 0.34);
+      transition: transform 0.18s ease, box-shadow 0.2s ease, filter 0.2s ease;
     }}
-    .error {{
-      margin: 0 0 14px;
-      padding: 12px;
-      border-radius: 10px;
-      background: rgba(239, 68, 68, .12);
-      color: #fecaca;
+    button:hover {{
+      transform: translateY(-1px);
+      filter: brightness(1.06);
+      box-shadow: 0 14px 34px rgba(220, 38, 38, 0.42);
     }}
-    .success {{
-      padding: 14px;
-      border-radius: 12px;
-      background: rgba(34, 197, 94, .12);
-      color: #d9fbe8;
+    button:active {{
+      transform: translateY(0);
     }}
-    a {{
-      color: #67e8f9;
-      font-weight: 700;
+    button:focus-visible,
+    input:focus-visible,
+    summary:focus-visible {{
+      outline: 2px solid rgba(239, 68, 68, 0.85);
+      outline-offset: 3px;
+    }}
+    .security-note {{
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.5;
+    }}
+    .security-note::before {{
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-top: 6px;
+      border-radius: 50%;
+      background: var(--primary-solid);
+      box-shadow: 0 0 18px rgba(239, 68, 68, 0.78);
+      flex: 0 0 auto;
+    }}
+    @media (max-width: 560px) {{
+      .auth-shell {{
+        padding: 18px 12px;
+      }}
+      .panel-inner {{
+        padding: 24px 18px;
+      }}
+      .brand-row {{
+        margin-bottom: 18px;
+      }}
+      h1 {{
+        font-size: 25px;
+      }}
+      .lead {{
+        font-size: 14px;
+      }}
     }}
   </style>
 </head>
 <body>
-  <main>
-    <div class="badge">Rejoin BI</div>
-    <h1>{safe_title}</h1>
-    <p>{html.escape(body)}</p>
-    <div class="tenant">{safe_base_url}</div>
-    {error_block}
-    {form}
-  </main>
+  <div class="auth-shell">
+    <main>
+      <div class="panel-inner">
+        <div class="brand-row">
+          {logo_markup}
+          <div class="brand-copy">
+            <p class="eyebrow">Rejoin BI</p>
+            <p class="brand-name">Plataforma Self-Hosted</p>
+          </div>
+        </div>
+        <div class="status-line"><span class="status-dot"></span><span>Tenant validado</span></div>
+        <h1>{safe_title}</h1>
+        <p class="lead">{html.escape(body)}</p>
+        <div class="tenant"><span>URL conectada</span><strong>{safe_base_url}</strong></div>
+        {error_block}
+        {form}
+        <div class="security-note">Senha e PIN ficam somente nesta janela local. O plugin salva apenas a sessao autorizada do tenant.</div>
+      </div>
+    </main>
+  </div>
 </body>
 </html>"""
     return page.encode("utf-8")
@@ -464,49 +760,226 @@ def success_html(base_url: str, email: str, profile: str) -> bytes:
     safe_base_url = html.escape(base_url)
     safe_email = html.escape(email)
     safe_profile = html.escape(profile or "perfil validado")
+    logo_uri = plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
+    logo_markup = f'<img src="{logo_uri}" alt="" class="brand-logo">' if logo_uri else '<span class="brand-fallback">RJ</span>'
+    favicon_link = f'<link rel="icon" type="image/png" href="{logo_uri}">' if logo_uri else ""
     page = f"""<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Rejoin BI conectado</title>
+  {favicon_link}
   <style>
+    :root {{
+      color-scheme: dark;
+      --bg-root: #050505;
+      --bg-card: #0f0f0f;
+      --border-base: #222222;
+      --border-light: #333333;
+      --primary-solid: #ef4444;
+      --primary-deep: #dc2626;
+      --text-main: #f7f7f7;
+      --text-muted: #e0e0e0;
+      --text-secondary: #a3a3a3;
+      --text-dim: #777777;
+      --success: #22c55e;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg-root);
+      color: var(--text-muted);
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
     body {{
       min-height: 100vh;
       margin: 0;
       display: grid;
       place-items: center;
-      background: #0b1115;
-      color: #eef6f4;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow-x: hidden;
+      background:
+        radial-gradient(ellipse at 50% -20%, rgba(239, 68, 68, 0.22) 0%, rgba(239, 68, 68, 0.055) 38%, transparent 72%),
+        linear-gradient(180deg, rgba(5, 5, 5, 0.98) 0%, rgba(10, 10, 10, 1) 100%);
+    }}
+    body::before {{
+      content: "";
+      position: fixed;
+      inset: -20vh -20vw;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(220, 38, 38, 0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(220, 38, 38, 0.055) 1px, transparent 1px);
+      background-size: 56px 56px;
+      transform: perspective(760px) rotateX(62deg) translateY(-80px) scale(1.8);
+      transform-origin: top center;
+      mask-image: linear-gradient(to bottom, black 0%, black 58%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, black 0%, black 58%, transparent 100%);
+    }}
+    .auth-shell {{
+      width: min(100%, 1040px);
+      padding: 44px 22px;
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
     }}
     main {{
-      width: min(460px, calc(100vw - 32px));
-      border-radius: 18px;
-      border: 1px solid rgba(255, 255, 255, .12);
-      background: #101820;
-      padding: 28px;
-      box-shadow: 0 24px 72px rgba(0, 0, 0, .38);
+      width: min(520px, 100%);
+      border-radius: 16px;
+      border: 1px solid var(--border-base);
+      background:
+        radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 40%),
+        linear-gradient(180deg, rgba(15, 15, 15, 0.98), rgba(8, 8, 8, 0.98));
+      padding: 32px;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+      position: relative;
+      overflow: hidden;
     }}
-    h1 {{ margin: 0 0 10px; font-size: 28px; letter-spacing: 0; }}
-    p {{ margin: 0 0 14px; color: #adc0bd; line-height: 1.55; }}
-    .success {{
-      margin-bottom: 16px;
-      padding: 14px;
+    main::before {{
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 160px;
+      height: 3px;
+      border-radius: 999px;
+      transform: translateX(-50%);
+      background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.95), transparent);
+    }}
+    .brand-row {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }}
+    .brand-logo,
+    .brand-fallback {{
+      width: 44px;
+      height: 44px;
       border-radius: 12px;
-      background: rgba(34, 197, 94, .12);
-      color: #d9fbe8;
+      flex: 0 0 auto;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: #111111;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
     }}
-    a {{ color: #67e8f9; font-weight: 800; }}
+    .brand-logo {{
+      object-fit: cover;
+      object-position: center;
+    }}
+    .brand-fallback {{
+      display: inline-grid;
+      place-items: center;
+      color: var(--primary-solid);
+      font-weight: 800;
+    }}
+    .eyebrow {{
+      margin: 0 0 2px;
+      color: #fca5a5;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }}
+    .brand-name {{
+      margin: 0;
+      color: var(--text-main);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.35;
+    }}
+    h1 {{
+      margin: 0 0 10px;
+      color: var(--text-main);
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: 0;
+      font-weight: 800;
+    }}
+    p {{
+      margin: 0 0 14px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }}
+    .success {{
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 16px;
+      padding: 7px 11px;
+      border-radius: 12px;
+      border: 1px solid rgba(34, 197, 94, 0.26);
+      background: rgba(34, 197, 94, 0.11);
+      color: #bbf7d0;
+      font-size: 13px;
+      font-weight: 800;
+    }}
+    .success::before {{
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 16px rgba(34, 197, 94, 0.72);
+    }}
+    .tenant-link {{
+      display: grid;
+      gap: 6px;
+      margin-top: 18px;
+      padding: 14px 15px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+    }}
+    .tenant-link span {{
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }}
+    a {{
+      color: var(--text-main);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 14px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+      text-decoration-color: rgba(239, 68, 68, 0.7);
+      text-underline-offset: 3px;
+    }}
+    a:focus-visible {{
+      outline: 2px solid rgba(239, 68, 68, 0.85);
+      outline-offset: 3px;
+    }}
+    @media (max-width: 560px) {{
+      .auth-shell {{
+        padding: 18px 12px;
+      }}
+      main {{
+        padding: 24px 18px;
+      }}
+      h1 {{
+        font-size: 25px;
+      }}
+    }}
   </style>
 </head>
 <body>
-  <main>
-    <div class="success">Sessao do plugin salva com seguranca.</div>
-    <h1>Conectado</h1>
-    <p>{safe_email} foi validado como {safe_profile}. Voce ja pode voltar ao Codex e pedir workspaces, paginas, uploads e dashboards.</p>
-    <p>Tenant: <a href="{safe_base_url}/plataforma" target="_blank" rel="noreferrer">{safe_base_url}</a></p>
-  </main>
+  <div class="auth-shell">
+    <main>
+      <div class="brand-row">
+        {logo_markup}
+        <div>
+          <p class="eyebrow">Rejoin BI</p>
+          <p class="brand-name">Plataforma Self-Hosted</p>
+        </div>
+      </div>
+      <div class="success">Sessao salva com seguranca</div>
+      <h1>Conectado</h1>
+      <p>{safe_email} foi validado como {safe_profile}. Voce ja pode voltar ao Codex para operar workspaces, paginas, uploads e dashboards.</p>
+      <div class="tenant-link"><span>Tenant conectado</span><a href="{safe_base_url}/plataforma" target="_blank" rel="noreferrer">{safe_base_url}</a></div>
+    </main>
+  </div>
 </body>
 </html>"""
     return page.encode("utf-8")
