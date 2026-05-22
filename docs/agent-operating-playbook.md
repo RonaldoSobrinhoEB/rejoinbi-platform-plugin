@@ -234,6 +234,11 @@ Broadcasts and schedules can affect real recipients. Do not send messages unless
 ```powershell
 python .\scripts\rejoinbi.py studio-inventory --output C:\bi-data-inventory.json
 python .\scripts\rejoinbi.py bi-projects
+python .\scripts\rejoinbi.py bi-tabs --project-id "Projeto"
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br bi-create-tab --project-id "Projeto" --name "Visão 360" --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br bi-save-layout --project-id "Projeto" --tab "Visão 360" --data-file C:\layouts\visao-360.json --yes
+python .\scripts\rejoinbi.py bi-load-layout --project-id "Projeto" --tab "Visão 360"
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br bi-save-theme --project-id "Projeto" --data-file C:\layouts\tema.json --yes
 python .\scripts\rejoinbi.py data-engine status
 python .\scripts\rejoinbi.py data-engine db-connections --project-id "Projeto"
 python .\scripts\rejoinbi.py data-engine repository-list --project-id "Projeto"
@@ -249,9 +254,13 @@ Project-scoped Data Engine endpoints require `--project-id`, `--project-uid`, or
 
 Data Engine repository uploads support CSV, Excel, SQLite, and other files accepted by the tenant. For Excel files, run `repository-inspect-sheets` first, then pass one or more `--selected-sheet` values. The upload command blocks sensitive-looking files such as `.env`, keys, certificates, tokens, and password-named files unless `--allow-sensitive-files` is explicitly provided after manual review.
 
+Save all BI Studio/Data Engine JSON/code payloads as UTF-8. The CLI rejects strings that look like replaced accents or mojibake (`Vis?o`, `Cr?tico`, byte sequence `Vis\u00c3\u00a3o`) before they can create wrong tabs, filters, materialized datasets, or canvas labels.
+
 Notebook and finalize payloads are strict. `save-notebook-state` expects a list of cell objects, not an object wrapper. `finalize-dataset` with scoped output expects `dataframe_names` items shaped like `{"dataset_id":"Dataset","name":"df_name","cell_id":"cell-id"}`. Plain `"df_name"` can fail when `require_scoped_df` is true.
 
 For BI Studio publication, `publish-bi` now performs a post-publish workspace runtime check. It fails the command when runtime logs contain `SyntaxError`, a Python traceback, missing parquet engines (`pyarrow`/`fastparquet`), or missing materialized DataFrames. If the BI export contains parquet files, make sure `requirements.txt` includes `pyarrow>=16.0.0` or `fastparquet`.
+
+Direct `publish-bi` also blocks BI projects whose technical tab slugs contain accents/non-ASCII characters. This prevents the platform from creating workspace files/routes such as `visão-360` or `rls-usuário` that can later confuse Gerenciar Paginas. The correct production path is: export, extract, `bi-normalize-export --remove-old`, upload normalized folder, create platform pages with accented visible names but ASCII `file/route`, then `smoke-pages`. `bi-normalize-export` also fixes known malformed BI export Python literals such as `replace('\', '/')`, and `validate-app` compiles `app.py/main.py` before deploy.
 
 BI Studio tab display names may be localized with accents, but the exported slug, template filename, static folder, router filename, platform `arquivo`, and platform `rota` must be ASCII. If the tenant export produced slugs such as `visão-geral` or `rls-usuário`, run `bi-normalize-export --path <extracted-export> --remove-old`, upload the normalized folder, update platform pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 

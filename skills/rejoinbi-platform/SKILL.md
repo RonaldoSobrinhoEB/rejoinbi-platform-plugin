@@ -159,6 +159,11 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" system-admin databa
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" route-map routes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" smoke-admin --output-dir C:\path\smoke-admin
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" studio-inventory --output C:\path\bi-data-inventory.json
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-tabs --project-id 1
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-create-tab --project-id 1 --name "Visão 360" --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-save-layout --project-id 1 --tab "Visão 360" --data-file C:\path\layout.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-load-layout --project-id 1 --tab "Visão 360"
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-save-theme --project-id 1 --data-file C:\path\theme.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine db-connections --project-id 1
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine repository-inspect-sheets --file C:\path\dados.xlsx
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file C:\path\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
@@ -193,9 +198,13 @@ Data Engine repository upload workflow: inspect Excel sheets first with `reposit
 
 Data Engine notebook/finalize payload rules: `save-notebook-state` expects a JSON list of cells; `finalize-dataset` with `require_scoped_df` expects `dataframe_names` objects containing `dataset_id`, `name`, and usually `cell_id`.
 
-BI Studio publish rule: `publish-bi` performs post-publish runtime validation. It must be treated as failed if logs show `SyntaxError`, Python traceback, missing parquet engine (`pyarrow`/`fastparquet`), or missing materialized DataFrames. If a BI export contains `dados/df/*.parquet`, normalize/add `pyarrow>=16.0.0` before upload.
+Data Engine text integrity rule: generate JSON/code payloads as UTF-8 files, preferably with Python `json.dump(..., ensure_ascii=False)` or explicit Unicode escapes when running through Windows shells. The CLI blocks corrupted labels such as `Vis?o`, `Cr?tico`, or mojibake before `execute-code`, `save-notebook-state`, `finalize-dataset`, query materialization, and repository sheet selection can create bad BI Studio/Data Engine state.
 
-BI Studio routing rule: visible tab/page names may contain accents, but technical workspace files must be ASCII. If an export has `visão-geral.html`, `rls-usuário.html`, matching static folders, or matching manifest slugs, run `bi-normalize-export --path <export> --remove-old`, upload the normalized folder, update pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
+BI Studio publish rule: `publish-bi` performs post-publish runtime validation. It must be treated as failed if logs show `SyntaxError`, Python traceback, missing parquet engine (`pyarrow`/`fastparquet`), or missing materialized DataFrames. If a BI export contains `dados/df/*.parquet`, normalize/add `pyarrow>=16.0.0` before upload. `validate-app` compiles `app.py`/`main.py` in file startup mode, so never deploy a Flask export until the Python syntax check is green.
+
+BI Studio route safety rule: direct `publish-bi` blocks projects whose technical tab slugs contain accents/non-ASCII characters, because those slugs become workspace files/routes and can produce broken platform pages. Keep visible tab/page names localized with accents, but before production deployment export the BI project, run `bi-normalize-export --remove-old`, upload the normalized folder, create pages with ASCII `file/route`, and run `smoke-pages`.
+
+BI Studio routing rule: visible tab/page names may contain accents, but technical workspace files must be ASCII. If an export has `visão-geral.html`, `rls-usuário.html`, matching static folders, matching manifest slugs, or an invalid Python literal such as `replace('\', '/')`, run `bi-normalize-export --path <export> --remove-old`, upload the normalized folder, update pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
 ## Common Workflows
 
@@ -318,7 +327,7 @@ Minimal manifest:
 
 Keep page names clean and localized for the menu. In pt-BR, use accents in `name` (`Visão Geral`, `Operações`, `Configuração`, `Métricas`) while keeping `id`, `route`, and `file` ASCII. Put workspace/client prefixes in `id`; for static dashboards, make `route` equal to the HTML file path without `.html` unless there is a deliberate custom route. The deploy helper creates the technical page id first and then restores the clean display name, because the platform generates new page ids from the creation name.
 
-When generating manifests on Windows, write `rejoinbi-app.json` as a UTF-8 file (or let Python/JSON escape accents) instead of passing accented labels through a PowerShell command string. Run `validate-app` before any deploy; it must fail if visible text contains corrupted markers such as `Vis?o`, `Opera??es`, or mojibake like `VisÃ£o`.
+When generating manifests on Windows, write `rejoinbi-app.json` as a UTF-8 file (or let Python/JSON escape accents) instead of passing accented labels through a PowerShell command string. Run `validate-app` before any deploy; it must fail if visible text contains corrupted markers such as `Vis?o`, `Opera??es`, or mojibake byte sequences such as `Vis\u00c3\u00a3o`.
 
 Deploy, replace existing page definitions if needed, then smoke test every route:
 

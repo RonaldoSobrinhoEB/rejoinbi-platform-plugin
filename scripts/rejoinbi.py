@@ -97,12 +97,21 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "create-workspace",
     "delete-ai-config",
     "delete-announcement",
+    "bi-create-tab",
     "delete-group",
+    "bi-delete-tab",
+    "bi-delete-theme",
     "delete-page",
     "delete-user",
     "delete-workspace",
     "deploy-manifest",
     "bi-create-project",
+    "bi-duplicate-tab",
+    "bi-init-canvas",
+    "bi-rename-tab",
+    "bi-reorder-tabs",
+    "bi-save-layout",
+    "bi-save-theme",
     "menu-maintenance",
     "page-maintenance",
     "publish-bi",
@@ -1614,6 +1623,46 @@ def manifest_text_integrity_errors(manifest: dict[str, Any]) -> list[str]:
     return errors
 
 
+def json_text_integrity_errors(value: Any, *, path: str = "$", limit: int = 25) -> list[str]:
+    """Find mojibake or replaced accents in arbitrary JSON-like payloads."""
+    errors: list[str] = []
+
+    def visit(item: Any, item_path: str) -> None:
+        if len(errors) >= limit:
+            return
+        if isinstance(item, str):
+            if looks_like_corrupted_text(item):
+                errors.append(
+                    f"{item_path} contains corrupted text ({item!r}). Save JSON/code as UTF-8; "
+                    "visible labels can use accents, but technical ids/routes/files should stay ASCII."
+                )
+            return
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                safe_key = str(key).replace("'", "\\'")
+                visit(nested, f"{item_path}.{safe_key}")
+            return
+        if isinstance(item, list):
+            for index, nested in enumerate(item):
+                visit(nested, f"{item_path}[{index}]")
+
+    visit(value, path)
+    if len(errors) >= limit:
+        errors.append(f"{path} has more text integrity problems; fix the first {limit} entries and retry.")
+    return errors
+
+
+def require_clean_json_text(value: Any, *, context: str) -> None:
+    errors = json_text_integrity_errors(value, path=context)
+    if errors:
+        details = "\n".join(f"- {error}" for error in errors[:10])
+        raise RejoinBIError(
+            f"{context} appears to contain corrupted text/encoding. "
+            "This would create wrong BI Studio/Data Engine labels or values.\n"
+            f"{details}"
+        )
+
+
 def response_requires_pin(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -2339,8 +2388,150 @@ def cmd_bi_export(args: argparse.Namespace) -> int:
     params = ""
     if args.project_password:
         params = f"?password={quote(args.project_password)}"
-    client.download(f"/plataforma/api/bi/projects/{args.project_id}/export{params}", output, timeout=args.timeout)
+    client.download(bi_project_path(args.project_id, f"/export{params}"), output, timeout=args.timeout)
     print_payload({"success": True, "output": str(output)}, as_json=args.json)
+    return 0
+
+
+def bi_project_path(project_id: str, suffix: str = "") -> str:
+    base = f"/plataforma/api/bi/projects/{quote(str(project_id), safe='')}"
+    return f"{base}{suffix}"
+
+
+def cmd_bi_tabs(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", bi_project_path(args.project_id, "/tabs"), timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_tab_content(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    path = path_with_query(bi_project_path(args.project_id, "/tabs/content"), {"name": args.tab})
+    data, _ = client.request("GET", path, timeout=args.timeout)
+    print_payload({"success": True, "project_id": args.project_id, "tab": args.tab, "content": data}, as_json=args.json)
+    return 0
+
+
+def cmd_bi_init_canvas(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-init-canvas initializes BI Studio canvas files and requires --yes.")
+    client = make_client(args)
+    data, _ = client.request("POST", bi_project_path(args.project_id, "/canvas/init"), json={}, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_create_tab(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-create-tab changes a BI Studio project and requires --yes.")
+    payload = {"name": args.name}
+    require_clean_json_text(payload, context="bi-create-tab payload")
+    client = make_client(args)
+    data, _ = client.request("POST", bi_project_path(args.project_id, "/tabs"), json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_duplicate_tab(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-duplicate-tab changes a BI Studio project and requires --yes.")
+    payload = {"new_name": args.new_name}
+    if args.source_slug:
+        payload["source_slug"] = args.source_slug
+    if args.source_name:
+        payload["source_name"] = args.source_name
+    require_clean_json_text(payload, context="bi-duplicate-tab payload")
+    client = make_client(args)
+    data, _ = client.request("POST", bi_project_path(args.project_id, "/tabs/duplicate"), json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_rename_tab(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-rename-tab changes a BI Studio project and requires --yes.")
+    payload = {"new_name": args.new_name}
+    if args.old_slug:
+        payload["old_slug"] = args.old_slug
+    if args.old_name:
+        payload["old_name"] = args.old_name
+    require_clean_json_text(payload, context="bi-rename-tab payload")
+    client = make_client(args)
+    data, _ = client.request("PATCH", bi_project_path(args.project_id, "/tabs/rename"), json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_delete_tab(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-delete-tab deletes BI Studio tab files and requires --yes.")
+    params: dict[str, Any] = {}
+    if args.slug:
+        params["slug"] = args.slug
+    if args.name:
+        params["name"] = args.name
+    if not params:
+        raise RejoinBIError("bi-delete-tab requires --slug or --name.")
+    client = make_client(args)
+    data, _ = client.request("DELETE", path_with_query(bi_project_path(args.project_id, "/tabs"), params), timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_reorder_tabs(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-reorder-tabs changes BI Studio tab order and requires --yes.")
+    order = split_list(args.order)
+    if not order:
+        raise RejoinBIError("bi-reorder-tabs requires --order with comma-separated tab names/slugs or a JSON array.")
+    require_clean_json_text(order, context="bi-reorder-tabs order")
+    client = make_client(args)
+    data, _ = client.request("PATCH", bi_project_path(args.project_id, "/tabs/reorder"), json={"order": order}, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_load_layout(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    params = {"tab": args.tab}
+    data, _ = client.request("GET", path_with_query(bi_project_path(args.project_id, "/layout"), params), timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_save_layout(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-save-layout writes BI Studio canvas layout/assets and requires --yes.")
+    payload = load_json_file(args.data_file)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("bi-save-layout --data-file must contain a JSON object.")
+    if args.tab and not payload.get("tab"):
+        payload["tab"] = args.tab
+    if not payload.get("tab"):
+        raise RejoinBIError("bi-save-layout requires --tab or a JSON payload containing tab.")
+    require_clean_json_text(payload, context="bi-save-layout payload")
+    client = make_client(args)
+    data, _ = client.request("POST", bi_project_path(args.project_id, "/layout"), json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_themes(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", bi_project_path(args.project_id, "/themes"), timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_save_theme(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-save-theme changes BI Studio project themes and requires --yes.")
+    payload = load_json_file(args.data_file)
+    require_clean_json_text(payload, context="bi-save-theme payload")
+    client = make_client(args)
+    data, _ = client.request("POST", bi_project_path(args.project_id, "/themes"), json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_bi_delete_theme(args: argparse.Namespace) -> int:
+    require_yes(args, "bi-delete-theme deletes a BI Studio project theme and requires --yes.")
+    client = make_client(args)
+    data, _ = client.request("DELETE", bi_project_path(args.project_id, f"/themes/{quote(args.theme_id, safe='')}"), timeout=args.timeout)
+    print_payload(data, as_json=args.json)
     return 0
 
 
@@ -2415,6 +2606,31 @@ def ensure_parquet_requirement(root: Path, *, dry_run: bool) -> dict[str, Any]:
     }
 
 
+def fix_export_python_backslash_literals(root: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Fix BI Studio exports that accidentally emit an invalid backslash string literal."""
+    bad = ".replace('" + "\\" + "', '/')"
+    good = ".replace('\\\\', '/')"
+    changed: list[str] = []
+    for py_file in root.rglob("*.py"):
+        rel_parts = {part.lower() for part in py_file.relative_to(root).parts}
+        if rel_parts.intersection({"venv", ".venv", "__pycache__"}):
+            continue
+        try:
+            text = py_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = py_file.read_text(encoding="utf-8-sig")
+        if bad not in text:
+            continue
+        changed.append(str(py_file))
+        if not dry_run:
+            py_file.write_text(text.replace(bad, good), encoding="utf-8")
+    return {
+        "changed": bool(changed),
+        "files": changed,
+        "reason": "fixed_invalid_python_backslash_literal",
+    }
+
+
 def cmd_bi_normalize_export(args: argparse.Namespace) -> int:
     root = Path(args.path).expanduser().resolve()
     manifest_path = root / "manifest.json"
@@ -2470,6 +2686,7 @@ def cmd_bi_normalize_export(args: argparse.Namespace) -> int:
     if manifest_changed and not args.dry_run:
         write_json(manifest_path, manifest)
     parquet_requirement = ensure_parquet_requirement(root, dry_run=args.dry_run)
+    python_syntax_fix = fix_export_python_backslash_literals(root, dry_run=args.dry_run)
     result = {
         "success": True,
         "path": str(root),
@@ -2479,6 +2696,7 @@ def cmd_bi_normalize_export(args: argparse.Namespace) -> int:
         "path_changes": [item for item in path_changes if item.get("changed")],
         "text_changes": text_changes,
         "parquet_requirement": parquet_requirement,
+        "python_syntax_fix": python_syntax_fix,
         "notes": [
             "Visible BI Studio tab names can stay localized with accents.",
             "Published workspace files, slugs, platform page routes, and page arquivo values should stay ASCII.",
@@ -2494,11 +2712,32 @@ def poll_publish(client: RejoinBIClient, project_id: str, job_id: str, timeout: 
     last = {}
     while time.time() < deadline:
         time.sleep(interval)
-        data, _ = client.request("GET", f"/plataforma/api/bi/projects/{project_id}/internal-publish/status/{job_id}", timeout=60)
+        data, _ = client.request("GET", bi_project_path(project_id, f"/internal-publish/status/{quote(str(job_id), safe='')}"), timeout=60)
         last = data if isinstance(data, dict) else {"raw": data}
         if last.get("done") or str(last.get("status") or "").lower() in {"success", "error", "cancelled"}:
             return last
     raise RejoinBIError(f"Publish polling timed out. Last status: {last}")
+
+
+def bi_manifest_slug_issues(client: RejoinBIClient, project_id: str) -> list[dict[str, Any]]:
+    manifest, _ = client.request("GET", bi_project_path(project_id, "/manifest"), timeout=60)
+    tabs = manifest.get("tabs") if isinstance(manifest, dict) and isinstance(manifest.get("tabs"), list) else []
+    issues: list[dict[str, Any]] = []
+    for tab in tabs:
+        if not isinstance(tab, dict):
+            continue
+        slug = safe_str(tab.get("slug") or "")
+        if not slug or slug == "index":
+            continue
+        ascii_slug = slugify_page_id(slug)
+        if slug != ascii_slug:
+            issues.append({
+                "name": tab.get("name"),
+                "slug": slug,
+                "recommended_slug": ascii_slug,
+                "reason": "non_ascii_or_unsafe_technical_slug",
+            })
+    return issues
 
 
 POST_PUBLISH_FATAL_PATTERNS = (
@@ -2650,6 +2889,22 @@ def wait_workspace_post_publish_ready(
 
 def cmd_publish_bi(args: argparse.Namespace) -> int:
     client = make_client(args)
+    slug_issues = bi_manifest_slug_issues(client, args.project_id)
+    if slug_issues and not args.allow_non_ascii_routes:
+        print_payload({
+            "success": False,
+            "error": "BI Studio project contains non-ASCII/unsafe technical tab slugs. Direct publish is blocked to avoid broken workspace/page routes.",
+            "project_id": args.project_id,
+            "slug_issues": slug_issues,
+            "next_steps": [
+                "Export with bi-export.",
+                "Extract the ZIP locally.",
+                "Run bi-normalize-export --path <extracted-export> --remove-old.",
+                "Upload the normalized folder with upload-folder-select or deploy-manifest.",
+                "Create/update pages with accented visible names but ASCII file/route values, then run smoke-pages.",
+            ],
+        }, as_json=args.json)
+        return 1
     workspace = resolve_workspace(client, args.workspace)
     password = args.workspace_password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
     payload = {
@@ -2659,7 +2914,7 @@ def cmd_publish_bi(args: argparse.Namespace) -> int:
     }
     data, _ = client.request(
         "POST",
-        f"/plataforma/api/bi/projects/{args.project_id}/internal-publish/start",
+        bi_project_path(args.project_id, "/internal-publish/start"),
         json=payload,
         timeout=60,
     )
@@ -4208,6 +4463,8 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         resolved_project_id = resolve_bi_project_id_from_uid(client, safe_str(payload["project_uid"]))
         if resolved_project_id:
             payload["project_id"] = resolved_project_id
+    if payload:
+        require_clean_json_text(payload, context=f"data-engine {args.action} payload")
     if args.action == "inventory":
         result = build_studio_inventory(client, args)
         if getattr(args, "output", None):
@@ -4261,9 +4518,15 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         if getattr(args, "folder", None):
             form_data["folder"] = str(args.folder)
         if getattr(args, "selected_sheet", None):
+            require_clean_json_text(args.selected_sheet, context="data-engine repository-upload selected sheets")
             form_data["selected_sheets"] = json.dumps(args.selected_sheet, ensure_ascii=False)
         if getattr(args, "sheet_states", None):
-            form_data["sheet_states"] = Path(args.sheet_states).expanduser().read_text(encoding="utf-8")
+            sheet_states_text = Path(args.sheet_states).expanduser().read_text(encoding="utf-8")
+            try:
+                require_clean_json_text(json.loads(sheet_states_text), context="data-engine repository-upload sheet states")
+            except json.JSONDecodeError:
+                require_clean_json_text(sheet_states_text, context="data-engine repository-upload sheet states")
+            form_data["sheet_states"] = sheet_states_text
         if getattr(args, "csv_separator", None):
             form_data["csv_separator"] = str(args.csv_separator)
         with ExitStack() as stack:
@@ -5404,7 +5667,7 @@ def scan_flask_routes(path: Path) -> list[dict[str, str]]:
     routes = []
     for match in re.finditer(r"@app\.route\(\s*['\"]([^'\"]+)['\"]", text):
         route = match.group(1)
-        if route.startswith("/api/") or route in {"/", "/health", "/status"}:
+        if route.startswith("/api/") or route.startswith("/static/") or route in {"/", "/health", "/status"}:
             level = "ok"
             message = "compatible"
         else:
@@ -5538,6 +5801,15 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
 
     for py_file in [app_root / "app.py", app_root / "main.py"]:
         if py_file.exists():
+            try:
+                compile(py_file.read_text(encoding="utf-8"), str(py_file), "exec")
+                checks.append({"name": f"python_syntax:{py_file.name}", "ok": True})
+            except SyntaxError as exc:
+                errors.append(f"{py_file.name} has Python syntax error at line {exc.lineno}: {exc.msg}")
+                checks.append({"name": f"python_syntax:{py_file.name}", "ok": False, "line": exc.lineno, "message": exc.msg})
+            except UnicodeDecodeError:
+                errors.append(f"{py_file.name} is not valid UTF-8.")
+                checks.append({"name": f"python_syntax:{py_file.name}", "ok": False, "message": "invalid_utf8"})
             route_scan = scan_flask_routes(py_file)
             checks.append({"name": f"flask_routes:{py_file.name}", "routes": route_scan})
             for item in route_scan:
@@ -5941,6 +6213,96 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--password")
     p.set_defaults(func=cmd_bi_create_project)
 
+    p = sub.add_parser("bi-init-canvas", help="Initialize BI Studio canvas files for a project")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_init_canvas)
+
+    p = sub.add_parser("bi-tabs", help="List BI Studio tabs")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_tabs)
+
+    p = sub.add_parser("bi-tab-content", help="Read BI Studio tab HTML content")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--tab", required=True)
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_tab_content)
+
+    p = sub.add_parser("bi-create-tab", help="Create a BI Studio tab")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_create_tab)
+
+    p = sub.add_parser("bi-duplicate-tab", help="Duplicate a BI Studio tab")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--source-name")
+    p.add_argument("--source-slug")
+    p.add_argument("--new-name", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_duplicate_tab)
+
+    p = sub.add_parser("bi-rename-tab", help="Rename a BI Studio tab and sync project references")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--old-name")
+    p.add_argument("--old-slug")
+    p.add_argument("--new-name", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_rename_tab)
+
+    p = sub.add_parser("bi-delete-tab", help="Delete a BI Studio tab")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--name")
+    p.add_argument("--slug")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_delete_tab)
+
+    p = sub.add_parser("bi-reorder-tabs", help="Reorder BI Studio tabs")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--order", required=True, help="Comma-separated tab names/slugs or JSON array")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_reorder_tabs)
+
+    p = sub.add_parser("bi-load-layout", help="Load BI Studio canvas layout for a tab")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--tab", required=True)
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_load_layout)
+
+    p = sub.add_parser("bi-save-layout", help="Save BI Studio canvas layout/page size/theme/components for a tab")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--tab")
+    p.add_argument("--data-file", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_save_layout)
+
+    p = sub.add_parser("bi-themes", help="List BI Studio project themes")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_themes)
+
+    p = sub.add_parser("bi-save-theme", help="Save/update a BI Studio project theme")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--data-file", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_save_theme)
+
+    p = sub.add_parser("bi-delete-theme", help="Delete a BI Studio project theme")
+    p.add_argument("--project-id", required=True)
+    p.add_argument("--theme-id", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_bi_delete_theme)
+
     p = sub.add_parser("bi-export", help="Export a BI Studio project ZIP")
     p.add_argument("--project-id", required=True)
     p.add_argument("--output")
@@ -5963,6 +6325,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--interval", type=float, default=4.0)
     p.add_argument("--post-publish-timeout", type=float, default=180.0, help="Seconds to wait for the published workspace runtime to start cleanly")
     p.add_argument("--no-post-publish-check", action="store_true", help="Skip runtime/log validation after BI publish")
+    p.add_argument("--allow-non-ascii-routes", action="store_true", help="Allow direct publish even when BI tab slugs contain accents/non-ASCII characters")
     p.set_defaults(func=cmd_publish_bi)
 
     p = sub.add_parser("echarts-template", help="Fetch an ECharts template from the tenant")
