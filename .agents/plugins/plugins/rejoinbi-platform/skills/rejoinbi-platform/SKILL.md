@@ -33,15 +33,23 @@ The plugin client enforces the operational rule for this platform: persisted ses
 
 ## Default Auth Flow
 
-When a user asks to connect a tenant and gives only the subdomain, do not ask for password or PIN in chat. Run the browser auth wizard:
+When a user asks to connect a tenant and gives only the subdomain, do not ask clarifying questions and do not ask for password or PIN in chat. Treat messages like `nome e sima`, `subdominio sima`, `tenant sima`, or just `sima` as the tenant subdomain, then run the ensure flow:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente ensure
 ```
 
-This opens a local browser page, prefilled with the resolved tenant URL, where the user enters email, password, and PIN if required. The helper posts to the tenant login API, validates that the profile is `Administrador Principal`, `Master`, or `Administrador`, then saves only the session cookies in `%USERPROFILE%\.rejoinbi-platform`.
+This first checks whether the tenant already has a saved session and validates that the profile is `Administrador Principal`, `Master`, or `Administrador`. If the session is missing, expired, or not allowed, it opens a local browser page, prefilled with the resolved tenant URL, where the user enters email, password, and PIN if required. The helper posts to the tenant login API, validates the profile, then saves only the session cookies in `%USERPROFILE%\.rejoinbi-platform`.
 
-If any command returns `HTTP 401`, `Sessão expirada`, or says there is no saved session, immediately start this browser auth flow for the same subdomain instead of asking the user to configure `REJOINBI_PASSWORD`.
+Example: if the user says `nome e sima`, immediately run:
+
+```powershell
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain sima ensure
+```
+
+Continue only after `success: true`, `connected: true`, and `profile_allowed: true` are confirmed.
+
+If any command returns `HTTP 401`, `Sessao expirada`, or says there is no saved session, immediately run `ensure` for the same subdomain instead of asking the user to configure `REJOINBI_PASSWORD`.
 
 Use the older terminal/API auth only when the user explicitly asks for automation or already provided local environment variables:
 
@@ -64,7 +72,7 @@ The tenant URL is resolved as:
 - `--subdomain cliente.rejoinbi.com.br` -> `https://cliente.rejoinbi.com.br`
 - `--base-url https://cliente.rejoinbi.com.br` -> exact base URL
 
-After a successful `connect`, later commands can omit `--subdomain`; the script uses the last active tenant session.
+After a successful `ensure` or `connect`, later commands can omit `--subdomain`; the script uses the last active tenant session.
 
 ## Secure Credential Handling
 
@@ -83,7 +91,7 @@ The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-pl
 Connect:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente ensure
 ```
 
 If the API asks for PIN, the browser wizard shows a PIN field and completes the session in the same flow.

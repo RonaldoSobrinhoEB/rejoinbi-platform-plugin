@@ -39,7 +39,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 DEFAULT_TIMEOUT = 120
-SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "login", "status"}
+SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 FICTITIOUS_PAGE_PREFIXES = ("avo-ficticio-", "pai-ficticio-", "filho-ficticio-")
@@ -652,6 +652,7 @@ def browser_auth_flow(args: argparse.Namespace) -> int:
     timeout = int(getattr(args, "auth_timeout", 600) or 600)
     server = ThreadingHTTPServer((host, port), AuthHandler)
     auth_url = f"http://{host}:{server.server_port}/?state={quote(state)}"
+    retry_command = getattr(args, "command", "") or "connect"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     opened = False
@@ -661,7 +662,7 @@ def browser_auth_flow(args: argparse.Namespace) -> int:
         if not done.wait(timeout):
             raise RejoinBIError(
                 "Browser authentication timed out. "
-                f"Open {auth_url} and complete login, or run connect again."
+                f"Open {auth_url} and complete login, or run {retry_command} again."
             )
     finally:
         server.shutdown()
@@ -719,6 +720,37 @@ def require_allowed_profile(client: RejoinBIClient, args: argparse.Namespace) ->
             "This plugin accepts only Administrador Principal, Master, or Administrador."
         )
     return identity
+
+
+def has_saved_cookies(client: RejoinBIClient) -> bool:
+    data = read_json(client.session_path, {})
+    cookies = data.get("cookies") if isinstance(data, dict) else None
+    return isinstance(cookies, dict) and bool(cookies)
+
+
+def cmd_ensure_connected(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    if not has_saved_cookies(client):
+        return browser_auth_flow(args)
+    try:
+        identity = require_allowed_profile(client, args)
+    except RejoinBIError:
+        client.clear_session()
+        return browser_auth_flow(args)
+
+    client.save_session()
+    print_payload({
+        "success": True,
+        "connected": True,
+        "base_url": client.base_url,
+        "email": identity.get("email"),
+        "profile": identity.get("profile"),
+        "profile_allowed": True,
+        "auth_method": "saved_session",
+        "message": "Tenant session is already connected and allowed.",
+        "session_path": str(client.session_path),
+    }, as_json=args.json)
+    return 0
 
 
 def cmd_connect(args: argparse.Namespace) -> int:
@@ -2152,11 +2184,11 @@ $HOME\\plugins\\rejoinbi-platform
 ## Configure A Tenant
 
 ```powershell
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py --subdomain cliente connect
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --subdomain cliente ensure
 python .\\rejoinbi-platform\\scripts\\rejoinbi.py workspaceall
 ```
 
-The `connect` command opens a local browser login wizard. Passwords and PINs are never saved in the package and do not need to be pasted into chat.
+The `ensure` command checks for a saved tenant session first. If needed, it opens a local browser login wizard. Passwords and PINs are never saved in the package and do not need to be pasted into chat.
 
 ## Dashboard Pattern
 
@@ -2240,6 +2272,15 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--auth-timeout", type=int, default=600, help="Seconds to wait for browser auth")
         p.add_argument("--no-open-browser", action="store_true", help="Print/use the local auth URL without opening the browser automatically")
         p.set_defaults(func=cmd_connect)
+
+    for name in ("ensure", "ensure-connected", "tenant"):
+        p = sub.add_parser(name, help="Check saved tenant session and open browser auth only if needed")
+        p.add_argument("--email", help="Optional email to prefill if browser auth is needed")
+        p.add_argument("--lang", default="pt-BR")
+        p.add_argument("--auth-port", type=int, default=0, help="Local browser auth port. Default: random free port")
+        p.add_argument("--auth-timeout", type=int, default=600, help="Seconds to wait for browser auth")
+        p.add_argument("--no-open-browser", action="store_true", help="Print/use the local auth URL without opening the browser automatically")
+        p.set_defaults(func=cmd_ensure_connected, password=None, pin=None, terminal=False)
 
     for name in ("auth", "browser-login"):
         p = sub.add_parser(name, help="Open a local browser login wizard and save tenant session cookies")

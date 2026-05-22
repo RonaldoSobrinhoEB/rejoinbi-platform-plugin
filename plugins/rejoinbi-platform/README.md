@@ -21,14 +21,14 @@ Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`
 ## Common Commands
 
 ```powershell
-python .\scripts\rejoinbi.py --subdomain cliente connect
+python .\scripts\rejoinbi.py --subdomain cliente ensure
 python .\scripts\rejoinbi.py workspaceall
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
 python .\scripts\rejoinbi.py smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 ```
 
-`connect` opens a local browser login wizard by default. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting tenant session cookies.
+`ensure` first checks whether the tenant already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting tenant session cookies.
 
 For automation-only cases, the older terminal/API flow is still available:
 
