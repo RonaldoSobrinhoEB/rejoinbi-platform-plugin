@@ -14,6 +14,7 @@ These rules come from the platform Workspace and Gerenciar Paginas behavior. Use
 - Save manifests as UTF-8 and run `validate-app` before deploy. A visible label containing `?` inside words (`Vis?o`, `Opera??es`) or mojibake (`VisÃ£o`) is a blocking error because it means the label was corrupted before reaching Gerenciar Paginas.
 - When a clean `name` would generate a different technical ID, `deploy-manifest` creates the page with the technical ID and immediately updates the display name back to the clean menu label.
 - Shared CSS, JavaScript, images, and fonts can live in `assets/`.
+- BI Studio tab names can contain accents for display, but published technical slugs cannot. Normalize exported BI Studio folders so `templates/`, `layouts/`, `router/`, `static/css`, `static/js`, page `arquivo`, and page `rota` use ASCII paths such as `visao-geral` and `rls-usuario`.
 
 Good:
 
@@ -62,7 +63,21 @@ dashboard sidebar duplicating the platform menu
 - Put HTML templates in `templates/` and assets in `static/` when building a Flask app.
 - `requirements.txt` is optional. Without it, the platform uses the fast path with available/default libraries.
 - Add `requirements.txt` only when the app needs extra Python packages.
+- If the app includes Data Engine parquet files under `dados/df`, add `pyarrow>=16.0.0` or `fastparquet` to `requirements.txt`. Without a parquet engine, the workspace can start but load zero materialized DataFrames.
 - Use `startup_mode: "command"` only when there is a real custom command. The platform limits this command to 500 characters.
+
+## BI Studio Export Normalization
+
+When publishing BI Studio output through a workspace folder, normalize the extracted export before upload:
+
+```powershell
+python .\scripts\rejoinbi.py bi-export --project-id "Projeto BI" --output C:\tmp\bi.zip
+Expand-Archive C:\tmp\bi.zip C:\tmp\bi-export
+python .\scripts\rejoinbi.py bi-normalize-export --path C:\tmp\bi-export --remove-old
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\tmp\bi-export --selected-file app.py --startup-mode file --auto-start
+```
+
+After normalization and upload, update Gerenciar Paginas so visible names keep accents, but `arquivo` and `rota` are ASCII. Example: name `Visão 360`, file `visao-geral`, route `visao-geral`.
 
 ## API Routes
 
@@ -92,6 +107,8 @@ After publishing:
 ```powershell
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py pages --workspace <workspace-name>
+python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
+python .\scripts\rejoinbi.py page-files --workspace <workspace-name>
 ```
 
 Use `--strict` with `validate-app` when warnings should block the publish.

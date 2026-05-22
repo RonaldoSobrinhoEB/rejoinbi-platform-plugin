@@ -77,7 +77,7 @@ These are the expected interpretations for Codex agents using this plugin:
 - "mudar logo", "favicon", "cores", "identidade visual": use `backup-platform-branding` and `set-platform-branding`.
 - "subir arquivo em uma pasta": use `upload-files --folder`.
 - "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
-- "o que tem no BI Studio/Data Engine": run `studio-inventory` first.
+- "o que tem no BI Studio/Data Engine": run `studio-inventory` first. For BI exports with accents/parquet, run `bi-normalize-export` before uploading.
 - "remover workspace": run `delete-workspace` dry-run first; password-protected workspaces require validated workspace password before deletion.
 - For everything else, use `docs/agent-operating-playbook.md` as the routing source before asking questions.
 
@@ -140,11 +140,16 @@ python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
 python .\scripts\rejoinbi.py data-engine db-connections --project-id 1
+python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file .\dados.xlsx
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file .\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
 python .\scripts\rejoinbi.py data-engine repository-list --project-id 1
 python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
+python .\scripts\rejoinbi.py bi-normalize-export --path .\bi-export --remove-old
 ```
 
 `smoke-admin` runs a read-only API check across the main configuration areas and writes a reusable JSON report. `studio-inventory` links BI Studio projects to Data Engine status, SQL Server driver support, sessions, database connections, repository tree, datasets, and files. It is read-only and redacts passwords, tokens, API keys, secrets, and connection strings. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
+
+`bi-normalize-export` is a local safety helper for BI Studio exports. It keeps display names localized, converts technical slugs/files/static folders/routes to ASCII, and adds `pyarrow>=16.0.0` when parquet Data Engine artifacts are present. After using it, upload the normalized folder, update page `arquivo`/`rota` to the ASCII values, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
 For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 

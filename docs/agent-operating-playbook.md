@@ -121,6 +121,8 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance
 
 Visible page names should match the user's language and may include accents. Technical page ids, routes, and filenames should stay ASCII and stable.
 
+If a page update unexpectedly moves a child page out of its parent, immediately run `update-page --parent <parent-id>` or `set-page-order --parent <parent-id>` and re-run `page-maintenance verify-hierarchy`. Treat duplicate order or `pai null` warnings as not ready for production.
+
 ### Manifest Dashboard Deployment
 
 Always follow this sequence:
@@ -235,12 +237,23 @@ python .\scripts\rejoinbi.py bi-projects
 python .\scripts\rejoinbi.py data-engine status
 python .\scripts\rejoinbi.py data-engine db-connections --project-id "Projeto"
 python .\scripts\rejoinbi.py data-engine repository-list --project-id "Projeto"
+python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file C:\dados\telecom.xlsx
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id "Projeto" --file C:\dados\telecom.xlsx --folder codex --selected-sheet "Visão Geral" --yes
 python .\scripts\rejoinbi.py data-engine datasets-list --project-id "Projeto"
 python .\scripts\rejoinbi.py data-engine session-status --project-id "Projeto"
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br publish-bi --project-id "Projeto" --workspace workspace-name
+python .\scripts\rejoinbi.py bi-normalize-export --path C:\path\extracted-bi-export --remove-old
 ```
 
 Project-scoped Data Engine endpoints require `--project-id`, `--project-uid`, or a JSON payload containing `project_id` or `project_uid`. The plugin can resolve known `project_uid` values through BI Studio inventory.
+
+Data Engine repository uploads support CSV, Excel, SQLite, and other files accepted by the tenant. For Excel files, run `repository-inspect-sheets` first, then pass one or more `--selected-sheet` values. The upload command blocks sensitive-looking files such as `.env`, keys, certificates, tokens, and password-named files unless `--allow-sensitive-files` is explicitly provided after manual review.
+
+Notebook and finalize payloads are strict. `save-notebook-state` expects a list of cell objects, not an object wrapper. `finalize-dataset` with scoped output expects `dataframe_names` items shaped like `{"dataset_id":"Dataset","name":"df_name","cell_id":"cell-id"}`. Plain `"df_name"` can fail when `require_scoped_df` is true.
+
+For BI Studio publication, `publish-bi` now performs a post-publish workspace runtime check. It fails the command when runtime logs contain `SyntaxError`, a Python traceback, missing parquet engines (`pyarrow`/`fastparquet`), or missing materialized DataFrames. If the BI export contains parquet files, make sure `requirements.txt` includes `pyarrow>=16.0.0` or `fastparquet`.
+
+BI Studio tab display names may be localized with accents, but the exported slug, template filename, static folder, router filename, platform `arquivo`, and platform `rota` must be ASCII. If the tenant export produced slugs such as `visão-geral` or `rls-usuário`, run `bi-normalize-export --path <extracted-export> --remove-old`, upload the normalized folder, update platform pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
 ### System, Audit, Upload Gateway, Codex Keys
 

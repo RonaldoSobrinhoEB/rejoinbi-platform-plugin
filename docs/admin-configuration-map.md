@@ -138,6 +138,15 @@ Use the inventory as the first source of truth for "o que tem no BI Studio" or "
 
 Data Engine session, repository, and dataset endpoints are project-scoped. Pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload so the plugin validates the request before reaching the tenant API.
 
+Repository upload coverage includes sheet inspection and upload for Excel/CSV/SQLite-style source files:
+
+```powershell
+python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file .\dados.xlsx
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id "Projeto" --file .\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
+```
+
+BI Studio exports may contain localized display names with non-ASCII slugs. Before uploading an extracted BI export to a workspace, run `bi-normalize-export --path <folder> --remove-old`; then bind platform pages with localized visible names but ASCII `arquivo` and `rota`. This command also adds `pyarrow>=16.0.0` when parquet materialized Data Engine files are present.
+
 ## Safety Notes
 
 - Destructive commands keep explicit confirmation flags.

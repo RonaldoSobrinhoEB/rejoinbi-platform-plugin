@@ -28,7 +28,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
 - "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII.
 - "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
-- "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`.
+- "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`. For BI exports with accented tab slugs or parquet data, use `bi-normalize-export` before uploading the workspace package.
 - "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
 - "usuarios", "permissoes", "grupos", "anuncios", "RLS", "IA", "auditoria", "sistema", "gateway", "codex keys": route through `docs/agent-operating-playbook.md` and `docs/admin-configuration-map.md`; do the read command first, then the safest write command with explicit tenant and confirmation.
 - "testar RLS", "usuario padrao com RLS", "validar PIN", "filtro por email": use `examples/codex-rls-suite`, create/read the mailbox through `https://pt.emailfake.com/channel1/`, grant only the target page, configure RLS by `container_id`, and connect the standard user only with `--allow-standard` for validation.
@@ -160,6 +160,9 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" route-map routes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" smoke-admin --output-dir C:\path\smoke-admin
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" studio-inventory --output C:\path\bi-data-inventory.json
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine db-connections --project-id 1
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine repository-inspect-sheets --file C:\path\dados.xlsx
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file C:\path\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-normalize-export --path C:\path\bi-export --remove-old
 ```
 
 `smoke-admin` is read-only and useful after plugin changes or tenant upgrades. For BI Studio/Data Engine work, run `studio-inventory` first. It is read-only, links projects to Data Engine resources, and redacts password, token, key, secret, credential, and connection-string fields. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
@@ -184,7 +187,15 @@ Use dedicated commands before falling back to `api-get` or `api-send`. The dedic
 
 For title, logos, menu logo, favicon, and color/theme changes, prefer `set-platform-branding` over raw `set-platform-config`. It saves an automatic JSON backup in `Downloads\plugin\branding-backups` before changing the tenant and prints a `restore-platform-branding` command. Use that backup to roll back visual tests exactly.
 
-For any request like "o que tem no BI Studio", "o que tem no Data Engine", "vincula com o BI Studio", "reconhece datasets", "publica um BI", or "usa os dados do engine", run `studio-inventory` before choosing a follow-up command. Summarize projects, connections, datasets, repository files, sessions, and issues from that inventory. Only call write actions such as `create-db-connection`, `create-dataset`, `terminal-command`, `execute-code`, or `publish-bi` after the tenant, project id/uid, and intended target are explicit.
+For any request like "o que tem no BI Studio", "o que tem no Data Engine", "vincula com o BI Studio", "reconhece datasets", "publica um BI", or "usa os dados do engine", run `studio-inventory` before choosing a follow-up command. Summarize projects, connections, datasets, repository files, sessions, and issues from that inventory. Only call write actions such as `create-db-connection`, `create-dataset`, `repository-upload`, `terminal-command`, `execute-code`, or `publish-bi` after the tenant, project id/uid, and intended target are explicit.
+
+Data Engine repository upload workflow: inspect Excel sheets first with `repository-inspect-sheets`, upload with `repository-upload --project-id/--project-uid --file ... --folder ...`, and pass repeated `--selected-sheet` values for Excel. The command blocks sensitive-looking paths and filenames unless `--allow-sensitive-files` is explicitly provided after manual review.
+
+Data Engine notebook/finalize payload rules: `save-notebook-state` expects a JSON list of cells; `finalize-dataset` with `require_scoped_df` expects `dataframe_names` objects containing `dataset_id`, `name`, and usually `cell_id`.
+
+BI Studio publish rule: `publish-bi` performs post-publish runtime validation. It must be treated as failed if logs show `SyntaxError`, Python traceback, missing parquet engine (`pyarrow`/`fastparquet`), or missing materialized DataFrames. If a BI export contains `dados/df/*.parquet`, normalize/add `pyarrow>=16.0.0` before upload.
+
+BI Studio routing rule: visible tab/page names may contain accents, but technical workspace files must be ASCII. If an export has `visão-geral.html`, `rls-usuário.html`, matching static folders, or matching manifest slugs, run `bi-normalize-export --path <export> --remove-old`, upload the normalized folder, update pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
 ## Common Workflows
 
