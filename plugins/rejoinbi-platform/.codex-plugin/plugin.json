@@ -1,0 +1,30 @@
+{
+  "name": "rejoinbi-platform",
+  "version": "0.3.1",
+  "description": "Operate Rejoin BI tenants, workspaces, uploads, BI projects, ECharts publishing, and safe production cleanup from Codex.",
+  "author": {
+    "name": "Ronaldo Sobrinho"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Rejoin BI Platform",
+    "shortDescription": "Develop and publish Rejoin BI dashboards.",
+    "longDescription": "Helps Codex connect to Rejoin BI tenants, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, and safely preview workspace/page cleanup using the platform API.",
+    "developerName": "Ronaldo Sobrinho",
+    "category": "Engineering",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "defaultPrompt": [
+      "Connect to my Rejoin BI tenant",
+      "List all Rejoin BI workspaces",
+      "Publish this ECharts dashboard",
+      "Preview deleting this Rejoin BI workspace"
+    ],
+    "brandColor": "#0F766E",
+    "composerIcon": "./assets/app-icon.png",
+    "logo": "./assets/app-icon.png"
+  }
+}

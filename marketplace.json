@@ -8,7 +8,7 @@
       "name": "rejoinbi-platform",
       "source": {
         "source": "local",
-        "path": "./plugins/codex/plugins/rejoinbi-platform"
+        "path": "./plugins/rejoinbi-platform"
       },
       "policy": {
         "installation": "AVAILABLE",

@@ -12,13 +12,14 @@ Use the "Adicionar marketplace" dialog with:
 
 Codex validates the marketplace from the repository root and can discover the canonical
 `.agents/plugins/marketplace.json`. A compatibility `marketplace.json` is also available
-at the repository root.
+at the repository root, pointing directly to `plugins/rejoinbi-platform`.
 
 If your Codex build requires sparse paths, use both paths below, each on its own line:
 
 ```text
 .agents/plugins/marketplace.json
 .agents/plugins/plugins/rejoinbi-platform
+plugins/rejoinbi-platform
 ```
 
 ## Plugin

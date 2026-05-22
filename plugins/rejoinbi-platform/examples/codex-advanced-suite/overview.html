@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Platform Page - Overview</title>
+  <link rel="stylesheet" href="./assets/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body data-page="overview">
+  <main class="dashboard-page">
+    <header class="page-head">
+      <div class="title-block">
+        <p class="eyebrow">Executive workspace</p>
+        <h1 id="pageTitle">Executive Overview</h1>
+        <p class="deck">Board-level revenue, cash, risk and portfolio signals in one standalone page.</p>
+      </div>
+      <section class="filters" aria-label="Filters">
+        <label><span>Period</span><select id="periodFilter"><option>2026 Q1</option><option selected>2026 Q2</option><option>2026 Q3</option></select></label>
+        <label><span>Unit</span><select id="unitFilter"><option>All units</option><option>ADN</option><option>Livon</option><option>Instituto</option></select></label>
+      </section>
+    </header>
+    <section id="metrics" class="metrics"></section>
+    <section id="view" class="view"></section>
+  </main>
+  <script src="./assets/app.js"></script>
+</body>
+</html>
