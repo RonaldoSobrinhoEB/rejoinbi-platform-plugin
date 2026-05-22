@@ -1,6 +1,6 @@
-# Codex ECharts Test Dashboard
+# Rejoin BI Executive Signal
 
-Small static dashboard used to smoke-test the Rejoin BI plugin upload flow.
+Polished static ECharts dashboard used to smoke-test the Rejoin BI plugin upload flow, visual rendering, responsive layout, and chart behavior.
 
 Recommended upload command:
 

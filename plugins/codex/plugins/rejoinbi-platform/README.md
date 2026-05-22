@@ -14,7 +14,7 @@ Correct pattern:
 - Shared assets can live in `assets/`.
 - The manifest maps each page to its own `file` and `route`.
 
-See `examples/codex-advanced-suite/rejoinbi-app.json`.
+See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records.
 
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
 
@@ -27,6 +27,8 @@ python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-s
 python .\scripts\rejoinbi.py deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
 python .\scripts\rejoinbi.py smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 ```
+
+The `examples/codex-echarts-dashboard` folder is a polished single-page ECharts signal dashboard for quick upload and rendering checks.
 
 ## Safe Destructive Commands
 
