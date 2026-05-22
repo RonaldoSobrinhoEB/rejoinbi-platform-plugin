@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fnmatch
 import getpass
 import html
 import json
@@ -21,11 +22,12 @@ import sys
 import threading
 import time
 import unicodedata
+import zipfile
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 import webbrowser
@@ -44,6 +46,37 @@ DEFAULT_TIMEOUT = 120
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+SENSITIVE_PATH_NAMES = {
+    ".aws",
+    ".azure",
+    ".env",
+    ".gcloud",
+    ".gnupg",
+    ".kube",
+    ".rejoinbi-platform",
+    ".ssh",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_rsa",
+    "known_hosts",
+    "secrets",
+}
+SENSITIVE_PATH_PATTERNS = (
+    ".env*",
+    "*.key",
+    "*.pem",
+    "*.p12",
+    "*.pfx",
+    "*.ppk",
+    "*.crt",
+    "*.csr",
+    "*.kubeconfig",
+    "*credential*",
+    "*password*",
+    "*secret*",
+    "*token*",
+)
 
 try:
     if hasattr(sys.stdout, "reconfigure"):
@@ -257,6 +290,35 @@ def read_json(path: Path, default: Any) -> Any:
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def is_loopback_host(host: str) -> bool:
+    normalized = str(host or "").split(":", 1)[0].strip("[]").lower()
+    return normalized in {"localhost", "127.0.0.1", "::1"}
+
+
+def is_allowed_tenant_host(host: str) -> bool:
+    raw = str(host or "").strip()
+    if is_loopback_host(raw):
+        return True
+    normalized = raw.split("@")[-1].split(":", 1)[0].strip("[]").lower()
+    return normalized == DEFAULT_DOMAIN or normalized.endswith(f".{DEFAULT_DOMAIN}")
+
+
+def sensitive_path_reason(path: Path) -> str:
+    parts = [part.lower() for part in path.parts]
+    for part in parts:
+        if part in SENSITIVE_PATH_NAMES:
+            return f"sensitive path component '{part}'"
+    name = path.name.lower()
+    for pattern in SENSITIVE_PATH_PATTERNS:
+        if fnmatch.fnmatch(name, pattern):
+            return f"sensitive filename pattern '{pattern}'"
+    return ""
 
 
 def clean_base_url(value: str) -> str:
@@ -268,6 +330,14 @@ def clean_base_url(value: str) -> str:
     parsed = urlparse(raw)
     if not parsed.netloc:
         raise RejoinBIError(f"Invalid base URL: {value}")
+    host = parsed.hostname or parsed.netloc
+    if parsed.scheme != "https" and not is_loopback_host(host):
+        raise RejoinBIError("Refusing non-HTTPS tenant URL outside localhost.")
+    if not is_allowed_tenant_host(host) and os.environ.get("REJOINBI_ALLOW_EXTERNAL_BASE_URL") != "1":
+        raise RejoinBIError(
+            f"Refusing tenant host outside {DEFAULT_DOMAIN}: {host}. "
+            "Set REJOINBI_ALLOW_EXTERNAL_BASE_URL=1 only for trusted local development."
+        )
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
 
 
@@ -461,7 +531,13 @@ class RejoinBIClient:
         data = read_json(self.session_path, {})
         cookies = data.get("cookies") if isinstance(data, dict) else None
         if isinstance(cookies, dict):
-            self.session.cookies.update(cookies)
+            jar = requests.cookies.RequestsCookieJar()
+            host = tenant_host_from_base_url(self.base_url).split(":", 1)[0]
+            for name, value in cookies.items():
+                if value is None:
+                    continue
+                jar.set(str(name), str(value), domain=host, path="/")
+            self.session.cookies.update(jar)
 
     def save_session(self, identity: dict[str, Any] | None = None, auth_context: dict[str, Any] | None = None) -> None:
         existing = read_json(self.session_path, {})
@@ -493,6 +569,9 @@ class RejoinBIClient:
 
     def url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
+            target = clean_base_url(path)
+            if target != self.base_url:
+                raise RejoinBIError(f"Refusing cross-origin API request: {path}")
             return path
         return self.base_url + "/" + path.lstrip("/")
 
@@ -2044,12 +2123,15 @@ def cmd_workspace_content(args: argparse.Namespace) -> int:
     return 0
 
 
-def open_upload_files(paths: list[str], stack: ExitStack) -> list[tuple[str, tuple[str, Any, str]]]:
+def open_upload_files(paths: list[str], stack: ExitStack, *, allow_sensitive: bool = False) -> list[tuple[str, tuple[str, Any, str]]]:
     result = []
     for raw_path in paths:
         path = Path(raw_path).expanduser().resolve()
         if not path.is_file():
             raise RejoinBIError(f"File not found: {path}")
+        reason = sensitive_path_reason(path)
+        if reason and not allow_sensitive:
+            raise RejoinBIError(f"Refusing to upload sensitive-looking file {path}: {reason}. Use --allow-sensitive-files only after manual review.")
         mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         result.append(("files", (path.name, stack.enter_context(path.open("rb")), mime)))
     return result
@@ -2074,7 +2156,7 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         file_paths_map[key.strip()] = value.strip()
 
     with ExitStack() as stack:
-        files = open_upload_files(args.files, stack)
+        files = open_upload_files(args.files, stack, allow_sensitive=bool(args.allow_sensitive_files))
         form_data: list[tuple[str, str]] = [
             ("container_name", str(workspace.get("name") or "")),
             ("folder_path", args.folder or ""),
@@ -2088,16 +2170,41 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
     return 0
 
 
-def iter_folder_files(root: Path, exclude_names: set[str]) -> list[Path]:
+def iter_folder_files(root: Path, exclude_names: set[str], *, allow_sensitive: bool = False) -> list[Path]:
     files = []
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        rel_parts = set(path.relative_to(root).parts)
+        rel_parts = {part.lower() for part in path.relative_to(root).parts}
         if rel_parts.intersection(exclude_names):
+            continue
+        if sensitive_path_reason(path.relative_to(root)) and not allow_sensitive:
             continue
         files.append(path)
     return files
+
+
+def validate_zip_for_upload(zip_path: Path, *, allow_sensitive: bool = False) -> None:
+    try:
+        archive = zipfile.ZipFile(zip_path)
+    except zipfile.BadZipFile as exc:
+        raise RejoinBIError(f"Invalid ZIP file: {zip_path}") from exc
+    with archive:
+        for info in archive.infolist():
+            raw_name = (info.filename or "").replace("\\", "/")
+            if not raw_name or raw_name.endswith("/"):
+                continue
+            rel = PurePosixPath(raw_name)
+            if rel.is_absolute() or any(part in ("", ".", "..") or part.endswith(":") for part in rel.parts):
+                raise RejoinBIError(f"Refusing ZIP with unsafe entry path: {info.filename}")
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise RejoinBIError(f"Refusing ZIP with symlink entry: {info.filename}")
+            reason = sensitive_path_reason(Path(*rel.parts))
+            if reason and not allow_sensitive:
+                raise RejoinBIError(
+                    f"Refusing ZIP with sensitive-looking entry {info.filename}: {reason}. "
+                    "Use --allow-sensitive-files only after manual review."
+                )
 
 
 def choose_entry_file(files_payload: list[dict[str, Any]], startup_mode: str, selected_file: str = "") -> str | None:
@@ -2172,6 +2279,7 @@ def cmd_upload_zip_select(args: argparse.Namespace) -> int:
     zip_path = Path(args.zip).expanduser().resolve()
     if not zip_path.is_file():
         raise RejoinBIError(f"ZIP not found: {zip_path}")
+    validate_zip_for_upload(zip_path, allow_sensitive=bool(args.allow_sensitive_files))
     with zip_path.open("rb") as handle:
         files = {"file": (zip_path.name, handle, "application/zip")}
         data, _ = client.request("POST", "/plataforma/api/extract-files", data={"container_id": str(workspace.get("id"))}, files=files, timeout=args.timeout)
@@ -2193,7 +2301,7 @@ def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     with ExitStack() as stack:
         data_items: list[tuple[str, str]] = [("container_id", str(workspace.get("id")))]
         files = []
-        for path in iter_folder_files(root, exclude):
+        for path in iter_folder_files(root, {item.lower() for item in exclude}, allow_sensitive=bool(args.allow_sensitive_files)):
             rel = str(path.relative_to(root)).replace("\\", "/")
             mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
             data_items.append(("paths", rel))
@@ -2973,7 +3081,7 @@ def cmd_ai_config_get(args: argparse.Namespace) -> int:
     if args.config_id:
         params["config_id"] = safe_str(args.config_id)
     data, _ = client.request("GET", "/plataforma/api/ai-config", params=params, timeout=60)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3020,7 +3128,7 @@ def cmd_ai_config_set(args: argparse.Namespace) -> int:
     if not payload.get("contexto_negocio"):
         raise RejoinBIError("AI config requires contexto_negocio / --business-context.")
     data, _ = client.request("POST", "/plataforma/api/ai-config", json=payload, timeout=120)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3036,7 +3144,7 @@ def cmd_ai_config_delete(args: argparse.Namespace) -> int:
     if args.config_id:
         params["config_id"] = safe_str(args.config_id)
     data, _ = client.request("DELETE", "/plataforma/api/ai-config", params=params, timeout=60)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3045,7 +3153,7 @@ def cmd_ai_config_cleanup(args: argparse.Namespace) -> int:
         raise RejoinBIError("Cleaning orphan AI configs requires --yes.")
     client = make_client(args)
     data, _ = client.request("POST", "/plataforma/api/ai-config/cleanup", json={}, timeout=120)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3686,7 +3794,7 @@ def cmd_codex_keys(args: argparse.Namespace) -> int:
         require_yes(args, f"{args.action} changes Codex/AI provider configuration and requires --yes.")
     request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
     data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3703,7 +3811,7 @@ def cmd_route_map(args: argparse.Namespace) -> int:
     if destructive:
         require_yes(args, f"{args.action} changes route mapping state and requires --yes.")
     data, _ = client.request(method, path, json={} if method != "GET" else None, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3741,7 +3849,7 @@ def cmd_system_admin(args: argparse.Namespace) -> int:
         require_yes(args, f"{args.action} changes platform runtime/system state and requires --yes.")
     request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
     data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3775,7 +3883,7 @@ def cmd_upload_admin(args: argparse.Namespace) -> int:
         require_yes(args, f"{args.action} changes upload/gateway state and requires --yes.")
     request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
     data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -3870,7 +3978,7 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         require_yes(args, f"{args.action} changes Data Engine configuration/data/session state and requires --yes.")
     request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
     data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
@@ -5131,31 +5239,43 @@ def parse_json_payload(args: argparse.Namespace) -> Any:
 def cmd_api_get(args: argparse.Namespace) -> int:
     client = make_client(args)
     data, _ = client.request("GET", args.path, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
 def cmd_api_post(args: argparse.Namespace) -> int:
+    require_yes(args, "api-send can mutate tenant state and requires --yes after reviewing the target path and payload.")
     client = make_client(args)
     payload = parse_json_payload(args)
     data, _ = client.request(args.method.upper(), args.path, json=payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
 
 def should_ignore_export(dir_path: str, names: list[str]) -> set[str]:
     ignored = set()
     ignored_names = {
+        ".codex",
+        ".env",
         ".git",
+        ".rejoinbi-platform",
         ".pytest_cache",
         ".ruff_cache",
         ".mypy_cache",
+        ".ssh",
         "__pycache__",
         "artifacts",
+        "branding-backups",
+        "smoke-admin",
+        "test-runs",
     }
     for name in names:
         lower = name.lower()
-        if name in ignored_names or lower.endswith((".pyc", ".pyo", ".zip")):
+        if (
+            lower in ignored_names
+            or lower.endswith((".pyc", ".pyo", ".zip"))
+            or any(fnmatch.fnmatch(lower, pattern) for pattern in SENSITIVE_PATH_PATTERNS)
+        ):
             ignored.add(name)
     return ignored
 
@@ -5417,6 +5537,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--map", action="append", help="filename=target/folder mapping")
     p.add_argument("--restart", action="store_true")
     p.add_argument("--workspace-password")
+    p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_upload_files)
 
@@ -5431,6 +5552,7 @@ def build_parser() -> argparse.ArgumentParser:
         else:
             p.add_argument("--path", required=True)
             p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
+        p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
         p.add_argument("--selected-file", default="")
         p.add_argument("--startup-mode", choices=["file", "command", "static"], default="file")
         p.add_argument("--startup-command", default="")
@@ -6066,6 +6188,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data-json")
     p.add_argument("--data-file")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.add_argument("--yes", action="store_true", help="Confirm the raw API mutation after manual review")
     p.set_defaults(func=cmd_api_post)
 
     return parser

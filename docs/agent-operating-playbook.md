@@ -205,6 +205,8 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --ma
 
 For realistic user/PIN validation, create the mailbox only through `https://pt.emailfake.com/channel1/`. Use the generated mailbox to create a standard `Usuario`, read the welcome e-mail for the provisional password, attempt the login to trigger a PIN e-mail, then complete the login with that PIN. Standard users are not valid plugin operators; `--allow-standard` is only for this test. After login, verify `accessible-pages` contains only the granted page and `rls test-config` contains only the allowed dimension values for that e-mail.
 
+`examples/codex-rls-suite` uses fictitious bundled JSON for smoke tests only. Never treat client-side filtering of a static JSON file as production RLS for sensitive data; production dashboards must fetch data from an endpoint that applies RLS before returning rows.
+
 ### Email And WhatsApp
 
 ```powershell
@@ -267,6 +269,7 @@ Treat system errors as tenant/backend diagnostics unless required checks fail.
 - Never delete pages/workspaces before showing the dry-run plan.
 - Never broadcast email or WhatsApp without explicit recipient/payload/confirmation.
 - Never print secrets from Codex keys, DB connections, tokens, cookies, passwords, or connection strings.
+- Never upload or export `.env`, key, token, credential, session, or backup files unless the user explicitly accepts the security risk.
 - Never call a dashboard complete until `validate-app`, `deploy-manifest`, and `smoke-pages` pass.
 - Never make a dashboard with its own internal page menu when Rejoin BI pages should manage navigation.
 - Never use customer tenant names as generic examples. Use `subdomain.rejoinbi.com.br`.

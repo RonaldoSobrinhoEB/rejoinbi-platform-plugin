@@ -180,6 +180,8 @@ The CLI accepts JSON files saved with UTF-8 BOM, which is common when payloads a
 
 Use dedicated commands before falling back to `api-get` or `api-send`. The dedicated commands preserve profile checks, safe confirmations, workspace password validation, and consistent output.
 
+`api-send` is a mutating escape hatch and requires `--yes` after reviewing the exact tenant, path, method, and payload. Do not use it for broad discovery; prefer read-only `api-get` or a dedicated command first.
+
 For title, logos, menu logo, favicon, and color/theme changes, prefer `set-platform-branding` over raw `set-platform-config`. It saves an automatic JSON backup in `Downloads\plugin\branding-backups` before changing the tenant and prints a `restore-platform-branding` command. Use that backup to roll back visual tests exactly.
 
 For any request like "o que tem no BI Studio", "o que tem no Data Engine", "vincula com o BI Studio", "reconhece datasets", "publica um BI", or "usa os dados do engine", run `studio-inventory` before choosing a follow-up command. Summarize projects, connections, datasets, repository files, sessions, and issues from that inventory. Only call write actions such as `create-db-connection`, `create-dataset`, `terminal-command`, `execute-code`, or `publish-bi` after the tenant, project id/uid, and intended target are explicit.
@@ -322,7 +324,7 @@ The plugin includes two examples:
 
 - `examples/codex-echarts-dashboard`: simple single-page ECharts dashboard.
 - `examples/codex-advanced-suite`: platform-managed multi-page package with one HTML file per Rejoin BI page, shared assets, filters, forms, local draft storage, JSON export, and a deploy manifest.
-- `examples/codex-rls-suite`: single-page RLS smoke dashboard with accented visible page name, ASCII `id/route/file`, platform-managed route, and client-side filtering from `/plataforma/api/rls/config`.
+- `examples/codex-rls-suite`: single-page RLS smoke dashboard with accented visible page name, ASCII `id/route/file`, platform-managed route, and client-side filtering from `/plataforma/api/rls/config` over fictitious data only. Do not use static JSON plus client-side filtering for sensitive production rows; real sensitive data must be filtered by the server/API before it reaches the browser.
 
 ## RLS Validation Workflow
 
@@ -337,6 +339,8 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 ```
 
 For end-to-end standard-user tests, open `https://pt.emailfake.com/channel1/` first and copy the generated mailbox. Create the Rejoin BI user with that exact address, then read the welcome e-mail in that same mailbox to get the provisional password. The first login for non-Administrador-Principal users must trigger a PIN e-mail; read that PIN from the mailbox and complete the login. Use `--allow-standard` only in this test. Expected security result: `status` shows `profile: Usuário` and `plugin_profile_allowed: false`, admin commands are rejected by the plugin, `accessible-pages` returns only explicitly granted pages, and `rls test-config` returns only that user's allowed dimension values.
+
+The smoke page proves platform wiring, not confidentiality of bundled static data. If a user asks for production RLS with sensitive data, generate or call a server endpoint that applies `/plataforma/api/rls/config` on the server side before returning rows.
 
 ## Dashboard Development Guidance
 

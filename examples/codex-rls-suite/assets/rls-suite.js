@@ -5,6 +5,15 @@ const percent = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFracti
 const params = new URLSearchParams(window.location.search);
 const pageId = params.get("pagina_id") || "codex-rls-suite-visao";
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function sum(rows, key) {
   return rows.reduce((acc, row) => acc + Number(row[key] || 0), 0);
 }
@@ -103,8 +112,8 @@ function renderRows(rows) {
   }
   body.innerHTML = rows.map((row) => `
     <tr>
-      <td>${row.regiao}</td>
-      <td>${row.plano}</td>
+      <td>${escapeHtml(row.regiao)}</td>
+      <td>${escapeHtml(row.plano)}</td>
       <td>${integer.format(row.clientes)}</td>
       <td>${currency.format(row.receita)}</td>
       <td>${percent.format(row.churn)}</td>
