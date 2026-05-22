@@ -186,14 +186,14 @@ Minimal manifest:
   "pages": [
     {
       "id": "codex-suite-overview",
-      "name": "Codex Suite Overview",
+      "name": "Overview",
       "route": "codex-suite-overview",
       "file": "overview.html",
       "description": "Executive dashboard route"
     },
     {
       "id": "codex-suite-forms",
-      "name": "Codex Suite Forms",
+      "name": "Forms",
       "route": "codex-suite-forms",
       "file": "forms.html",
       "description": "Interactive form route"
@@ -201,6 +201,8 @@ Minimal manifest:
   ]
 }
 ```
+
+Keep page names clean for the menu. Put workspace/client prefixes in `id` and `route`, not in `name`. The deploy helper handles this by creating the technical page id first and then restoring the clean display name, because the platform generates new page ids from the creation name.
 
 Deploy, replace existing page definitions if needed, then smoke test every route:
 

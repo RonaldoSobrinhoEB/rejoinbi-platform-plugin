@@ -1158,6 +1158,17 @@ def normalize_text(value: Any) -> str:
     return re.sub(r"\s+", " ", ascii_text).strip().lower()
 
 
+def slugify_page_id(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    ascii_text = unicodedata.normalize("NFKD", raw)
+    ascii_text = "".join(ch for ch in ascii_text if not unicodedata.combining(ch))
+    ascii_text = ascii_text.replace("ç", "c").replace("ñ", "n")
+    ascii_text = re.sub(r"\s+", "-", ascii_text)
+    ascii_text = re.sub(r"[^a-z0-9_-]+", "", ascii_text)
+    ascii_text = re.sub(r"-{2,}", "-", ascii_text).strip("-_")
+    return ascii_text or "pagina"
+
+
 def extract_session_identity(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"email": "", "profile": "", "permissions": []}
@@ -2310,6 +2321,31 @@ def page_payload_from_manifest(page: dict[str, Any], workspace: dict[str, Any], 
     return payload
 
 
+def manifest_page_id(page: dict[str, Any]) -> str:
+    return str(page.get("id") or page.get("page_id") or "").strip()
+
+
+def page_create_name(page: dict[str, Any], display_name: str, desired_id: str) -> str:
+    explicit = str(page.get("create_name") or page.get("technical_name") or "").strip()
+    if explicit:
+        return explicit
+    if desired_id and slugify_page_id(display_name) != desired_id:
+        return desired_id
+    return display_name
+
+
+def page_ids_to_replace(page: dict[str, Any], payload: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    for value in (
+        manifest_page_id(page),
+        slugify_page_id(payload.get("nome")),
+        slugify_page_id(page.get("name") or page.get("nome")),
+    ):
+        if value and value not in ids:
+            ids.append(value)
+    return ids
+
+
 def create_page_from_manifest(
     client: RejoinBIClient,
     workspace: dict[str, Any],
@@ -2319,12 +2355,48 @@ def create_page_from_manifest(
     replace: bool = False,
 ) -> dict[str, Any]:
     payload = page_payload_from_manifest(page, workspace, workspace_password)
-    page_id_hint = page.get("id") or page.get("page_id") or payload.get("rota") or payload.get("nome")
-    if replace and page_id_hint:
-        delete_page(client, str(page_id_hint), missing_ok=True)
+    display_name = str(payload.get("nome") or "").strip()
+    desired_id = manifest_page_id(page)
+    create_name = page_create_name(page, display_name, desired_id)
+    payload["nome"] = create_name
+    if replace:
+        for candidate_id in page_ids_to_replace(page, payload):
+            delete_page(client, candidate_id, missing_ok=True)
     data, _ = client.request("POST", "/plataforma/api/paginas", json=payload, timeout=60)
     result = data if isinstance(data, dict) else {"raw": data}
-    page_ref = result.get("page_id") or payload.get("rota") or page_id_hint
+    created_page_id = str(result.get("page_id") or "").strip()
+    result["display_name"] = display_name
+    result["create_name"] = create_name
+    if desired_id:
+        result["desired_page_id"] = desired_id
+    if desired_id and created_page_id and created_page_id != desired_id:
+        result["page_id_mismatch"] = {
+            "expected": desired_id,
+            "actual": created_page_id,
+            "note": "The platform generated the page id from the creation name.",
+        }
+    if created_page_id and display_name and display_name != create_name:
+        update_payload = {
+            "nome": display_name,
+            "container_id": payload.get("container_id"),
+            "arquivo": payload.get("arquivo") or "",
+            "rota": payload.get("rota") or "",
+            "icone": payload.get("icone") or "fas fa-chart-line",
+            "descricao": payload.get("descricao") or "",
+            "pai": payload.get("pai") or "",
+            "ativo": payload.get("ativo", True),
+            "rls": payload.get("rls", False),
+        }
+        if workspace_password:
+            update_payload["container_password"] = workspace_password
+        update_data, _ = client.request(
+            "PUT",
+            f"/plataforma/api/paginas/{quote(created_page_id, safe='')}",
+            json=update_payload,
+            timeout=60,
+        )
+        result["display_name_update"] = update_data if isinstance(update_data, dict) else {"raw": update_data}
+    page_ref = created_page_id or desired_id or payload.get("rota") or display_name
     if page_ref:
         try:
             resolved, _ = client.request("GET", f"/plataforma/api/capture/resolve-page/{quote(str(page_ref), safe='-_/')}", timeout=60)
@@ -2407,6 +2479,34 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
     client = make_client(args)
     manifest, manifest_path = load_manifest(args.manifest)
     pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    try:
+        accessible_payload, _ = client.request("GET", "/plataforma/api/accessible-pages", timeout=60)
+    except RejoinBIError as exc:
+        accessible_payload = {"success": False, "error": str(exc)}
+
+    def flatten_page_tree(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            roots = payload
+        elif isinstance(payload, dict):
+            roots = payload.get("pages") or payload.get("data") or payload.get("accessible_pages") or []
+        else:
+            roots = []
+        flat: list[dict[str, Any]] = []
+
+        def walk(items: Any) -> None:
+            if not isinstance(items, list):
+                return
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                flat.append(item)
+                walk(item.get("subpaginas") or item.get("children") or [])
+
+        walk(roots)
+        return flat
+
+    accessible_pages = flatten_page_tree(accessible_payload)
+    accessible_by_id = {str(item.get("id") or "").strip(): item for item in accessible_pages if str(item.get("id") or "").strip()}
     results = []
     for page in pages:
         page_ref = page.get("id") or page.get("page_id") or page.get("route") or page.get("rota") or page.get("name")
@@ -2421,14 +2521,53 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
             status_code = response.status_code
             expected = page.get("expect_text") or page.get("name") or ""
             html_ok = response.ok and (not expected or str(expected) in response.text)
+        resolved_page_id = str(resolved.get("resolved_page_id") or page_ref).strip() if isinstance(resolved, dict) else str(page_ref)
+        accessible_page = accessible_by_id.get(resolved_page_id, {})
+        resolved_container_name = str((resolved or {}).get("resolved_container_name") or "").strip() if isinstance(resolved, dict) else ""
+        resolved_container_id = str((resolved or {}).get("resolved_container_id") or accessible_page.get("container_id") or "").strip() if isinstance(resolved, dict) else str(accessible_page.get("container_id") or "").strip()
+        accessible_container_name = str(accessible_page.get("container_name") or "").strip() if isinstance(accessible_page, dict) else ""
+        browser_route = str(accessible_page.get("rota") or (resolved or {}).get("resolved_client_path") or page.get("route") or page.get("rota") or "").strip("/") if isinstance(accessible_page, dict) else ""
+        browser_status_code = None
+        browser_route_ok = False
+        if resolved_container_name:
+            from urllib.parse import urlencode
+            route_part = quote(browser_route, safe="/") if browser_route else ""
+            browser_path = f"/plataforma/{quote(resolved_container_name, safe='')}/client/{route_part}"
+            if not browser_path.endswith("/client/") and not route_part:
+                browser_path += "/"
+            browser_path = f"{browser_path}?{urlencode({'pagina_id': resolved_page_id, 'capture_strict': '1'})}"
+            browser_response = client.session.get(client.url(browser_path), timeout=args.timeout)
+            browser_status_code = browser_response.status_code
+            expected = page.get("expect_text") or page.get("name") or ""
+            browser_route_ok = browser_response.ok and (not expected or str(expected) in browser_response.text)
+        fallback_container = f"container_{resolved_container_id}" if resolved_container_id else ""
+        menu_safe = bool(accessible_container_name) or not fallback_container
+        menu_warning = ""
+        if fallback_container and not accessible_container_name:
+            menu_warning = (
+                "accessible-pages did not include container_name; older browser menu code can fall back "
+                f"to {fallback_container} and open a 404 URL before window.containers is ready."
+            )
         results.append({
             "page_ref": page_ref,
             "resolved": resolved,
             "status_code": status_code,
             "html_ok": html_ok,
+            "browser_status_code": browser_status_code,
+            "browser_route_ok": browser_route_ok,
+            "menu_safe": menu_safe,
+            "menu_warning": menu_warning,
+            "accessible_page": {
+                "id": accessible_page.get("id") if isinstance(accessible_page, dict) else None,
+                "name": accessible_page.get("nome") if isinstance(accessible_page, dict) else None,
+                "route": accessible_page.get("rota") if isinstance(accessible_page, dict) else None,
+                "file": accessible_page.get("arquivo") if isinstance(accessible_page, dict) else None,
+                "container_id": accessible_page.get("container_id") if isinstance(accessible_page, dict) else None,
+                "container_name": accessible_page.get("container_name") if isinstance(accessible_page, dict) else None,
+            },
         })
     print_payload({
-        "success": all(item.get("html_ok") for item in results),
+        "success": all(item.get("html_ok") and item.get("browser_route_ok") and item.get("menu_safe") for item in results),
         "manifest": str(manifest_path),
         "results": results,
         "count": len(results),
@@ -2502,18 +2641,36 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
         files_by_page = []
         seen_routes = set()
         seen_ids = set()
+        workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
+        workspace_name_for_pages = str(workspace_cfg.get("name") or manifest.get("workspace_name") or "").strip()
+        workspace_name_key = normalize_text(workspace_name_for_pages)
         for page in pages:
             if not isinstance(page, dict):
                 errors.append(f"Invalid manifest page entry: {page}")
                 continue
             page_id = str(page.get("id") or page.get("page_id") or "").strip()
+            page_display_name = str(page.get("name") or page.get("nome") or "").strip()
             route = str(page.get("route") or page.get("rota") or "").strip()
             file_name = str(page.get("file") or page.get("arquivo") or "").strip()
             if not page_id:
                 errors.append(f"Page missing id/page_id: {page}")
             elif page_id in seen_ids:
                 errors.append(f"Duplicate page id: {page_id}")
+            elif page_display_name and slugify_page_id(page_display_name) != page_id:
+                checks.append({
+                    "name": "page_id_display_name_decoupled",
+                    "page_id": page_id,
+                    "display_name": page_display_name,
+                    "create_name": page.get("create_name") or page.get("technical_name") or page_id,
+                    "message": "deploy-manifest will create using the technical id and then restore the clean display name.",
+                })
             seen_ids.add(page_id)
+            if workspace_name_key and page_display_name:
+                page_name_key = normalize_text(page_display_name)
+                if page_name_key == workspace_name_key or page_name_key.startswith(f"{workspace_name_key} -") or page_name_key.startswith(f"{workspace_name_key} "):
+                    warnings.append(
+                        f"Page '{page_display_name}' includes the workspace prefix. Keep visible page names clean and put the prefix only in id/page_id."
+                    )
             if not route:
                 warnings.append(f"Page {page_id or page.get('name')} has no custom route; Gerenciar Paginas will fall back to file route.")
             elif route in seen_routes:
@@ -2529,7 +2686,10 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
             if not page_file.exists():
                 errors.append(f"Page file not found: {file_name}")
             elif page_file.suffix.lower() != ".html":
-                warnings.append(f"Page {page_id or route} points to non-HTML file: {file_name}")
+                if startup_mode == "static":
+                    errors.append(f"Static page {page_id or route} must point to an .html file: {file_name}")
+                else:
+                    warnings.append(f"Page {page_id or route} points to non-HTML file: {file_name}")
             else:
                 internal_nav = find_html_links_to_local_pages(page_file)
                 if internal_nav:

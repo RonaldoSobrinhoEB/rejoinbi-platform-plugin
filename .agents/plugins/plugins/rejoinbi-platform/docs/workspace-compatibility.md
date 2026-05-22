@@ -8,6 +8,8 @@ These rules come from the platform Workspace and Gerenciar Paginas behavior. Use
 - Do not add an internal menu, sidebar, tab router, or SPA route switcher to change dashboard pages.
 - Let Gerenciar Paginas own page hierarchy, menu placement, icon, permissions, parent page, active status, route, and file binding.
 - In the manifest, each page should have its own `id`, `name`, `route`, and `file`.
+- Keep `name` clean because it is what appears in the Rejoin BI menu. Use `id` and `route` for technical prefixes such as the workspace/client slug.
+- When a clean `name` would generate a different technical ID, `deploy-manifest` creates the page with the technical ID and immediately updates the display name back to the clean menu label.
 - Shared CSS, JavaScript, images, and fonts can live in `assets/`.
 
 Good:
@@ -21,6 +23,19 @@ assets/app.css
 assets/app.js
 rejoinbi-app.json
 ```
+
+Good manifest page shape:
+
+```json
+{
+  "id": "rpvs-visao-geral",
+  "name": "Visao Geral",
+  "route": "rpvs-visao-geral",
+  "file": "overview.html"
+}
+```
+
+Avoid visible names like `RPVS - Visao Geral`; the prefix belongs in `id`/`route`.
 
 Avoid:
 

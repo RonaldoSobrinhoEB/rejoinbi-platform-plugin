@@ -15,7 +15,7 @@
   "pages": [
     {
       "id": "codex-platform-overview",
-      "name": "Codex Platform Overview",
+      "name": "Overview",
       "route": "codex-platform-overview",
       "file": "overview.html",
       "icon": "fas fa-chart-pie",
@@ -24,7 +24,7 @@
     },
     {
       "id": "codex-platform-sales",
-      "name": "Codex Platform Sales",
+      "name": "Sales",
       "route": "codex-platform-sales",
       "file": "sales.html",
       "icon": "fas fa-handshake",
@@ -33,7 +33,7 @@
     },
     {
       "id": "codex-platform-operations",
-      "name": "Codex Platform Operations",
+      "name": "Operations",
       "route": "codex-platform-operations",
       "file": "operations.html",
       "icon": "fas fa-hard-hat",
@@ -42,7 +42,7 @@
     },
     {
       "id": "codex-platform-forms",
-      "name": "Codex Platform Forms",
+      "name": "Forms",
       "route": "codex-platform-forms",
       "file": "forms.html",
       "icon": "fas fa-clipboard-check",
