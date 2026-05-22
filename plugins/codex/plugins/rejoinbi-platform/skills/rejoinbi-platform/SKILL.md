@@ -33,7 +33,11 @@ The plugin client enforces the operational rule for this platform: persisted ses
 
 ## Default Auth Flow
 
-When a user asks to connect a tenant, expect the full tenant host/URL, not only the short subdomain. Use `subdomain.rejoinbi.com.br` as the placeholder in examples and messages. Treat messages like `tenant sima.rejoinbi.com.br`, `url sima.rejoinbi.com.br`, or just `sima.rejoinbi.com.br` as the tenant host, then run the ensure flow without asking for password or PIN in chat:
+Connection comes first. Before a tenant host is validated and an allowed authenticated session is confirmed, do not list capabilities, ask what the user wants to do, or ask clarifying questions. If the user has not supplied a tenant host, say only that they should send the full host in the format `subdomain.rejoinbi.com.br`.
+
+Never use a real-looking tenant host in examples or assistant text. Do not use customer/site names as examples. The only placeholder tenant in plugin instructions and user-facing examples is `subdomain.rejoinbi.com.br`.
+
+When a user provides a full tenant host/URL, treat it as the tenant immediately and run the ensure flow without asking for password or PIN in chat:
 
 ```powershell
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
@@ -41,13 +45,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 
 This first checks whether the tenant already has a saved session and validates that the profile is `Administrador Principal`, `Master`, or `Administrador`. If the session is missing, expired, or not allowed, it opens a local browser page, prefilled with the resolved tenant URL, where the user enters email, password, and PIN if required. The helper posts to the tenant login API, validates the profile, then saves only the session cookies in `%USERPROFILE%\.rejoinbi-platform`.
 
-Example: if the user says `nome e sima.rejoinbi.com.br`, immediately run:
-
-```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant sima.rejoinbi.com.br ensure
-```
-
-Continue only after `success: true`, `connected: true`, and `profile_allowed: true` are confirmed.
+Continue only after `success: true`, `connected: true`, and `profile_allowed: true` are confirmed. Only after that may you mention listing workspaces, publishing dashboards, uploading files, creating pages, or other plugin actions.
 
 If any command returns `HTTP 401`, `Sessao expirada`, or says there is no saved session, immediately run `ensure` for the same tenant host instead of asking the user to configure `REJOINBI_PASSWORD`.
 
