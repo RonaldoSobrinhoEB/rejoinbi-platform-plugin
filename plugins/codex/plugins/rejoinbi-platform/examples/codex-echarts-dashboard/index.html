@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex ECharts Test Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7faf9;
+      --ink: #10201c;
+      --muted: #61706c;
+      --panel: #ffffff;
+      --line: #d9e4df;
+      --teal: #0f766e;
+      --gold: #d99a27;
+      --rose: #d75b73;
+      --blue: #3274a8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    header {
+      padding: 22px 28px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 24px;
+      font-weight: 750;
+    }
+    .sub {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    main {
+      padding: 22px 28px;
+      display: grid;
+      gap: 16px;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric,
+    .chart {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(16, 32, 28, 0.04);
+    }
+    .metric {
+      min-height: 92px;
+      padding: 16px;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .value {
+      margin-top: 10px;
+      font-size: 28px;
+      font-weight: 760;
+    }
+    .delta {
+      margin-top: 4px;
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 16px;
+    }
+    .chart {
+      min-height: 380px;
+      padding: 16px;
+    }
+    .chart h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 720;
+    }
+    .canvas {
+      width: 100%;
+      height: 315px;
+    }
+    @media (max-width: 840px) {
+      header, main { padding-left: 16px; padding-right: 16px; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .metrics { grid-template-columns: 1fr; }
+      h1 { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Codex ECharts Test Dashboard</h1>
+    <p class="sub">Smoke test for Rejoin BI plugin upload, routing, and ECharts rendering.</p>
+  </header>
+  <main>
+    <section class="metrics" aria-label="Indicadores">
+      <article class="metric"><div class="label">Receita</div><div class="value">R$ 8,4 mi</div><div class="delta">+12,8%</div></article>
+      <article class="metric"><div class="label">Margem</div><div class="value">31,6%</div><div class="delta">+3,1 pp</div></article>
+      <article class="metric"><div class="label">Leads</div><div class="value">18.240</div><div class="delta">+9,4%</div></article>
+      <article class="metric"><div class="label">Conversao</div><div class="value">7,9%</div><div class="delta">+1,2 pp</div></article>
+    </section>
+    <section class="grid">
+      <article class="chart">
+        <h2>Performance mensal</h2>
+        <div id="lineChart" class="canvas"></div>
+      </article>
+      <article class="chart">
+        <h2>Mix por area</h2>
+        <div id="pieChart" class="canvas"></div>
+      </article>
+    </section>
+  </main>
+  <script>
+    const palette = ['#0f766e', '#3274a8', '#d99a27', '#d75b73', '#5b6d61'];
+    const line = echarts.init(document.getElementById('lineChart'));
+    line.setOption({
+      color: palette,
+      tooltip: { trigger: 'axis' },
+      legend: { top: 0 },
+      grid: { left: 42, right: 20, top: 48, bottom: 36 },
+      xAxis: { type: 'category', boundaryGap: false, data: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun'] },
+      yAxis: { type: 'value', axisLabel: { formatter: 'R$ {value}M' } },
+      series: [
+        { name: 'Realizado', type: 'line', smooth: true, areaStyle: { opacity: 0.1 }, data: [4.1, 5.0, 5.8, 6.3, 7.4, 8.4] },
+        { name: 'Meta', type: 'line', smooth: true, lineStyle: { type: 'dashed' }, data: [4.0, 4.8, 5.5, 6.1, 6.8, 7.5] }
+      ]
+    });
+    const pie = echarts.init(document.getElementById('pieChart'));
+    pie.setOption({
+      color: palette,
+      tooltip: { trigger: 'item' },
+      legend: { bottom: 0 },
+      series: [{
+        type: 'pie',
+        radius: ['45%', '72%'],
+        center: ['50%', '45%'],
+        label: { formatter: '{b}\\n{d}%' },
+        data: [
+          { value: 38, name: 'Vendas' },
+          { value: 24, name: 'Marketing' },
+          { value: 18, name: 'Financeiro' },
+          { value: 12, name: 'Obras' },
+          { value: 8, name: 'Outros' }
+        ]
+      }]
+    });
+    window.addEventListener('resize', () => {
+      line.resize();
+      pie.resize();
+    });
+  </script>
+</body>
+</html>

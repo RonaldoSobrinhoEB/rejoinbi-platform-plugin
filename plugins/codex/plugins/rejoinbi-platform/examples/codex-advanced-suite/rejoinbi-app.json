@@ -1,0 +1,53 @@
+{
+  "name": "Codex Platform Pages Suite",
+  "app_root": ".",
+  "replace_pages": true,
+  "workspace": {
+    "name": "codex-platform-pages-20260522",
+    "create": true,
+    "description": "Codex validation workspace using one standalone HTML file per platform-managed page."
+  },
+  "upload": {
+    "startup_mode": "static",
+    "auto_start": true,
+    "exclude": [".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"]
+  },
+  "pages": [
+    {
+      "id": "codex-platform-overview",
+      "name": "Codex Platform Overview",
+      "route": "codex-platform-overview",
+      "file": "overview.html",
+      "icon": "fas fa-chart-pie",
+      "description": "Standalone executive dashboard registered in Gerenciar Paginas.",
+      "expect_text": "Executive Overview"
+    },
+    {
+      "id": "codex-platform-sales",
+      "name": "Codex Platform Sales",
+      "route": "codex-platform-sales",
+      "file": "sales.html",
+      "icon": "fas fa-handshake",
+      "description": "Standalone sales dashboard registered in Gerenciar Paginas.",
+      "expect_text": "Sales Intelligence"
+    },
+    {
+      "id": "codex-platform-operations",
+      "name": "Codex Platform Operations",
+      "route": "codex-platform-operations",
+      "file": "operations.html",
+      "icon": "fas fa-hard-hat",
+      "description": "Standalone operations dashboard registered in Gerenciar Paginas.",
+      "expect_text": "Operations Cockpit"
+    },
+    {
+      "id": "codex-platform-forms",
+      "name": "Codex Platform Forms",
+      "route": "codex-platform-forms",
+      "file": "forms.html",
+      "icon": "fas fa-clipboard-check",
+      "description": "Standalone forms page registered in Gerenciar Paginas.",
+      "expect_text": "Forms and Scenario Lab"
+    }
+  ]
+}
