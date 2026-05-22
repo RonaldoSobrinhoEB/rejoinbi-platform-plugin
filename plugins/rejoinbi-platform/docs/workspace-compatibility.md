@@ -11,6 +11,7 @@ These rules come from the platform Workspace and Gerenciar Paginas behavior. Use
 - Keep `name` clean because it is what appears in the Rejoin BI menu. Use `id` for technical prefixes such as the workspace/client slug.
 - For static dashboards, prefer `route` equal to the HTML file path without `.html` so the platform route resolver, file binding, and smoke test all agree.
 - Use accents in visible `name` values according to the dashboard language. For pt-BR, write `Visão Geral`, `Operações`, `Configuração`, `Métricas`, etc. Keep accents out of `id`, `route`, and filenames.
+- Save manifests as UTF-8 and run `validate-app` before deploy. A visible label containing `?` inside words (`Vis?o`, `Opera??es`) or mojibake (`VisÃ£o`) is a blocking error because it means the label was corrupted before reaching Gerenciar Paginas.
 - When a clean `name` would generate a different technical ID, `deploy-manifest` creates the page with the technical ID and immediately updates the display name back to the clean menu label.
 - Shared CSS, JavaScript, images, and fonts can live in `assets/`.
 

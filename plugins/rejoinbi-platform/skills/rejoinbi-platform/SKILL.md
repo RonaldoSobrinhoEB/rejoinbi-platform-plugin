@@ -264,6 +264,8 @@ Minimal manifest:
 
 Keep page names clean and localized for the menu. In pt-BR, use accents in `name` (`Visão Geral`, `Operações`, `Configuração`, `Métricas`) while keeping `id`, `route`, and `file` ASCII. Put workspace/client prefixes in `id`; for static dashboards, make `route` equal to the HTML file path without `.html` unless there is a deliberate custom route. The deploy helper creates the technical page id first and then restores the clean display name, because the platform generates new page ids from the creation name.
 
+When generating manifests on Windows, write `rejoinbi-app.json` as a UTF-8 file (or let Python/JSON escape accents) instead of passing accented labels through a PowerShell command string. Run `validate-app` before any deploy; it must fail if visible text contains corrupted markers such as `Vis?o`, `Opera??es`, or mojibake like `VisÃ£o`.
+
 Deploy, replace existing page definitions if needed, then smoke test every route:
 
 ```powershell
