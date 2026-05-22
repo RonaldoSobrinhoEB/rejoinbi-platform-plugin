@@ -26,7 +26,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
 - "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with explicit `--tenant`.
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
-- "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII.
+- "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
 - "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
 - "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`. For BI exports with accented tab slugs or parquet data, use `bi-normalize-export` before uploading the workspace package.
 - "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
@@ -148,6 +148,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" ai-config --page-id
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" storage-path
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" audit dashboard
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance verify-hierarchy
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance audit-encoding
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls pages
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls page-config --page-id pagina-id --container-id 12
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls test-config --page-id pagina-id --container-id 12
@@ -205,6 +206,8 @@ BI Studio publish rule: `publish-bi` performs post-publish runtime validation. I
 BI Studio route safety rule: direct `publish-bi` blocks projects whose technical tab slugs contain accents/non-ASCII characters, because those slugs become workspace files/routes and can produce broken platform pages. Keep visible tab/page names localized with accents, but before production deployment export the BI project, run `bi-normalize-export --remove-old`, upload the normalized folder, create pages with ASCII `file/route`, and run `smoke-pages`.
 
 BI Studio routing rule: visible tab/page names may contain accents, but technical workspace files must be ASCII. If an export has `visão-geral.html`, `rls-usuário.html`, matching static folders, matching manifest slugs, or an invalid Python literal such as `replace('\', '/')`, run `bi-normalize-export --path <export> --remove-old`, upload the normalized folder, update pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
+
+Page text integrity rule: `create-page` and `update-page` block corrupted visible text and block non-ASCII technical `file/route` values. After working on older tenants or after a weak model changed page text, run `page-maintenance audit-encoding`; if it reports issues, fix each exact page id with `update-page` using UTF-8 names/descriptions and ASCII routes/files.
 
 ## Common Workflows
 

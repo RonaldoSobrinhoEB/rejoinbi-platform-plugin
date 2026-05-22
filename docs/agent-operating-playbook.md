@@ -49,7 +49,7 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit tenant; if password requested, pass workspace password locally |
 | "remover workspace", "excluir workspace" | Safe workspace deletion | `delete-workspace --workspace ...` dry-run | `delete-workspace --yes --confirm-name ... --confirm-id ...` | Block if password-protected until `--workspace-password` validates; check page tree |
 | "senha do workspace" | Validate/unlock protected workspace | `workspaceall` | `validate-workspace --workspace ...` or deletion with `--workspace-password` | Never delete protected workspace without platform password validation |
-| "criar pagina", "rota", "menu", "pai/filho/neto" | Gerenciar Paginas | `pages --all-containers`, `page-maintenance verify-hierarchy` | `create-page`, `update-page`, `set-page-order`, `delete-page` | Use clean names with accents; technical ids/routes/files ASCII |
+| "criar pagina", "rota", "menu", "pai/filho/neto" | Gerenciar Paginas | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | `create-page`, `update-page`, `set-page-order`, `delete-page` | Use clean names with accents; technical ids/routes/files ASCII |
 | "dashboard", "painel", "ECharts", "criar 3 paginas" | Generate and publish dashboard package | Inspect local files/data; `validate-app` | `deploy-manifest` | One standalone HTML per Rejoin BI page; `smoke-pages` must pass |
 | "publicar BI", "BI Studio" | BI Studio project work | `studio-inventory`, `bi-projects` | `publish-bi` or `bi-create-project` | Project id/uid and workspace target explicit |
 | "Data Engine", "datasets", "repositorio", "conexao banco" | Data Engine work | `studio-inventory`, then project-scoped `data-engine` read | `data-engine create-*`, `terminal-command`, `execute-code` | Project id/uid required; do not run code without user intent |
@@ -117,11 +117,13 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-page --pa
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-page-order --page-id child-id --parent parent-id --position 20
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br resolve-page --page-ref page-id
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance verify-hierarchy
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance audit-encoding
 ```
 
 Visible page names should match the user's language and may include accents. Technical page ids, routes, and filenames should stay ASCII and stable.
 
 If a page update unexpectedly moves a child page out of its parent, immediately run `update-page --parent <parent-id>` or `set-page-order --parent <parent-id>` and re-run `page-maintenance verify-hierarchy`. Treat duplicate order or `pai null` warnings as not ready for production.
+If page names or descriptions show `?` in place of accents, run `page-maintenance audit-encoding`, then fix the exact page ids with `update-page` using UTF-8 visible text and ASCII `route/file`.
 
 ### Manifest Dashboard Deployment
 

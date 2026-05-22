@@ -1663,6 +1663,33 @@ def require_clean_json_text(value: Any, *, context: str) -> None:
         )
 
 
+def is_ascii_value(value: Any) -> bool:
+    try:
+        str(value or "").encode("ascii")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def validate_page_payload(payload: dict[str, Any], *, context: str) -> None:
+    require_clean_json_text(payload, context=context)
+    technical_errors: list[str] = []
+    for field in ("id", "page_id", "hierarquia_id", "rota", "route", "arquivo", "file"):
+        value = payload.get(field)
+        if value in (None, ""):
+            continue
+        if not is_ascii_value(value):
+            recommended = slugify_page_id(str(value).rsplit(".", 1)[0])
+            if str(value).lower().endswith(".html"):
+                recommended = f"{recommended}.html"
+            technical_errors.append(
+                f"{context}.{field}={value!r} contains non-ASCII characters. "
+                f"Use accents only in visible name/description; use ASCII route/file like {recommended!r}."
+            )
+    if technical_errors:
+        raise RejoinBIError("\n".join(technical_errors))
+
+
 def response_requires_pin(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -4070,8 +4097,94 @@ def cmd_menu_maintenance(args: argparse.Namespace) -> int:
     return 0
 
 
+PAGE_ENCODING_AUDIT_FIELDS = (
+    "nome", "name", "descricao", "description", "rota", "route", "arquivo", "file",
+)
+
+
+def page_encoding_audit(client: RejoinBIClient) -> dict[str, Any]:
+    sources: list[tuple[str, list[dict[str, Any]]]] = []
+    try:
+        sources.append((
+            "paginas",
+            list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False),
+        ))
+    except RejoinBIError as exc:
+        sources.append(("paginas_error", [{"error": str(exc)}]))
+    try:
+        accessible_payload, _ = client.request("GET", "/plataforma/api/accessible-pages", timeout=60)
+        sources.append(("accessible-pages", flatten_page_tree(accessible_payload)))
+    except RejoinBIError as exc:
+        sources.append(("accessible-pages_error", [{"error": str(exc)}]))
+
+    issues: list[dict[str, Any]] = []
+    suggestions: list[dict[str, Any]] = []
+    checked_keys: set[str] = set()
+    issue_keys: set[tuple[str, str, str, str]] = set()
+    suggestion_keys: set[tuple[str, str, str, str]] = set()
+
+    for source, pages in sources:
+        for page in pages:
+            if not isinstance(page, dict):
+                continue
+            page_ref = safe_str(page.get("id") or page.get("hierarquia_id") or page.get("rota") or page.get("nome"))
+            checked_keys.add(f"{source}:{page_ref or id(page)}")
+            for field in PAGE_ENCODING_AUDIT_FIELDS:
+                if field not in page:
+                    continue
+                value = page.get(field)
+                text = safe_str(value)
+                if not text:
+                    continue
+                key = (page_ref, field, text, source)
+                if looks_like_corrupted_text(text) and key not in issue_keys:
+                    issue_keys.add(key)
+                    issues.append({
+                        "source": source,
+                        "page_id": safe_str(page.get("id")),
+                        "name": page_name(page),
+                        "field": field,
+                        "value": text,
+                        "container_id": page.get("container_id"),
+                        "container_name": safe_str(page.get("container_name")),
+                        "parent_id": safe_str(page.get("pai") or page.get("pai_real")),
+                        "message": "Text appears corrupted before/inside the platform. Fix the page field manually or with update-page using UTF-8 text.",
+                    })
+                if field in {"nome", "name", "descricao", "description"}:
+                    suggestion = suggest_pt_br_display_name(text)
+                    suggestion_key = (page_ref, field, text, source)
+                    if suggestion and suggestion != text and suggestion_key not in suggestion_keys:
+                        suggestion_keys.add(suggestion_key)
+                        suggestions.append({
+                            "source": source,
+                            "page_id": safe_str(page.get("id")),
+                            "name": page_name(page),
+                            "field": field,
+                            "current": text,
+                            "suggested_pt_br": suggestion,
+                            "container_id": page.get("container_id"),
+                            "container_name": safe_str(page.get("container_name")),
+                        })
+
+    return {
+        "success": True,
+        "encoding_ok": len(issues) == 0,
+        "checked_page_entries": len(checked_keys),
+        "issue_count": len(issues),
+        "issues": issues,
+        "pt_br_suggestion_count": len(suggestions),
+        "pt_br_suggestions": suggestions[:50],
+        "truncated_suggestions": len(suggestions) > 50,
+    }
+
+
 def cmd_page_maintenance(args: argparse.Namespace) -> int:
     client = make_client(args)
+    if args.action == "audit-encoding":
+        data = page_encoding_audit(client)
+        print_payload(data, as_json=args.json)
+        return 0 if data.get("encoding_ok") or not getattr(args, "strict", False) else 2
+
     action_map = {
         "verify-orphan-permissions": ("GET", "/plataforma/api/paginas/verificar-permissoes-orfas", False),
         "clear-orphan-permissions": ("POST", "/plataforma/api/paginas/limpar-permissoes-orfas", True),
@@ -4881,6 +4994,7 @@ def cmd_create_page(args: argparse.Namespace) -> int:
     }
     if args.workspace_password:
         payload["container_password"] = args.workspace_password
+    validate_page_payload(payload, context="create-page payload")
     data, _ = client.request("POST", "/plataforma/api/paginas", json=payload, timeout=60)
     print_payload(data, as_json=args.json)
     return 0
@@ -4949,6 +5063,10 @@ def cmd_delete_page(args: argparse.Namespace) -> int:
 
 def cmd_update_page(args: argparse.Namespace) -> int:
     client = make_client(args)
+    current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
+    current_page = resolve_page_from_pages(current_pages, args.page_id)
+    if current_page is None:
+        raise RejoinBIError(f"Page not found: {args.page_id}")
     payload: dict[str, Any] = {}
     if args.name:
         payload["nome"] = args.name
@@ -4965,8 +5083,14 @@ def cmd_update_page(args: argparse.Namespace) -> int:
     if args.workspace:
         workspace = resolve_workspace(client, args.workspace)
         payload["container_id"] = workspace.get("id")
+    elif current_page.get("container_id") is not None:
+        payload["container_id"] = current_page.get("container_id")
     if args.workspace_password:
         payload["container_password"] = args.workspace_password
+    if args.parent is None:
+        current_parent = safe_str(current_page.get("pai") or current_page.get("pai_real"))
+        if current_parent:
+            payload["pai"] = current_parent
     if args.active:
         payload["ativo"] = True
     if args.inactive:
@@ -4977,6 +5101,7 @@ def cmd_update_page(args: argparse.Namespace) -> int:
         payload["rls"] = False
     if not payload:
         raise RejoinBIError("No page changes provided.")
+    validate_page_payload(payload, context="update-page payload")
     data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(args.page_id, safe='')}", json=payload, timeout=60)
     print_payload(data, as_json=args.json)
     return 0
@@ -5611,6 +5736,26 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
             }
         results.append(result)
 
+    try:
+        encoding_audit = page_encoding_audit(client)
+        results.append({
+            "name": "page-encoding",
+            "required": False,
+            "status": "ok" if encoding_audit.get("encoding_ok") else "tenant_warning",
+            "summary": {
+                "encoding_ok": bool(encoding_audit.get("encoding_ok")),
+                "issue_count": encoding_audit.get("issue_count", 0),
+                "pt_br_suggestion_count": encoding_audit.get("pt_br_suggestion_count", 0),
+            },
+        })
+    except RejoinBIError as exc:
+        results.append({
+            "name": "page-encoding",
+            "required": False,
+            "status": classify_smoke_error(str(exc)),
+            "error": str(exc),
+        })
+
     required_failures = [item for item in results if item.get("required") and item.get("status") != "ok"]
     optional_issues = [item for item in results if not item.get("required") and item.get("status") != "ok"]
     success = not required_failures and (not args.strict or not optional_issues)
@@ -5902,7 +6047,7 @@ def should_ignore_export(dir_path: str, names: list[str]) -> set[str]:
 
 
 def write_install_notes(target: Path, package_zip: Path | None) -> None:
-    zip_line = f"- Zip package: `{package_zip.name}`\n" if package_zip else ""
+    zip_line = f"- Zip package with manifest at zip root: `{package_zip.name}`\n" if package_zip else ""
     notes = f"""# Rejoin BI Platform Plugin
 
 This folder is a shareable Codex plugin package generated from:
@@ -5971,8 +6116,14 @@ def cmd_export_package(args: argparse.Namespace) -> int:
 
     package_zip = None
     if not args.no_zip:
-        zip_base = destination / "rejoinbi-platform"
-        zip_path = Path(shutil.make_archive(str(zip_base), "zip", root_dir=destination, base_dir="rejoinbi-platform"))
+        zip_path = destination / "rejoinbi-platform.zip"
+        if zip_path.exists():
+            zip_path.unlink()
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for source in sorted(package_dir.rglob("*")):
+                if source.is_dir():
+                    continue
+                archive.write(source, source.relative_to(package_dir).as_posix())
         package_zip = zip_path
 
     write_install_notes(destination, package_zip)
@@ -6767,9 +6918,11 @@ def build_parser() -> argparse.ArgumentParser:
         "verify-orphan-permissions", "clear-orphan-permissions",
         "verify-conflicts", "fix-conflicts",
         "verify-hierarchy", "fix-hierarchy",
+        "audit-encoding",
         "clear-fictitious-orphans", "clear-rls-cache",
     ])
     p.add_argument("--yes", action="store_true")
+    p.add_argument("--strict", action="store_true", help="For audit actions, exit non-zero when issues are found")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_payload_args(p)
     p.set_defaults(func=cmd_page_maintenance)

@@ -114,7 +114,9 @@ After publishing:
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py pages --workspace <workspace-name>
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
+python .\scripts\rejoinbi.py page-maintenance audit-encoding
 python .\scripts\rejoinbi.py page-files --workspace <workspace-name>
 ```
 
 Use `--strict` with `validate-app` when warnings should block the publish.
+Use `page-maintenance audit-encoding --strict` when existing page labels and descriptions must be free of mojibake or `?` replacement before considering a tenant production-ready.
