@@ -6,11 +6,19 @@ Public Codex plugin marketplace for the Rejoin BI Platform plugin.
 
 Use the "Adicionar marketplace" dialog with:
 
-- Origem: this GitHub repository URL
+- Origem: `https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin.git`
 - Referencia do Git: `main`
-- Caminhos esparsos: `plugins/codex`
+- Caminhos esparsos: leave empty
 
-Codex will find `plugins/codex/marketplace.json` and install the plugin from `plugins/codex/plugins/rejoinbi-platform`.
+Codex validates the marketplace from the repository root, so the root `marketplace.json`
+points to `plugins/codex/plugins/rejoinbi-platform`.
+
+If your Codex build requires sparse paths, use both paths below, each on its own line:
+
+```text
+marketplace.json
+plugins/codex/plugins/rejoinbi-platform
+```
 
 ## Plugin
 
