@@ -83,6 +83,47 @@ WORKSPACE_PASSWORD_VALUE_FIELDS = (
     "password_hash",
     "senha_hash",
 )
+DATA_ENGINE_PROJECT_ACTIONS = {
+    "session-status",
+    "db-connections",
+    "create-db-connection",
+    "test-db-connection",
+    "query-preview",
+    "query-materialize",
+    "ai-sql-query",
+    "repository-list",
+    "repository-content",
+    "repository-global-context",
+    "repository-execute-global-context",
+    "repository-manual-table",
+    "create-manual-table",
+    "create-folder",
+    "move",
+    "order",
+    "delete",
+    "datasets-list",
+    "create-dataset",
+    "duplicate-dataset",
+    "delete-dataset",
+    "link-dataset",
+    "unlink-dataset",
+    "list-files",
+    "preview-file",
+    "dataset-get",
+    "save-column-types",
+    "save-notebook-state",
+    "finalize-dataset",
+    "toggle-visibility",
+    "execute-code",
+    "agent-mine",
+    "chat",
+    "load-chat",
+    "cancel-execution",
+    "reset-session",
+    "remove-variable",
+    "terminal-command",
+    "terminal-auto-install",
+}
 
 
 class RejoinBIError(RuntimeError):
@@ -125,7 +166,7 @@ def utc_now() -> str:
 def read_json(path: Path, default: Any) -> Any:
     try:
         if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return default
     return default
@@ -1417,7 +1458,17 @@ def cmd_browser_login(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     client = make_client(args)
     data, _ = client.request("GET", "/plataforma/api/check-session", timeout=30)
-    identity = extract_session_identity(data)
+    saved_session = read_json(client.session_path, {})
+    saved_context = saved_session.get("auth_context") if isinstance(saved_session, dict) else {}
+    saved_identity = saved_session.get("identity") if isinstance(saved_session, dict) else {}
+    saved_admin_principal = isinstance(saved_context, dict) and truthy_flag(saved_context.get("admin_principal_no_pin"))
+    identity = extract_session_identity(data, admin_principal_hint=saved_admin_principal)
+    if isinstance(saved_identity, dict):
+        if not identity.get("email") and saved_identity.get("email"):
+            identity["email"] = saved_identity.get("email")
+        if saved_admin_principal:
+            identity["profile"] = "Administrador Principal"
+            identity["profile_source"] = "saved_no_pin_login"
     if isinstance(data, dict):
         data = {
             **data,
@@ -2105,7 +2156,7 @@ def load_json_file(path: str) -> Any:
     payload_path = Path(path).expanduser().resolve()
     if not payload_path.is_file():
         raise RejoinBIError(f"JSON file not found: {payload_path}")
-    return json.loads(payload_path.read_text(encoding="utf-8"))
+    return json.loads(payload_path.read_text(encoding="utf-8-sig"))
 
 
 def image_file_to_data_uri(path: str) -> str:
@@ -2527,6 +2578,44 @@ def path_with_query(path: str, params: dict[str, Any] | None = None) -> str:
     return f"{path}?{urlencode(clean, doseq=True)}"
 
 
+def payload_has_project_reference(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("project_id") or payload.get("project_uid") or payload.get("projectId") or payload.get("projectUid"))
+
+
+def payload_summary(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, list):
+        return {"type": "list", "count": len(payload)}
+    if isinstance(payload, dict):
+        summary: dict[str, Any] = {"type": "object", "keys": sorted(str(key) for key in payload.keys())[:12]}
+        for key in ("count", "total", "success", "status", "message"):
+            if key in payload and isinstance(payload.get(key), (str, int, float, bool, type(None))):
+                summary[key] = payload.get(key)
+        for key in ("users", "containers", "pages", "data", "items", "groups", "announcements", "sessions"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                summary[f"{key}_count"] = len(value)
+        return summary
+    return {"type": type(payload).__name__}
+
+
+def classify_smoke_error(error: str) -> str:
+    if "HTTP 401" in error:
+        return "session_expired"
+    if "HTTP 403" in error and "local_only" in error:
+        return "blocked_local_only"
+    if "HTTP 403" in error:
+        return "forbidden"
+    if "HTTP 404" in error:
+        return "not_available"
+    if "HTTP 400" in error and re.search(r"project[_ ]?(id|uid)|Project ID", error, flags=re.I):
+        return "requires_project"
+    if "HTTP 500" in error:
+        return "tenant_error"
+    return "failed"
+
+
 def require_yes(args: argparse.Namespace, message: str) -> None:
     if not getattr(args, "yes", False):
         raise RejoinBIError(message)
@@ -2940,13 +3029,13 @@ def cmd_codex_keys(args: argparse.Namespace) -> int:
 def cmd_route_map(args: argparse.Namespace) -> int:
     client = make_client(args)
     action_map = {
-        "routes": ("GET", "/plataforma/api/route-mapping/routes", False),
-        "route": ("GET", f"/plataforma/api/route-mapping/routes/{quote(required_arg(args, 'route_name', '--route-name'))}", False),
-        "uploads": ("GET", "/plataforma/api/route-mapping/uploads", False),
-        "scan": ("POST", "/plataforma/api/route-mapping/scan", False),
-        "clear": ("POST", "/plataforma/api/route-mapping/clear", True),
+        "routes": lambda: ("GET", "/plataforma/api/route-mapping/routes", False),
+        "route": lambda: ("GET", f"/plataforma/api/route-mapping/routes/{quote(required_arg(args, 'route_name', '--route-name'))}", False),
+        "uploads": lambda: ("GET", "/plataforma/api/route-mapping/uploads", False),
+        "scan": lambda: ("POST", "/plataforma/api/route-mapping/scan", False),
+        "clear": lambda: ("POST", "/plataforma/api/route-mapping/clear", True),
     }
-    method, path, destructive = action_map[args.action]
+    method, path, destructive = action_map[args.action]()
     if destructive:
         require_yes(args, f"{args.action} changes route mapping state and requires --yes.")
     data, _ = client.request(method, path, json={} if method != "GET" else None, timeout=args.timeout)
@@ -3032,6 +3121,19 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
     if not isinstance(payload, dict):
         raise RejoinBIError("Data Engine payload must be a JSON object.")
     query_params = parse_query_params(args)
+    if getattr(args, "project_id", None):
+        query_params["project_id"] = args.project_id
+    if getattr(args, "project_uid", None):
+        query_params["project_uid"] = args.project_uid
+    if args.action in DATA_ENGINE_PROJECT_ACTIONS and not (
+        query_params.get("project_id")
+        or query_params.get("project_uid")
+        or payload_has_project_reference(payload)
+    ):
+        raise RejoinBIError(
+            f"data-engine {args.action} requires --project-id, --project-uid, "
+            "or a JSON payload containing project_id/project_uid."
+        )
     base = "/plataforma/data-engine"
     action_map = {
         "status": lambda: ("GET", f"{base}/api/status", False),
@@ -3491,7 +3593,7 @@ def load_manifest(path: str) -> tuple[dict[str, Any], Path]:
     manifest_path = Path(path).expanduser().resolve()
     if not manifest_path.is_file():
         raise RejoinBIError(f"Manifest not found: {manifest_path}")
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload = load_json_file(str(manifest_path))
     if not isinstance(payload, dict):
         raise RejoinBIError("Manifest must contain a JSON object.")
     return payload, manifest_path
@@ -3863,6 +3965,93 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_smoke_admin(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    checks: list[dict[str, Any]] = [
+        {"name": "session-status", "method": "GET", "path": "/plataforma/api/session-status", "required": True},
+        {"name": "check-session", "method": "GET", "path": "/plataforma/api/check-session", "required": True},
+        {"name": "workspaces", "method": "GET", "path": "/plataforma/api/containers", "required": True},
+        {"name": "users", "method": "GET", "path": "/plataforma/api/users", "required": True},
+        {"name": "sectors", "method": "GET", "path": "/plataforma/api/setores", "required": True},
+        {"name": "permissive-pages", "method": "GET", "path": "/plataforma/api/permissive-pages", "required": True},
+        {"name": "user-presence", "method": "GET", "path": "/plataforma/api/users-presence", "required": False},
+        {"name": "groups", "method": "GET", "path": "/plataforma/api/grupos", "required": False},
+        {"name": "announcements", "method": "GET", "path": "/plataforma/api/anuncios/historico", "required": False},
+        {"name": "platform-config", "method": "GET", "path": "/plataforma/api/platform-config", "required": True},
+        {"name": "colors-config", "method": "GET", "path": "/plataforma/api/cores-config", "required": True},
+        {"name": "menu", "method": "GET", "path": "/plataforma/api/menu", "required": True},
+        {"name": "menu-duplicates", "method": "GET", "path": "/plataforma/api/check-menu-duplicates", "required": False},
+        {
+            "name": "pages-all",
+            "method": "GET",
+            "path": "/plataforma/api/paginas",
+            "params": {"all_containers": "true", "include_inactive": "true", "exclude_fictitious": "false"},
+            "required": True,
+        },
+        {"name": "accessible-pages", "method": "GET", "path": "/plataforma/api/accessible-pages", "required": True},
+        {"name": "page-hierarchy", "method": "GET", "path": "/plataforma/api/paginas/verificar-hierarquia", "required": False},
+        {"name": "page-orphan-permissions", "method": "GET", "path": "/plataforma/api/paginas/verificar-permissoes-orfas", "required": False},
+        {"name": "rls-pages", "method": "GET", "path": "/plataforma/api/rls-pages", "required": False},
+        {"name": "audit-dashboard", "method": "GET", "path": "/plataforma/api/audit/dashboard", "required": False},
+        {"name": "sleep-manager-status", "method": "GET", "path": "/plataforma/api/sleep-manager/status", "required": False},
+        {"name": "email-sessions", "method": "GET", "path": "/plataforma/api/email/sessions", "required": False},
+        {"name": "whatsapp-sessions", "method": "GET", "path": "/plataforma/api/whatsapp/sessions", "required": False},
+        {"name": "upload-capabilities", "method": "GET", "path": "/plataforma/api/upload-capabilities", "required": False},
+        {"name": "python-versions", "method": "GET", "path": "/plataforma/api/python-versions", "required": False},
+        {"name": "gateway-pairings", "method": "GET", "path": "/plataforma/api/gateway/pairings", "required": False},
+        {"name": "route-map-routes", "method": "GET", "path": "/plataforma/api/route-mapping/routes", "required": False},
+        {"name": "cloudflare-status", "method": "GET", "path": "/plataforma/api/cloudflare/status", "required": False},
+        {"name": "codex-keys-stats", "method": "GET", "path": "/plataforma/api/codex/keys/stats", "required": False},
+        {"name": "data-engine-status", "method": "GET", "path": "/plataforma/data-engine/api/status", "required": False},
+        {"name": "system-database-status", "method": "GET", "path": "/plataforma/api/database/status", "required": False},
+        {"name": "system-runtime-readiness", "method": "GET", "path": "/plataforma/api/runtime-readiness", "required": False},
+    ]
+    results: list[dict[str, Any]] = []
+    for check in checks:
+        path = path_with_query(check["path"], check.get("params"))
+        try:
+            payload, response = client.request(check["method"], path, timeout=args.timeout)
+            result = {
+                "name": check["name"],
+                "required": bool(check.get("required")),
+                "status": "ok",
+                "http_status": response.status_code,
+                "summary": payload_summary(payload),
+            }
+        except RejoinBIError as exc:
+            error = str(exc)
+            result = {
+                "name": check["name"],
+                "required": bool(check.get("required")),
+                "status": classify_smoke_error(error),
+                "error": error,
+            }
+        results.append(result)
+
+    required_failures = [item for item in results if item.get("required") and item.get("status") != "ok"]
+    optional_issues = [item for item in results if not item.get("required") and item.get("status") != "ok"]
+    success = not required_failures and (not args.strict or not optional_issues)
+    report = {
+        "success": success,
+        "base_url": client.base_url,
+        "strict": bool(args.strict),
+        "counts": {
+            "total": len(results),
+            "ok": sum(1 for item in results if item.get("status") == "ok"),
+            "required_failures": len(required_failures),
+            "optional_issues": len(optional_issues),
+        },
+        "results": results,
+    }
+    if args.output_dir:
+        output_dir = Path(args.output_dir).expanduser().resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_json(output_dir / "smoke-admin.json", report)
+        report["output"] = str(output_dir / "smoke-admin.json")
+    print_payload(report, as_json=args.json)
+    return 0 if success else 1
+
+
 def find_html_links_to_local_pages(path: Path) -> list[str]:
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -4049,7 +4238,7 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
 
 def parse_json_payload(args: argparse.Namespace) -> Any:
     if getattr(args, "data_file", None):
-        return json.loads(Path(args.data_file).expanduser().read_text(encoding="utf-8"))
+        return load_json_file(args.data_file)
     raw = getattr(args, "data_json", None)
     if raw:
         return json.loads(raw)
@@ -4782,6 +4971,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--connection-id")
     p.add_argument("--query-id")
     p.add_argument("--run-id")
+    p.add_argument("--project-id", help="Data Engine project id for project-scoped endpoints")
+    p.add_argument("--project-uid", help="Data Engine project uid for project-scoped endpoints")
     p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -4913,6 +5104,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--manifest", required=True)
     p.add_argument("--timeout", type=int, default=60)
     p.set_defaults(func=cmd_smoke_pages)
+
+    p = sub.add_parser("smoke-admin", help="Run a read-only admin API smoke test across tenant configuration areas")
+    p.add_argument("--output-dir", help="Optional folder to write smoke-admin.json")
+    p.add_argument("--strict", action="store_true", help="Fail when optional diagnostics are blocked or unavailable")
+    p.add_argument("--timeout", type=int, default=60)
+    p.set_defaults(func=cmd_smoke_admin)
 
     p = sub.add_parser("validate-app", help="Check a dashboard folder/manifest against Rejoin BI workspace compatibility rules")
     p.add_argument("--manifest")

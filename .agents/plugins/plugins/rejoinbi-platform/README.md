@@ -28,6 +28,7 @@ python .\scripts\rejoinbi.py workspaceall
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
 python .\scripts\rejoinbi.py smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
+python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
 python .\scripts\rejoinbi.py users
 python .\scripts\rejoinbi.py groups
 python .\scripts\rejoinbi.py announcements
@@ -102,12 +103,15 @@ python .\scripts\rejoinbi.py upload-admin gateway-pairings
 python .\scripts\rejoinbi.py route-map routes
 python .\scripts\rejoinbi.py system-admin database-status
 
-python .\scripts\rejoinbi.py data-engine db-connections
-python .\scripts\rejoinbi.py data-engine repository-list
-python .\scripts\rejoinbi.py data-engine datasets-list
+python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
+python .\scripts\rejoinbi.py data-engine db-connections --project-id 1
+python .\scripts\rejoinbi.py data-engine repository-list --project-id 1
+python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
 ```
 
-For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Cloudflare, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
+`smoke-admin` runs a read-only API check across the main configuration areas and writes a reusable JSON report. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
+
+For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Cloudflare, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 
 ## Safe Destructive Commands
 
