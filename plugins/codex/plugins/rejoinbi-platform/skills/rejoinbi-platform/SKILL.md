@@ -36,6 +36,11 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Audit: `/plataforma/api/audit/*` and `/audit-cleanup` are available through `audit` and `audit-export`.
 - System state: `/plataforma/api/sleep-manager/*` is available through `sleep-manager`.
 - E-mail and WhatsApp managers: `/plataforma/api/email/*` and `/plataforma/api/whatsapp/*` are available through `email` and `whatsapp`.
+- Cloudflare/domain management: `/plataforma/api/cloudflare/*` is available through `cloudflare`.
+- Codex/AI provider connections: `/plataforma/api/codex/keys*` and `/api/codex/auth-*` are available through `codex-keys`.
+- Runtime/system diagnostics and cache controls: `/plataforma/api/*` status/cache/runtime endpoints are available through `system-admin` and `route-map`.
+- Upload gateway and capability endpoints: `/plataforma/api/gateway/*`, `/upload-capabilities`, `/python-versions`, and `/upload-status/<id>` are available through `upload-admin`.
+- Data Engine DB/repository/dataset/session endpoints: `/plataforma/data-engine/api/*` are available through `data-engine`.
 
 The plugin client enforces the operational rule for this platform: persisted sessions and privileged commands are allowed only for `Administrador Principal`, `Master`, or `Administrador`. A standard `Usuario` login is rejected by default. Use `--allow-standard` only for an intentional negative test.
 
@@ -111,6 +116,11 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance ve
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls pages
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" email sessions
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" whatsapp sessions
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" cloudflare status
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" codex-keys list
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" upload-admin capabilities
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" system-admin database-status
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine db-connections
 ```
 
 For configuration payloads with many fields, use JSON files instead of ad hoc chat text:
@@ -120,6 +130,9 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" email create-group 
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" whatsapp create-group --data-file C:\path\whatsapp-group.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls set-config --data-file C:\path\rls-config.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" sleep-manager set-config --data-file C:\path\sleep-config.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" cloudflare set-ssl-mode --mode full --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" codex-keys create --data-file C:\path\codex-key.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine create-db-connection --data-file C:\path\db-connection.json --yes
 ```
 
 Use dedicated commands before falling back to `api-get` or `api-send`. The dedicated commands preserve profile checks, safe confirmations, workspace password validation, and consistent output.

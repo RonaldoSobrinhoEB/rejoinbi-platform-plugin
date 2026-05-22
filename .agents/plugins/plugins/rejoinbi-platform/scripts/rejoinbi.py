@@ -2500,6 +2500,26 @@ def compact_params(**items: Any) -> dict[str, Any]:
     return {key: value for key, value in items.items() if value not in (None, "")}
 
 
+def parse_query_params(args: argparse.Namespace) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    for item in getattr(args, "query", None) or []:
+        if "=" not in item:
+            raise RejoinBIError(f"Invalid --query value: {item}. Use key=value.")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise RejoinBIError(f"Invalid --query value: {item}. Key cannot be empty.")
+        if key in params:
+            current = params[key]
+            if isinstance(current, list):
+                current.append(value)
+            else:
+                params[key] = [current, value]
+        else:
+            params[key] = value
+    return params
+
+
 def path_with_query(path: str, params: dict[str, Any] | None = None) -> str:
     clean = compact_params(**(params or {}))
     if not clean:
@@ -2827,6 +2847,247 @@ def cmd_whatsapp_manager(args: argparse.Namespace) -> int:
         require_yes(args, f"{args.action} changes WhatsApp configuration or sends/cancels messages and requires --yes.")
     payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
     data, _ = client.request(method, path, json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_cloudflare(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = parse_json_payload(args)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("Cloudflare payload must be a JSON object.")
+    if args.domain is not None:
+        payload["domain"] = args.domain
+    if args.subdomain is not None:
+        payload["subdomain"] = args.subdomain
+    if args.server_ip is not None:
+        payload["server_ip"] = args.server_ip
+    if args.configure_root:
+        payload["configure_root"] = True
+    if args.record_type is not None:
+        payload["type"] = args.record_type
+    if args.name is not None:
+        payload["name"] = args.name
+    if args.content is not None:
+        payload["content"] = args.content
+    if args.ttl is not None:
+        payload["ttl"] = args.ttl
+    if args.proxied is not None:
+        payload["proxied"] = args.proxied
+    if args.comment is not None:
+        payload["comment"] = args.comment
+    if args.mode is not None:
+        payload["mode"] = args.mode
+    if args.token is not None:
+        payload["token"] = args.token
+
+    action_map = {
+        "status": lambda: ("GET", "/plataforma/api/cloudflare/status", False, {}),
+        "dns-records": lambda: ("GET", "/plataforma/api/cloudflare/dns-records", False, compact_params(type=args.record_type, name=args.name)),
+        "configure": lambda: ("POST", "/plataforma/api/cloudflare/configure", True, {}),
+        "create-dns-record": lambda: ("POST", "/plataforma/api/cloudflare/dns-record", True, {}),
+        "ssl-mode": lambda: ("GET", "/plataforma/api/cloudflare/ssl-mode", False, {}),
+        "set-ssl-mode": lambda: ("POST", "/plataforma/api/cloudflare/ssl-mode", True, {}),
+        "verify-token": lambda: ("POST", "/plataforma/api/cloudflare/verify-token", False, {}),
+    }
+    method, path, destructive, params = action_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes Cloudflare DNS/SSL configuration and requires --yes.")
+    request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path_with_query(path, params), json=request_payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_codex_keys(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = parse_json_payload(args)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("Codex keys payload must be a JSON object.")
+    if args.provider_id is not None:
+        payload.setdefault("provider_id", args.provider_id)
+    params = compact_params(
+        provider_id=args.provider_id,
+        page=args.page,
+        limit=args.limit,
+        user_email=args.user_email,
+        days=args.days,
+    )
+    action_map = {
+        "stats": lambda: ("GET", "/plataforma/api/codex/keys/stats", False, {}),
+        "active": lambda: ("GET", "/plataforma/api/codex/keys/active", False, {}),
+        "list": lambda: ("GET", "/plataforma/api/codex/keys", False, {}),
+        "auth-status": lambda: ("GET", "/plataforma/api/codex/auth-status", False, compact_params(provider_id=args.provider_id)),
+        "auth-login": lambda: ("POST", "/plataforma/api/codex/auth-login", True, {}),
+        "create": lambda: ("POST", "/plataforma/api/codex/keys", True, {}),
+        "get": lambda: ("GET", f"/plataforma/api/codex/keys/{required_int(args, 'key_id', '--key-id')}", False, {}),
+        "unlock": lambda: ("POST", f"/plataforma/api/codex/keys/{required_int(args, 'key_id', '--key-id')}/unlock", False, {}),
+        "update": lambda: ("PUT", f"/plataforma/api/codex/keys/{required_int(args, 'key_id', '--key-id')}", True, {}),
+        "delete": lambda: ("DELETE", f"/plataforma/api/codex/keys/{required_int(args, 'key_id', '--key-id')}", True, {}),
+        "user-delete": lambda: ("DELETE", f"/plataforma/api/codex/keys/user-delete/{required_int(args, 'key_id', '--key-id')}", True, {}),
+        "usage": lambda: ("GET", "/plataforma/api/codex/keys/usage", False, params),
+        "users": lambda: ("GET", "/plataforma/api/codex/keys/users", False, {}),
+    }
+    method, path, destructive, query_params = action_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes Codex/AI provider configuration and requires --yes.")
+    request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_route_map(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    action_map = {
+        "routes": ("GET", "/plataforma/api/route-mapping/routes", False),
+        "route": ("GET", f"/plataforma/api/route-mapping/routes/{quote(required_arg(args, 'route_name', '--route-name'))}", False),
+        "uploads": ("GET", "/plataforma/api/route-mapping/uploads", False),
+        "scan": ("POST", "/plataforma/api/route-mapping/scan", False),
+        "clear": ("POST", "/plataforma/api/route-mapping/clear", True),
+    }
+    method, path, destructive = action_map[args.action]
+    if destructive:
+        require_yes(args, f"{args.action} changes route mapping state and requires --yes.")
+    data, _ = client.request(method, path, json={} if method != "GET" else None, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_system_admin(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = parse_json_payload(args)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("System admin payload must be a JSON object.")
+    query_params = parse_query_params(args)
+    action_map = {
+        "auto-stress-start": ("GET", "/plataforma/api/auto-stress/start", True),
+        "auto-stress-results": ("GET", "/plataforma/api/auto-stress/results", False),
+        "database-status": ("GET", "/plataforma/api/database/status", False),
+        "subscription-status": ("GET", "/plataforma/api/subscription/status", False),
+        "clear-dynamic-cache": ("GET", "/plataforma/api/clear-dynamic-cache", True),
+        "dynamic-apps-monitoring": ("GET", "/plataforma/api/dynamic-apps-monitoring", False),
+        "check-work-status": ("GET", "/plataforma/api/check-work-status", False),
+        "dynamic-pages": ("GET", "/plataforma/api/dynamic-pages", False),
+        "init-status": ("GET", "/plataforma/api/status-inicializacao", False),
+        "restart-dynamics": ("POST", "/plataforma/api/reinicializar-dinamicas", True),
+        "dynamic-status": ("GET", "/plataforma/api/status-dinamicas", False),
+        "public-ready": ("GET", "/plataforma/api/public-ready", False),
+        "runtime-readiness": ("GET", "/plataforma/api/runtime-readiness", False),
+        "runtime-build-info": ("GET", "/plataforma/api/runtime-build-info", False),
+        "file-recognition": ("POST", "/plataforma/api/file-recognition", False),
+        "test-url-rewriting": ("POST", "/plataforma/api/test-url-rewriting", False),
+        "active-container": ("GET", "/plataforma/api/active-container", False),
+        "force-reload": ("POST", "/plataforma/api/force-reload", True),
+        "clear-all-caches": ("POST", "/plataforma/api/clear-all-caches", True),
+        "middleware-status": ("GET", "/plataforma/api/middleware/status", False),
+        "middleware-cleanup": ("GET", "/plataforma/api/middleware/cleanup", True),
+    }
+    method, path, destructive = action_map[args.action]
+    if destructive:
+        require_yes(args, f"{args.action} changes platform runtime/system state and requires --yes.")
+    request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_upload_admin(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    if args.action == "gateway-download-client":
+        output = Path(args.output or "rejoinbi-gateway-client.zip").expanduser().resolve()
+        client.download("/plataforma/api/gateway/download-client", output, timeout=args.timeout)
+        return print_download_result(output, "gateway_client", args)
+
+    payload = parse_json_payload(args)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("Upload admin payload must be a JSON object.")
+    query_params = parse_query_params(args)
+    action_map = {
+        "python-versions": lambda: ("GET", "/plataforma/api/python-versions", False),
+        "capabilities": lambda: ("GET", "/plataforma/api/upload-capabilities", False),
+        "gateway-pairings": lambda: ("GET", "/plataforma/api/gateway/pairings", False),
+        "gateway-generate-pairing-code": lambda: ("POST", "/plataforma/api/gateway/generate-pairing-code", True),
+        "gateway-delete-pairing": lambda: ("DELETE", f"/plataforma/api/gateway/pairings/{required_int(args, 'pairing_id', '--pairing-id')}", True),
+        "gateway-pause-pairing": lambda: ("POST", f"/plataforma/api/gateway/pairings/{required_int(args, 'pairing_id', '--pairing-id')}/pause", True),
+        "gateway-confirm-access": lambda: ("POST", f"/plataforma/api/gateway/pairings/{required_int(args, 'pairing_id', '--pairing-id')}/confirm-access", True),
+        "gateway-confirm-link": lambda: ("POST", "/plataforma/api/gateway/confirm-link", True),
+        "gateway-bootstrap": lambda: ("POST", "/plataforma/api/gateway/bootstrap", True),
+        "gateway-delete-item": lambda: ("POST", "/plataforma/api/gateway/delete-item", True),
+        "upload-status": lambda: ("GET", f"/plataforma/api/upload-status/{quote(required_arg(args, 'process_id', '--process-id'))}", False),
+        "clear-dynamic-data": lambda: ("POST", "/plataforma/api/clear-dynamic-data", True),
+    }
+    method, path, destructive = action_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes upload/gateway state and requires --yes.")
+    request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_data_engine(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = parse_json_payload(args)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("Data Engine payload must be a JSON object.")
+    query_params = parse_query_params(args)
+    base = "/plataforma/data-engine"
+    action_map = {
+        "status": lambda: ("GET", f"{base}/api/status", False),
+        "session-status": lambda: ("GET", f"{base}/api/session/status", False),
+        "db-connections": lambda: ("GET", f"{base}/api/db/connections", False),
+        "create-db-connection": lambda: ("POST", f"{base}/api/db/connections", True),
+        "db-connection": lambda: ("GET", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}", False),
+        "update-db-connection": lambda: ("PUT", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}", True),
+        "delete-db-connection": lambda: ("DELETE", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}", True),
+        "test-db-connection": lambda: ("POST", f"{base}/api/db/connections/test", False),
+        "sqlserver-drivers": lambda: ("GET", f"{base}/api/db/providers/sqlserver/drivers", False),
+        "db-objects": lambda: ("GET", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}/objects", False),
+        "query": lambda: ("GET", f"{base}/api/db/queries/{required_int(args, 'query_id', '--query-id')}", False),
+        "query-preview": lambda: ("POST", f"{base}/api/db/query/preview", False),
+        "query-materialize": lambda: ("POST", f"{base}/api/db/query/materialize", True),
+        "query-materialize-saved": lambda: ("POST", f"{base}/api/db/queries/{required_int(args, 'query_id', '--query-id')}/materialize", True),
+        "query-run": lambda: ("GET", f"{base}/api/db/query-runs/{required_int(args, 'run_id', '--run-id')}", False),
+        "ai-sql-query": lambda: ("POST", f"{base}/api/ai/sql-query", False),
+        "repository-list": lambda: ("GET", f"{base}/api/repository/list", False),
+        "repository-content": lambda: ("GET", f"{base}/api/repository/content", False),
+        "repository-global-context": lambda: ("GET", f"{base}/api/repository/global-context", False),
+        "repository-execute-global-context": lambda: ("POST", f"{base}/api/repository/execute-global-context", False),
+        "repository-manual-table": lambda: ("GET", f"{base}/api/repository/manual-table", False),
+        "create-manual-table": lambda: ("POST", f"{base}/api/repository/manual-table", True),
+        "create-folder": lambda: ("POST", f"{base}/api/repository/create-folder", True),
+        "move": lambda: ("POST", f"{base}/api/repository/move", True),
+        "order": lambda: ("POST", f"{base}/api/repository/order", True),
+        "delete": lambda: ("POST", f"{base}/api/repository/delete", True),
+        "datasets-list": lambda: ("GET", f"{base}/api/datasets/list", False),
+        "create-dataset": lambda: ("POST", f"{base}/api/datasets/create", True),
+        "duplicate-dataset": lambda: ("POST", f"{base}/api/datasets/duplicate", True),
+        "delete-dataset": lambda: ("POST", f"{base}/api/datasets/delete", True),
+        "link-dataset": lambda: ("POST", f"{base}/api/dataset/link", True),
+        "unlink-dataset": lambda: ("POST", f"{base}/api/dataset/unlink", True),
+        "list-files": lambda: ("GET", f"{base}/api/list-files", False),
+        "preview-file": lambda: ("GET", f"{base}/api/preview-file", False),
+        "dataset-get": lambda: ("GET", f"{base}/api/datasets/get", False),
+        "save-column-types": lambda: ("POST", f"{base}/api/datasets/column-types/save", True),
+        "save-notebook-state": lambda: ("POST", f"{base}/api/datasets/notebook-state/save", True),
+        "finalize-dataset": lambda: ("POST", f"{base}/api/datasets/finalize", True),
+        "toggle-visibility": lambda: ("POST", f"{base}/api/datasets/toggle-visibility", True),
+        "execute-code": lambda: ("POST", f"{base}/api/execute_code", False),
+        "agent-mine": lambda: ("POST", f"{base}/api/agent/mine", False),
+        "chat": lambda: ("POST", f"{base}/api/chat", False),
+        "load-chat": lambda: ("GET", f"{base}/api/load-chat", False),
+        "cancel-execution": lambda: ("POST", f"{base}/api/execute/cancel", True),
+        "reset-session": lambda: ("POST", f"{base}/api/session/reset", True),
+        "remove-variable": lambda: ("POST", f"{base}/api/session/remove-variable", True),
+        "terminal-command": lambda: ("POST", f"{base}/api/terminal/command", True),
+        "terminal-auto-install": lambda: ("POST", f"{base}/api/terminal/auto-install", True),
+    }
+    method, path, destructive = action_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes Data Engine configuration/data/session state and requires --yes.")
+    request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
     print_payload(data, as_json=args.json)
     return 0
 
@@ -4426,6 +4687,106 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_payload_args(p)
     p.set_defaults(func=cmd_whatsapp_manager)
+
+    p = sub.add_parser("cloudflare", help="Manage Cloudflare DNS/SSL tenant configuration")
+    p.add_argument("action", choices=[
+        "status", "dns-records", "configure", "create-dns-record",
+        "ssl-mode", "set-ssl-mode", "verify-token",
+    ])
+    p.add_argument("--domain")
+    p.add_argument("--subdomain")
+    p.add_argument("--server-ip")
+    p.add_argument("--configure-root", action="store_true")
+    p.add_argument("--record-type")
+    p.add_argument("--name")
+    p.add_argument("--content")
+    p.add_argument("--ttl", type=int)
+    p.add_argument("--proxied", dest="proxied", action="store_true", default=None)
+    p.add_argument("--not-proxied", dest="proxied", action="store_false")
+    p.add_argument("--comment")
+    p.add_argument("--mode")
+    p.add_argument("--token")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_cloudflare)
+
+    p = sub.add_parser("codex-keys", help="Manage Codex/AI provider connections and usage")
+    p.add_argument("action", choices=[
+        "stats", "active", "list", "auth-status", "auth-login",
+        "create", "get", "unlock", "update", "delete", "user-delete",
+        "usage", "users",
+    ])
+    p.add_argument("--key-id")
+    p.add_argument("--provider-id")
+    p.add_argument("--page", type=int)
+    p.add_argument("--limit", type=int)
+    p.add_argument("--days", type=int)
+    p.add_argument("--user-email")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_codex_keys)
+
+    p = sub.add_parser("route-map", help="Inspect or refresh dynamic route mapping")
+    p.add_argument("action", choices=["routes", "route", "uploads", "scan", "clear"])
+    p.add_argument("--route-name")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_route_map)
+
+    p = sub.add_parser("system-admin", help="Inspect or operate platform runtime/system endpoints")
+    p.add_argument("action", choices=[
+        "auto-stress-start", "auto-stress-results", "database-status", "subscription-status",
+        "clear-dynamic-cache", "dynamic-apps-monitoring", "check-work-status", "dynamic-pages",
+        "init-status", "restart-dynamics", "dynamic-status", "public-ready", "runtime-readiness",
+        "runtime-build-info", "file-recognition", "test-url-rewriting", "active-container",
+        "force-reload", "clear-all-caches", "middleware-status", "middleware-cleanup",
+    ])
+    p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_system_admin)
+
+    p = sub.add_parser("upload-admin", help="Inspect upload capabilities, gateway pairing, and upload state")
+    p.add_argument("action", choices=[
+        "python-versions", "capabilities", "gateway-download-client", "gateway-pairings",
+        "gateway-generate-pairing-code", "gateway-delete-pairing", "gateway-pause-pairing",
+        "gateway-confirm-access", "gateway-confirm-link", "gateway-bootstrap",
+        "gateway-delete-item", "upload-status", "clear-dynamic-data",
+    ])
+    p.add_argument("--pairing-id")
+    p.add_argument("--process-id")
+    p.add_argument("--output")
+    p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_upload_admin)
+
+    p = sub.add_parser("data-engine", help="Manage Data Engine DB connections, repository, datasets, notebook, and terminal")
+    p.add_argument("action", choices=[
+        "status", "session-status", "db-connections", "create-db-connection", "db-connection",
+        "update-db-connection", "delete-db-connection", "test-db-connection", "sqlserver-drivers",
+        "db-objects", "query", "query-preview", "query-materialize", "query-materialize-saved",
+        "query-run", "ai-sql-query", "repository-list", "repository-content",
+        "repository-global-context", "repository-execute-global-context",
+        "repository-manual-table", "create-manual-table", "create-folder", "move", "order",
+        "delete", "datasets-list", "create-dataset", "duplicate-dataset", "delete-dataset",
+        "link-dataset", "unlink-dataset", "list-files", "preview-file", "dataset-get",
+        "save-column-types", "save-notebook-state", "finalize-dataset", "toggle-visibility",
+        "execute-code", "agent-mine", "chat", "load-chat", "cancel-execution",
+        "reset-session", "remove-variable", "terminal-command", "terminal-auto-install",
+    ])
+    p.add_argument("--connection-id")
+    p.add_argument("--query-id")
+    p.add_argument("--run-id")
+    p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_data_engine)
 
     p = sub.add_parser("pages", help="List platform pages")
     p.add_argument("--workspace", help="Workspace id or name")

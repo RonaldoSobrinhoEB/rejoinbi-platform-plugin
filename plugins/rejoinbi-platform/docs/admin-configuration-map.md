@@ -28,8 +28,12 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Gerenciar Paginas | `GET/POST/PUT/DELETE /plataforma/api/paginas*`, hierarchy/order/repair endpoints | `pages`, `page-files`, `create-page`, `update-page`, `delete-page`, `set-page-order`, `page-maintenance`, `resolve-page`, `smoke-pages` |
 | Gerenciar RLS | `/plataforma/api/rls*` | `rls pages`, `rls page-config`, `rls config`, `rls set-config`, `rls data`, `rls create-data`, `rls dimensions`, `rls validate`, `rls-export` |
 | Configuracao IA | `GET/POST/DELETE /plataforma/api/ai-config`, `POST /plataforma/api/ai-config/cleanup` | `ai-config`, `set-ai-config`, `delete-ai-config`, `cleanup-ai-config` |
+| Chaves Codex/IA | `/plataforma/api/codex/keys*`, `/plataforma/api/codex/auth-*` | `codex-keys stats`, `codex-keys list`, `codex-keys create`, `codex-keys update`, `codex-keys delete`, `codex-keys usage` |
 | Sistema de Auditoria | `GET /plataforma/api/audit/*`, `GET /plataforma/api/audit/export`, `POST /plataforma/api/audit-cleanup` | `audit logs`, `audit dashboard`, `audit health`, `audit log`, `audit cleanup`, `audit-export` |
-| Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance` |
+| Cloudflare/Dominio | `/plataforma/api/cloudflare/*` | `cloudflare status`, `cloudflare dns-records`, `cloudflare configure`, `cloudflare create-dns-record`, `cloudflare ssl-mode`, `cloudflare set-ssl-mode` |
+| Gateway/Upload | `/plataforma/api/python-versions`, `/upload-capabilities`, `/gateway/*`, `/upload-status/<id>`, `/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
+| Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
+| Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `data-engine db-connections`, `data-engine create-db-connection`, `data-engine repository-list`, `data-engine datasets-list`, `data-engine terminal-command`, `data-engine reset-session` |
 | BI Studio | `/plataforma/api/bi/*` | `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
 
 ## Fast Platform Branding
@@ -90,6 +94,19 @@ python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
 python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
 python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
 python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config.json --yes
+python .\scripts\rejoinbi.py cloudflare set-ssl-mode --mode full --yes
+python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
+python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes
+```
+
+Inspect platform infrastructure and upload support:
+
+```powershell
+python .\scripts\rejoinbi.py system-admin database-status
+python .\scripts\rejoinbi.py system-admin runtime-readiness
+python .\scripts\rejoinbi.py route-map routes
+python .\scripts\rejoinbi.py upload-admin capabilities
+python .\scripts\rejoinbi.py upload-admin gateway-pairings
 ```
 
 ## Safety Notes
@@ -97,4 +114,4 @@ python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config
 - Destructive commands keep explicit confirmation flags.
 - Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided and validated by the platform first.
 - Secrets, passwords, PINs, and local session files must never be exported.
-- Use dedicated commands for supported modules; use `api-get` / `api-send` only for mapped endpoints that do not yet have a first-class command.
+- Use dedicated commands for supported modules; use `api-get` / `api-send` only for new endpoints that are not yet present in this map.

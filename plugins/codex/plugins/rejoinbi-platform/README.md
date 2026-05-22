@@ -36,6 +36,9 @@ python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.j
 python .\scripts\rejoinbi.py audit dashboard
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
 python .\scripts\rejoinbi.py rls pages
+python .\scripts\rejoinbi.py cloudflare status
+python .\scripts\rejoinbi.py codex-keys stats
+python .\scripts\rejoinbi.py data-engine status
 ```
 
 `ensure` first checks whether the tenant already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting tenant session cookies.
@@ -85,9 +88,26 @@ python .\scripts\rejoinbi.py email sessions
 python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
 python .\scripts\rejoinbi.py whatsapp sessions
 python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
+
+python .\scripts\rejoinbi.py cloudflare status
+python .\scripts\rejoinbi.py cloudflare dns-records --record-type A
+python .\scripts\rejoinbi.py cloudflare set-ssl-mode --mode full --yes
+
+python .\scripts\rejoinbi.py codex-keys list
+python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
+python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50
+
+python .\scripts\rejoinbi.py upload-admin capabilities
+python .\scripts\rejoinbi.py upload-admin gateway-pairings
+python .\scripts\rejoinbi.py route-map routes
+python .\scripts\rejoinbi.py system-admin database-status
+
+python .\scripts\rejoinbi.py data-engine db-connections
+python .\scripts\rejoinbi.py data-engine repository-list
+python .\scripts\rejoinbi.py data-engine datasets-list
 ```
 
-For e-mail, WhatsApp, RLS, sleep manager, workspace notification, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
+For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Cloudflare, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 
 ## Safe Destructive Commands
 
