@@ -33,6 +33,9 @@ python .\scripts\rejoinbi.py groups
 python .\scripts\rejoinbi.py announcements
 python .\scripts\rejoinbi.py platform-config
 python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
+python .\scripts\rejoinbi.py audit dashboard
+python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
+python .\scripts\rejoinbi.py rls pages
 ```
 
 `ensure` first checks whether the tenant already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting tenant session cookies.
@@ -47,6 +50,44 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br connect --email 
 ```
 
 The `examples/codex-echarts-dashboard` folder is a polished single-page ECharts signal dashboard for quick upload and rendering checks.
+
+## Administrative Automation
+
+The plugin maps the slow manual configuration areas into first-class commands. Read actions run directly after `ensure`; actions that change configuration or send messages require `--yes`.
+
+```powershell
+python .\scripts\rejoinbi.py users
+python .\scripts\rejoinbi.py sectors
+python .\scripts\rejoinbi.py permission-pages --permissive
+python .\scripts\rejoinbi.py user-presence
+python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx
+python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx
+
+python .\scripts\rejoinbi.py menu
+python .\scripts\rejoinbi.py menu-maintenance check-duplicates
+python .\scripts\rejoinbi.py menu-maintenance reload
+
+python .\scripts\rejoinbi.py page-files --workspace codex-suite
+python .\scripts\rejoinbi.py page-maintenance verify-orphan-permissions
+python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
+python .\scripts\rejoinbi.py set-page-order --page-id pagina-id --parent pagina-pai --position 20
+
+python .\scripts\rejoinbi.py rls pages
+python .\scripts\rejoinbi.py rls page-config --page-id pagina-id
+python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
+python .\scripts\rejoinbi.py rls-export --output .\rls.xlsx
+
+python .\scripts\rejoinbi.py audit logs --per-page 50
+python .\scripts\rejoinbi.py audit-export --output .\auditoria.xlsx
+python .\scripts\rejoinbi.py sleep-manager status
+
+python .\scripts\rejoinbi.py email sessions
+python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
+python .\scripts\rejoinbi.py whatsapp sessions
+python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
+```
+
+For e-mail, WhatsApp, RLS, sleep manager, workspace notification, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 
 ## Safe Destructive Commands
 

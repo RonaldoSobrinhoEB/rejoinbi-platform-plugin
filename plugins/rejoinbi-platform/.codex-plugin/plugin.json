@@ -1,7 +1,7 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.8",
-  "description": "Operate Rejoin BI tenants, workspaces, uploads, BI projects, ECharts publishing, and safe production cleanup from Codex.",
+  "version": "0.4.9",
+  "description": "Operate Rejoin BI tenants, admin configuration, workspaces, uploads, BI projects, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho"
   },
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Rejoin BI Platform",
     "shortDescription": "Develop and publish Rejoin BI dashboards.",
-    "longDescription": "Helps Codex connect to Rejoin BI tenants, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, and safely preview workspace/page cleanup using the platform API. Before any other action, validate a full tenant host and confirm authentication/permission.",
+    "longDescription": "Helps Codex connect to Rejoin BI tenants, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, automate admin configuration, and safely preview workspace/page cleanup using the platform API. Before any other action, validate a full tenant host and confirm authentication/permission.",
     "developerName": "Ronaldo Sobrinho",
     "category": "Engineering",
     "capabilities": [
@@ -21,6 +21,7 @@
       "Validate tenant host subdomain.rejoinbi.com.br",
       "List all Rejoin BI workspaces",
       "Publish this ECharts dashboard",
+      "Map and automate Rejoin BI platform configuration",
       "Preview deleting this Rejoin BI workspace"
     ],
     "brandColor": "#EF4444",

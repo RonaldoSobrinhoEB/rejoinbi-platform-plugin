@@ -27,7 +27,7 @@ from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 import webbrowser
 
 try:
@@ -2319,7 +2319,8 @@ def cmd_delete_announcement(args: argparse.Namespace) -> int:
     if not args.yes:
         raise RejoinBIError("Deleting announcements requires --yes.")
     client = make_client(args)
-    data, _ = client.request("DELETE", f"/plataforma/api/anuncios/{int(args.announcement_id)}", timeout=60)
+    announcement_id = required_int(args, "announcement_id", "--announcement-id")
+    data, _ = client.request("DELETE", f"/plataforma/api/anuncios/{announcement_id}", timeout=60)
     print_payload(data, as_json=args.json)
     return 0
 
@@ -2491,6 +2492,452 @@ def cmd_storage_path(args: argparse.Namespace) -> int:
         data, _ = client.request("POST", "/api/system/storage-path", json={"path": args.path}, timeout=60)
     else:
         data, _ = client.request("GET", "/api/system/storage-path", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def compact_params(**items: Any) -> dict[str, Any]:
+    return {key: value for key, value in items.items() if value not in (None, "")}
+
+
+def path_with_query(path: str, params: dict[str, Any] | None = None) -> str:
+    clean = compact_params(**(params or {}))
+    if not clean:
+        return path
+    return f"{path}?{urlencode(clean, doseq=True)}"
+
+
+def require_yes(args: argparse.Namespace, message: str) -> None:
+    if not getattr(args, "yes", False):
+        raise RejoinBIError(message)
+
+
+def required_arg(args: argparse.Namespace, attr: str, label: str | None = None) -> str:
+    value = getattr(args, attr, None)
+    if value in (None, ""):
+        raise RejoinBIError(f"{label or '--' + attr.replace('_', '-')} is required for this action.")
+    return str(value)
+
+
+def required_int(args: argparse.Namespace, attr: str, label: str | None = None) -> int:
+    raw = required_arg(args, attr, label)
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RejoinBIError(f"{label or '--' + attr.replace('_', '-')} must be an integer.") from exc
+
+
+def print_download_result(output: Path, payload_name: str, args: argparse.Namespace) -> int:
+    print_payload({"success": True, payload_name: str(output), "bytes": output.stat().st_size}, as_json=args.json)
+    return 0
+
+
+def cmd_sectors(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/setores", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_permission_pages(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    path = "/plataforma/api/permissive-pages" if args.permissive else "/plataforma/api/pages"
+    data, _ = client.request("GET", path, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_user_presence(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/users-presence", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_download_users(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    path = path_with_query("/plataforma/api/download-users", {
+        "perfil": args.profile,
+        "setor": args.setor,
+        "search": args.search,
+    })
+    output = Path(args.output).expanduser().resolve()
+    client.download(path, output, timeout=args.timeout)
+    return print_download_result(output, "users_export", args)
+
+
+def cmd_download_permissions(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    output = Path(args.output).expanduser().resolve()
+    client.download("/plataforma/api/download-permissions", output, timeout=args.timeout)
+    return print_download_result(output, "permissions_export", args)
+
+
+def cmd_menu(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/menu", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_menu_maintenance(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    action_map = {
+        "check-duplicates": ("GET", "/plataforma/api/check-menu-duplicates", False),
+        "reload": ("POST", "/plataforma/api/reload-menu", False),
+        "clear-cache": ("POST", "/plataforma/api/clear-menu-cache", False),
+    }
+    method, path, destructive = action_map[args.action]
+    if destructive:
+        require_yes(args, f"{args.action} requires --yes.")
+    data, _ = client.request(method, path, json={} if method != "GET" else None, timeout=120)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_page_maintenance(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    action_map = {
+        "verify-orphan-permissions": ("GET", "/plataforma/api/paginas/verificar-permissoes-orfas", False),
+        "clear-orphan-permissions": ("POST", "/plataforma/api/paginas/limpar-permissoes-orfas", True),
+        "verify-conflicts": ("GET", "/plataforma/api/paginas/verificar-conflitos", False),
+        "fix-conflicts": ("POST", "/plataforma/api/paginas/corrigir-conflito-paginas", True),
+        "verify-hierarchy": ("GET", "/plataforma/api/paginas/verificar-hierarquia", False),
+        "fix-hierarchy": ("POST", "/plataforma/api/paginas/corrigir-hierarquia", True),
+        "clear-fictitious-orphans": ("POST", "/plataforma/api/paginas/limpar-ficticias-orfas", True),
+        "clear-rls-cache": ("POST", "/plataforma/api/paginas/limpar-cache-rls", True),
+    }
+    method, path, destructive = action_map[args.action]
+    if destructive:
+        require_yes(args, f"{args.action} changes page configuration and requires --yes.")
+    data, _ = client.request(method, path, json=parse_json_payload(args) if method != "GET" else None, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_page_files(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    if not args.workspace and not args.container_id:
+        raise RejoinBIError("Provide --workspace or --container-id to list page files.")
+    workspace_id = resolve_workspace(client, args.workspace).get("id") if args.workspace else args.container_id
+    path = path_with_query("/plataforma/api/paginas/arquivos", {"container_id": workspace_id})
+    data, _ = client.request("GET", path, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_set_page_order(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = parse_json_payload(args)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("Page order payload must be a JSON object.")
+    if args.position is not None:
+        payload["ordem"] = args.position
+    if args.parent is not None:
+        payload["pai"] = args.parent
+    if args.before is not None:
+        payload["before"] = args.before
+    if args.after is not None:
+        payload["after"] = args.after
+    if not payload:
+        raise RejoinBIError("Provide --data-file, --data-json, --position, --parent, --before, or --after.")
+    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(args.page_id)}/ordem", json=payload, timeout=120)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_rls(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    path_map = {
+        "pages": lambda: ("GET", "/plataforma/api/rls-pages", False, {}),
+        "page-config": lambda: ("GET", "/plataforma/api/rls-page-config", False, {"pagina": required_arg(args, "page_id", "--page-id")}),
+        "config": lambda: ("GET", "/plataforma/api/rls-config", False, compact_params(pagina=args.page_id, user_id=args.user_id)),
+        "data": lambda: ("GET", "/plataforma/api/rls-data", False, compact_params(pagina=args.page_id, user_id=args.user_id)),
+        "dimensions": lambda: ("GET", f"/plataforma/api/rls-dimensions/{required_int(args, 'rls_id', '--rls-id')}", False, {}),
+        "values": lambda: ("GET", "/plataforma/api/rls/values", False, compact_params(rls_id=required_arg(args, "rls_id", "--rls-id"), column=args.column)),
+        "validate": lambda: ("POST", "/plataforma/api/rls/validate", False, {}),
+        "set-config": lambda: ("POST", "/plataforma/api/rls-config", True, {}),
+        "delete-config": lambda: ("DELETE", "/plataforma/api/rls-config", True, compact_params(pagina=args.page_id, user_id=args.user_id)),
+        "create-data": lambda: ("POST", "/plataforma/api/rls-data", True, {}),
+        "update-data": lambda: ("PUT", f"/plataforma/api/rls-data/{required_int(args, 'rls_id', '--rls-id')}", True, {}),
+        "delete-data": lambda: ("DELETE", f"/plataforma/api/rls-data/{required_int(args, 'rls_id', '--rls-id')}", True, {}),
+        "create-dimension": lambda: ("POST", "/plataforma/api/rls-dimensao", True, {}),
+        "update-dimension": lambda: ("PUT", f"/plataforma/api/rls-dimension/{required_int(args, 'dimension_id', '--dimension-id')}", True, {}),
+        "delete-dimension": lambda: ("DELETE", f"/plataforma/api/rls-dimension/{required_int(args, 'dimension_id', '--dimension-id')}", True, {}),
+        "scan-columns": lambda: ("POST", "/plataforma/api/rls/scan-columns", False, {}),
+        "fetch-columns": lambda: ("POST", "/plataforma/api/rls/fetch-columns", False, {}),
+        "test-config": lambda: ("GET", "/plataforma/api/rls/test-config", False, compact_params(pagina=args.page_id)),
+    }
+    method, path, destructive, params = path_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes RLS configuration and requires --yes.")
+    payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path_with_query(path, params), json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_rls_export(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    params = compact_params(format=args.format, pagina=args.page_id, user_id=args.user_id)
+    output = Path(args.output).expanduser().resolve()
+    client.download(path_with_query("/plataforma/api/rls-export", params), output, timeout=args.timeout)
+    return print_download_result(output, "rls_export", args)
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    if args.action == "logs":
+        params = compact_params(
+            page=args.page,
+            per_page=args.per_page,
+            date_from=args.date_from,
+            date_to=args.date_to,
+            action_type=args.action_type,
+            user_email=args.user_email,
+            level=args.level,
+        )
+        path = path_with_query("/plataforma/api/audit/logs", params)
+        data, _ = client.request("GET", path, timeout=args.timeout)
+    elif args.action == "dashboard":
+        data, _ = client.request("GET", "/plataforma/api/audit/dashboard", timeout=args.timeout)
+    elif args.action == "health":
+        data, _ = client.request("GET", "/plataforma/api/audit/health", timeout=args.timeout)
+    elif args.action == "log":
+        log_id = required_int(args, "log_id", "--log-id")
+        data, _ = client.request("GET", f"/plataforma/api/audit/logs/{log_id}", timeout=args.timeout)
+    elif args.action == "cleanup":
+        require_yes(args, "Audit cleanup requires --yes.")
+        data, _ = client.request("POST", "/plataforma/api/audit-cleanup", json={"days_to_keep": args.days_to_keep}, timeout=args.timeout)
+    else:
+        raise RejoinBIError(f"Unsupported audit action: {args.action}")
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_audit_export(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    params = compact_params(
+        format=args.format,
+        date_from=args.date_from,
+        date_to=args.date_to,
+        action_type=args.action_type,
+        user_email=args.user_email,
+        level=args.level,
+    )
+    output = Path(args.output).expanduser().resolve()
+    client.download(path_with_query("/plataforma/api/audit/export", params), output, timeout=args.timeout)
+    return print_download_result(output, "audit_export", args)
+
+
+def cmd_sleep_manager(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    action_map = {
+        "status": lambda: ("GET", "/plataforma/api/sleep-manager/status", False),
+        "config": lambda: ("GET", "/plataforma/api/sleep-manager/config", False),
+        "configs": lambda: ("GET", "/plataforma/api/sleep-manager/configs", False),
+        "metrics": lambda: ("GET", "/plataforma/api/sleep-manager/metrics", False),
+        "history": lambda: ("GET", "/plataforma/api/sleep-manager/history", False),
+        "users-online": lambda: ("GET", "/plataforma/api/sleep-manager/users-online", False),
+        "shutdown-warning": lambda: ("GET", "/plataforma/api/sleep-manager/shutdown-warning", False),
+        "create-config": lambda: ("POST", "/plataforma/api/sleep-manager/configs", True),
+        "set-config": lambda: ("POST", "/plataforma/api/sleep-manager/config", True),
+        "update-config": lambda: ("PUT", f"/plataforma/api/sleep-manager/config/{required_int(args, 'config_id', '--config-id')}", True),
+        "activate": lambda: ("POST", f"/plataforma/api/sleep-manager/config/{required_int(args, 'config_id', '--config-id')}/activate", True),
+        "toggle": lambda: ("POST", f"/plataforma/api/sleep-manager/configs/{required_int(args, 'config_id', '--config-id')}/toggle", True),
+        "delete-config": lambda: ("DELETE", f"/plataforma/api/sleep-manager/config/{required_int(args, 'config_id', '--config-id')}", True),
+        "force-sleep": lambda: ("POST", "/plataforma/api/sleep-manager/force-sleep", True),
+        "force-active": lambda: ("POST", "/plataforma/api/sleep-manager/force-active", True),
+        "force-logout-all": lambda: ("POST", "/plataforma/api/sleep-manager/force-logout-all", True),
+    }
+    method, path, destructive = action_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes system sleep state/configuration and requires --yes.")
+    payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path, json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_email_manager(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    params = compact_params(group_id=args.group_id, page_id=args.page_id, limit=args.limit)
+    action_map = {
+        "history": lambda: ("GET", path_with_query("/plataforma/api/email/history", params), False),
+        "queue-status": lambda: ("GET", "/plataforma/api/email/queue/status", False),
+        "sessions": lambda: ("GET", "/plataforma/api/email/sessions", False),
+        "create-session": lambda: ("POST", "/plataforma/api/email/sessions", True),
+        "test-session": lambda: ("POST", "/plataforma/api/email/test-connection", False),
+        "update-session": lambda: ("PUT", f"/plataforma/api/email/sessions/{required_int(args, 'session_id', '--session-id')}", True),
+        "delete-session": lambda: ("DELETE", f"/plataforma/api/email/sessions/{required_int(args, 'session_id', '--session-id')}", True),
+        "groups": lambda: ("GET", path_with_query("/plataforma/api/email/groups", compact_params(page_id=args.page_id)), False),
+        "create-group": lambda: ("POST", "/plataforma/api/email/groups/create", True),
+        "update-group": lambda: ("PUT", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}", True),
+        "delete-group": lambda: ("DELETE", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}", True),
+        "recipients": lambda: ("GET", path_with_query("/plataforma/api/email/recipients", compact_params(group_id=args.group_id)), False),
+        "add-recipient": lambda: ("POST", "/plataforma/api/email/recipients", True),
+        "delete-recipient": lambda: ("DELETE", f"/plataforma/api/email/recipients/{required_int(args, 'recipient_id', '--recipient-id')}", True),
+        "external-contacts": lambda: ("GET", "/plataforma/api/email/external_contacts", False),
+        "create-external-contact": lambda: ("POST", "/plataforma/api/email/external_contacts", True),
+        "delete-external-contact": lambda: ("DELETE", f"/plataforma/api/email/external_contacts/{required_int(args, 'contact_id', '--contact-id')}", True),
+        "schedules": lambda: ("GET", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}/schedules", False),
+        "create-schedule": lambda: ("POST", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}/schedules", True),
+        "delete-schedule": lambda: ("DELETE", f"/plataforma/api/email/schedules/{required_int(args, 'schedule_id', '--schedule-id')}", True),
+        "broadcast": lambda: ("POST", "/plataforma/api/email/broadcast", True),
+        "cancel-history": lambda: ("POST", f"/plataforma/api/email/history/{required_int(args, 'history_id', '--history-id')}/cancel", True),
+    }
+    method, path, destructive = action_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes e-mail configuration or sends/cancels messages and requires --yes.")
+    payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path, json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_whatsapp_manager(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    action_map = {
+        "history": lambda: ("GET", path_with_query("/plataforma/api/whatsapp/history", compact_params(limit=args.limit)), False),
+        "queue-status": lambda: ("GET", "/plataforma/api/whatsapp/queue/status", False),
+        "diagnostics": lambda: ("GET", "/plataforma/api/whatsapp/admin/diagnostics", False),
+        "sessions": lambda: ("GET", "/plataforma/api/whatsapp/sessions", False),
+        "start-session": lambda: ("POST", "/plataforma/api/whatsapp/session/start", True),
+        "stop-session": lambda: ("POST", "/plataforma/api/whatsapp/session/stop", True),
+        "session-groups": lambda: ("GET", f"/plataforma/api/whatsapp/session/groups/{quote(required_arg(args, 'session_name', '--session-name'))}", False),
+        "groups": lambda: ("GET", "/plataforma/api/whatsapp/groups", False),
+        "create-group": lambda: ("POST", "/plataforma/api/whatsapp/groups/create", True),
+        "update-group": lambda: ("PUT", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}", True),
+        "delete-group": lambda: ("DELETE", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}", True),
+        "recipients": lambda: ("GET", path_with_query("/plataforma/api/whatsapp/recipients", compact_params(group_id=args.group_id)), False),
+        "add-recipient": lambda: ("POST", "/plataforma/api/whatsapp/recipients", True),
+        "delete-recipient": lambda: ("DELETE", f"/plataforma/api/whatsapp/recipients/{required_int(args, 'recipient_id', '--recipient-id')}", True),
+        "external-contacts": lambda: ("GET", "/plataforma/api/whatsapp/external_contacts", False),
+        "create-external-contact": lambda: ("POST", "/plataforma/api/whatsapp/external_contacts", True),
+        "delete-external-contact": lambda: ("DELETE", f"/plataforma/api/whatsapp/external_contacts/{required_int(args, 'contact_id', '--contact-id')}", True),
+        "schedules": lambda: ("GET", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}/schedules", False),
+        "create-schedule": lambda: ("POST", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}/schedules", True),
+        "delete-schedule": lambda: ("DELETE", f"/plataforma/api/whatsapp/schedules/{required_int(args, 'schedule_id', '--schedule-id')}", True),
+        "broadcast": lambda: ("POST", "/plataforma/api/whatsapp/broadcast", True),
+        "cancel-history": lambda: ("POST", f"/plataforma/api/whatsapp/history/{required_int(args, 'history_id', '--history-id')}/cancel", True),
+        "restart-service": lambda: ("POST", "/plataforma/api/whatsapp/admin/restart_service", True),
+    }
+    method, path, destructive = action_map[args.action]()
+    if destructive:
+        require_yes(args, f"{args.action} changes WhatsApp configuration or sends/cancels messages and requires --yes.")
+    payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    data, _ = client.request(method, path, json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_logs(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    path = f"/plataforma/api/containers/{workspace.get('id')}/logs"
+    if args.deploy_id:
+        path = f"{path}/{quote(args.deploy_id)}"
+    data, _ = client.request("GET", path, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_versions(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    data, _ = client.request("GET", f"/plataforma/api/containers/{workspace.get('id')}/versions", timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_version_action(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    workspace_id = workspace.get("id")
+    sha = quote(args.sha)
+    if args.action == "export":
+        output = Path(args.output).expanduser().resolve()
+        client.download(f"/plataforma/api/containers/{workspace_id}/versions/{sha}/export", output, timeout=args.timeout)
+        return print_download_result(output, "workspace_version_export", args)
+    require_yes(args, f"workspace-version-{args.action} requires --yes.")
+    if args.action == "restore":
+        method = "POST"
+        path = f"/plataforma/api/containers/{workspace_id}/versions/{sha}/restore"
+    else:
+        method = "DELETE"
+        path = f"/plataforma/api/containers/{workspace_id}/versions/{sha}"
+    data, _ = client.request(method, path, json={}, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_schedule(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    workspace_id = workspace.get("id")
+    if args.action == "get":
+        data, _ = client.request("GET", f"/plataforma/api/containers/{workspace_id}/schedule", timeout=args.timeout)
+    elif args.action == "set":
+        require_yes(args, "Setting workspace schedule requires --yes.")
+        data, _ = client.request("POST", f"/plataforma/api/containers/{workspace_id}/schedule", json=parse_json_payload(args), timeout=args.timeout)
+    else:
+        require_yes(args, "Deleting workspace schedule requires --yes.")
+        schedule_id = required_int(args, "schedule_id", "--schedule-id")
+        data, _ = client.request("DELETE", f"/plataforma/api/containers/{workspace_id}/schedule/{schedule_id}", timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_notification(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    workspace_id = workspace.get("id")
+    action_map = {
+        "config": ("GET", f"/plataforma/api/containers/{workspace_id}/notification-config", False),
+        "set-config": ("PUT", f"/plataforma/api/containers/{workspace_id}/notification-config", True),
+        "history": ("GET", f"/plataforma/api/containers/{workspace_id}/notification-history", False),
+        "users": ("GET", f"/plataforma/api/containers/{workspace_id}/notification/users", False),
+        "email-sessions": ("GET", f"/plataforma/api/containers/{workspace_id}/notification/email-sessions", False),
+        "email-groups": ("GET", f"/plataforma/api/containers/{workspace_id}/notification/email-groups", False),
+        "whatsapp-sessions": ("GET", f"/plataforma/api/containers/{workspace_id}/notification/whatsapp-sessions", False),
+        "whatsapp-groups": ("GET", f"/plataforma/api/containers/{workspace_id}/notification/whatsapp-groups", False),
+    }
+    method, path, destructive = action_map[args.action]
+    if destructive:
+        require_yes(args, f"{args.action} changes workspace notification configuration and requires --yes.")
+    payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH"} else None
+    data, _ = client.request(method, path, json=payload, timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_terminal_input(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    require_yes(args, "Sending terminal input to a workspace requires --yes.")
+    data, _ = client.request(
+        "POST",
+        f"/plataforma/api/containers/{workspace.get('id')}/input",
+        json={"input": args.input},
+        timeout=args.timeout,
+    )
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_build(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    require_yes(args, "Building a workspace container requires --yes.")
+    data, _ = client.request("POST", f"/plataforma/api/containers/{workspace.get('id')}/docker/build", json=parse_json_payload(args), timeout=args.timeout)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_stop_all(args: argparse.Namespace) -> int:
+    require_yes(args, "Stopping all workspaces requires --yes.")
+    client = make_client(args)
+    data, _ = client.request("POST", "/plataforma/api/stop-all", json={}, timeout=args.timeout)
     print_payload(data, as_json=args.json)
     return 0
 
@@ -3479,6 +3926,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    def add_payload_args(command_parser: argparse.ArgumentParser) -> None:
+        command_parser.add_argument("--data-json", help="Raw JSON payload for POST/PUT/PATCH/DELETE actions")
+        command_parser.add_argument("--data-file", help="JSON payload file for POST/PUT/PATCH/DELETE actions")
+
     for name in ("connect", "login"):
         p = sub.add_parser(name, help="Authenticate and save tenant session cookies. Opens a browser wizard if no password is provided.")
         p.add_argument("--email")
@@ -3564,6 +4015,66 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
         p.set_defaults(func=cmd_workspace_action, action=action)
 
+    p = sub.add_parser("workspace-logs", help="Read workspace runtime/deploy logs")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--deploy-id")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_workspace_logs)
+
+    p = sub.add_parser("workspace-versions", help="List workspace upload/version history")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_workspace_versions)
+
+    for name, version_action, help_text in (
+        ("workspace-version-export", "export", "Export one workspace version"),
+        ("workspace-version-restore", "restore", "Restore one workspace version"),
+        ("workspace-version-delete", "delete", "Delete one workspace version"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--workspace", required=True, help="Workspace id or name")
+        p.add_argument("--sha", required=True, help="Version SHA")
+        p.add_argument("--output", default="workspace-version.zip")
+        p.add_argument("--yes", action="store_true")
+        p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+        p.set_defaults(func=cmd_workspace_version_action, action=version_action)
+
+    p = sub.add_parser("workspace-schedule", help="Read, set, or delete workspace schedules")
+    p.add_argument("action", choices=["get", "set", "delete"])
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--schedule-id")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_workspace_schedule)
+
+    p = sub.add_parser("workspace-notification", help="Manage workspace notification settings")
+    p.add_argument("action", choices=["config", "set-config", "history", "users", "email-sessions", "email-groups", "whatsapp-sessions", "whatsapp-groups"])
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_workspace_notification)
+
+    p = sub.add_parser("workspace-input", help="Send terminal input to a running workspace")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--input", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_workspace_terminal_input)
+
+    p = sub.add_parser("workspace-build", help="Trigger a workspace container build")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_workspace_build)
+
+    p = sub.add_parser("workspace-stop-all", help="Stop all workspaces/containers")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_workspace_stop_all)
+
     p = sub.add_parser("upload-files", help="Upload individual files directly into a workspace app folder")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--files", nargs="+", required=True)
@@ -3630,6 +4141,37 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("users", help="List users")
     p.add_argument("--profile", help="Filter by profile")
     p.set_defaults(func=cmd_users)
+
+    p = sub.add_parser("sectors", aliases=["setores"], help="List unique user sectors")
+    p.set_defaults(func=cmd_sectors)
+
+    p = sub.add_parser("permission-pages", help="List system/permissive pages used by permission screens")
+    p.add_argument("--permissive", action="store_true", help="Use /permissive-pages instead of /pages")
+    p.set_defaults(func=cmd_permission_pages)
+
+    p = sub.add_parser("user-presence", help="List currently online users from the edit-users screen")
+    p.set_defaults(func=cmd_user_presence)
+
+    p = sub.add_parser("download-users", help="Download users report")
+    p.add_argument("--output", required=True)
+    p.add_argument("--profile")
+    p.add_argument("--setor")
+    p.add_argument("--search")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_download_users)
+
+    p = sub.add_parser("download-permissions", help="Download permissions report")
+    p.add_argument("--output", required=True)
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_download_permissions)
+
+    p = sub.add_parser("menu", help="Read current authenticated menu")
+    p.set_defaults(func=cmd_menu)
+
+    p = sub.add_parser("menu-maintenance", help="Check/reload/clear platform menu cache")
+    p.add_argument("action", choices=["check-duplicates", "reload", "clear-cache"])
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_menu_maintenance)
 
     p = sub.add_parser("create-user", help="Create a user")
     p.add_argument("--email", required=True)
@@ -3808,12 +4350,115 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--path", help="New storage path. Omit to read current value")
     p.set_defaults(func=cmd_storage_path)
 
+    p = sub.add_parser("audit", help="Read audit logs, dashboard, health, detail, or clean old logs")
+    p.add_argument("action", choices=["logs", "dashboard", "health", "log", "cleanup"])
+    p.add_argument("--log-id")
+    p.add_argument("--page", type=int, default=1)
+    p.add_argument("--per-page", type=int, default=20)
+    p.add_argument("--date-from")
+    p.add_argument("--date-to")
+    p.add_argument("--action-type")
+    p.add_argument("--user-email")
+    p.add_argument("--level")
+    p.add_argument("--days-to-keep", type=int, default=90)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_audit)
+
+    p = sub.add_parser("audit-export", help="Download audit logs")
+    p.add_argument("--output", required=True)
+    p.add_argument("--format", choices=["xlsx", "csv", "json"], default="xlsx")
+    p.add_argument("--date-from")
+    p.add_argument("--date-to")
+    p.add_argument("--action-type")
+    p.add_argument("--user-email")
+    p.add_argument("--level")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_audit_export)
+
+    p = sub.add_parser("sleep-manager", help="Manage system sleep/shutdown configuration")
+    p.add_argument("action", choices=[
+        "status", "config", "configs", "metrics", "history", "users-online", "shutdown-warning",
+        "create-config", "set-config", "update-config", "activate", "toggle", "delete-config",
+        "force-sleep", "force-active", "force-logout-all",
+    ])
+    p.add_argument("--config-id")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_sleep_manager)
+
+    p = sub.add_parser("email", help="Manage e-mail sessions, groups, contacts, schedules, and sends")
+    p.add_argument("action", choices=[
+        "history", "queue-status", "sessions", "create-session", "test-session", "update-session", "delete-session",
+        "groups", "create-group", "update-group", "delete-group", "recipients", "add-recipient", "delete-recipient",
+        "external-contacts", "create-external-contact", "delete-external-contact",
+        "schedules", "create-schedule", "delete-schedule", "broadcast", "cancel-history",
+    ])
+    p.add_argument("--session-id")
+    p.add_argument("--group-id")
+    p.add_argument("--recipient-id")
+    p.add_argument("--contact-id")
+    p.add_argument("--schedule-id")
+    p.add_argument("--history-id")
+    p.add_argument("--page-id")
+    p.add_argument("--limit", type=int)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_email_manager)
+
+    p = sub.add_parser("whatsapp", help="Manage WhatsApp sessions, groups, contacts, schedules, and sends")
+    p.add_argument("action", choices=[
+        "history", "queue-status", "diagnostics", "sessions", "start-session", "stop-session", "session-groups",
+        "groups", "create-group", "update-group", "delete-group", "recipients", "add-recipient", "delete-recipient",
+        "external-contacts", "create-external-contact", "delete-external-contact",
+        "schedules", "create-schedule", "delete-schedule", "broadcast", "cancel-history", "restart-service",
+    ])
+    p.add_argument("--session-name")
+    p.add_argument("--group-id")
+    p.add_argument("--recipient-id")
+    p.add_argument("--contact-id")
+    p.add_argument("--schedule-id")
+    p.add_argument("--history-id")
+    p.add_argument("--limit", type=int)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_whatsapp_manager)
+
     p = sub.add_parser("pages", help="List platform pages")
     p.add_argument("--workspace", help="Workspace id or name")
     p.add_argument("--all-containers", action="store_true")
     p.add_argument("--include-inactive", action="store_true")
     p.add_argument("--exclude-fictitious", action="store_true")
     p.set_defaults(func=cmd_pages)
+
+    p = sub.add_parser("page-files", help="List files available for page binding")
+    p.add_argument("--workspace", help="Workspace id or name")
+    p.add_argument("--container-id")
+    p.set_defaults(func=cmd_page_files)
+
+    p = sub.add_parser("page-maintenance", help="Check or repair page configuration integrity")
+    p.add_argument("action", choices=[
+        "verify-orphan-permissions", "clear-orphan-permissions",
+        "verify-conflicts", "fix-conflicts",
+        "verify-hierarchy", "fix-hierarchy",
+        "clear-fictitious-orphans", "clear-rls-cache",
+    ])
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_page_maintenance)
+
+    p = sub.add_parser("set-page-order", help="Update page order/parent placement")
+    p.add_argument("--page-id", required=True)
+    p.add_argument("--position", type=int)
+    p.add_argument("--parent")
+    p.add_argument("--before")
+    p.add_argument("--after")
+    add_payload_args(p)
+    p.set_defaults(func=cmd_set_page_order)
 
     p = sub.add_parser("accessible-pages", help="List pages visible to the current session")
     p.set_defaults(func=cmd_accessible_pages)
@@ -3860,6 +4505,31 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("resolve-page", help="Resolve a page id or route to a tenant URL")
     p.add_argument("--page-ref", required=True)
     p.set_defaults(func=cmd_resolve_page)
+
+    p = sub.add_parser("rls", help="Manage RLS pages, configs, data, dimensions, and validation")
+    p.add_argument("action", choices=[
+        "pages", "page-config", "config", "data", "dimensions", "values", "validate",
+        "set-config", "delete-config", "create-data", "update-data", "delete-data",
+        "create-dimension", "update-dimension", "delete-dimension",
+        "scan-columns", "fetch-columns", "test-config",
+    ])
+    p.add_argument("--page-id")
+    p.add_argument("--user-id")
+    p.add_argument("--rls-id")
+    p.add_argument("--dimension-id")
+    p.add_argument("--column")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_rls)
+
+    p = sub.add_parser("rls-export", help="Download RLS export")
+    p.add_argument("--output", required=True)
+    p.add_argument("--format", default="xlsx")
+    p.add_argument("--page-id")
+    p.add_argument("--user-id")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_rls_export)
 
     p = sub.add_parser("deploy-manifest", help="Create/validate workspace, upload an app folder, and create all pages from a manifest")
     p.add_argument("--manifest", required=True)

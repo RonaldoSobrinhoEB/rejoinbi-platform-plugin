@@ -20,8 +20,9 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Auth: `POST /plataforma/api/login` with JSON `{email, password, lang}`. If PIN is required, the API returns `success: true` and `require_pin: true`; complete login by posting the same payload plus `pin`.
 - Session checks: `GET /plataforma/api/check-session` and `GET /plataforma/api/session-status`.
 - Users: `GET /plataforma/api/users`, `POST /plataforma/api/register`, `POST /plataforma/api/change-user-password`, `POST /plataforma/api/delete-user`, and `GET /plataforma/api/user-permissions/<id>`.
+- User support/configuration: `GET /plataforma/api/setores`, `/users-presence`, `/pages`, `/permissive-pages`, `/download-users`, `/download-permissions`, `/menu`, `/check-menu-duplicates`, `/reload-menu`, and `/clear-menu-cache`.
 - Workspaces: `GET /plataforma/api/containers` or `/containers-list`.
-- Workspace management: `POST /plataforma/api/containers`, `PUT /plataforma/api/containers/<id>/password`, `POST /start`, `/stop`, `/restart`, and `GET /status`.
+- Workspace management: `POST /plataforma/api/containers`, `PUT /plataforma/api/containers/<id>/password`, `POST /start`, `/stop`, `/restart`, `GET /status`, `/logs`, `/versions`, `/schedule`, `/notification-config`, and `/docker/build`.
 - Workspace deletion: `DELETE /plataforma/api/containers/<id>`. The platform deletes the workspace only after cleaning linked pages. The plugin must preview the full deletion plan first and require explicit confirmation.
 - Protected workspace validation: `POST /plataforma/api/validate-container-password` with `{container_id, password}`. This also marks the workspace as validated in the server session.
 - Direct file updates: `POST /plataforma/api/upload-multiple-files`.
@@ -30,6 +31,11 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - BI publish: `POST /plataforma/api/bi/projects/<project_id>/internal-publish/start`, then poll `/status/<job_id>`.
 - ECharts template lookup: `GET /plataforma/api/bi/echarts/template?id=<template_id>`.
 - Pages: `GET /plataforma/api/paginas`, `POST /plataforma/api/paginas`, `PUT /plataforma/api/paginas/<id>`, `DELETE /plataforma/api/paginas/<id>`, `GET /plataforma/api/accessible-pages`, and `GET /plataforma/api/capture/resolve-page/<page_ref>`.
+- Page maintenance: `/paginas/verificar-permissoes-orfas`, `/paginas/limpar-permissoes-orfas`, `/paginas/verificar-conflitos`, `/paginas/corrigir-conflito-paginas`, `/paginas/verificar-hierarquia`, `/paginas/corrigir-hierarquia`, `/paginas/limpar-ficticias-orfas`, `/paginas/limpar-cache-rls`, and `/paginas/<id>/ordem`.
+- RLS: `/plataforma/api/rls*` commands are available through `rls` and `rls-export`.
+- Audit: `/plataforma/api/audit/*` and `/audit-cleanup` are available through `audit` and `audit-export`.
+- System state: `/plataforma/api/sleep-manager/*` is available through `sleep-manager`.
+- E-mail and WhatsApp managers: `/plataforma/api/email/*` and `/plataforma/api/whatsapp/*` are available through `email` and `whatsapp`.
 
 The plugin client enforces the operational rule for this platform: persisted sessions and privileged commands are allowed only for `Administrador Principal`, `Master`, or `Administrador`. A standard `Usuario` login is rejected by default. Use `--allow-standard` only for an intentional negative test.
 
@@ -100,7 +106,23 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" platform-config
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" set-platform-config --browser-title "Minha BI" --logo-image-file C:\path\logo.png
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" ai-config --page-id pagina-id
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" storage-path
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" audit dashboard
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance verify-hierarchy
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls pages
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" email sessions
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" whatsapp sessions
 ```
+
+For configuration payloads with many fields, use JSON files instead of ad hoc chat text:
+
+```powershell
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" email create-group --data-file C:\path\email-group.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" whatsapp create-group --data-file C:\path\whatsapp-group.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls set-config --data-file C:\path\rls-config.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" sleep-manager set-config --data-file C:\path\sleep-config.json --yes
+```
+
+Use dedicated commands before falling back to `api-get` or `api-send`. The dedicated commands preserve profile checks, safe confirmations, workspace password validation, and consistent output.
 
 ## Common Workflows
 
