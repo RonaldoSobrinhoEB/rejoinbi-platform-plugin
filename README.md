@@ -36,6 +36,8 @@ Read `docs/page-routing-map.md` for the platform route/menu contract. It maps `a
 
 Read `docs/admin-configuration-map.md` for the administrative configuration map. It follows the Rejoin BI manual permission levels and maps sidebar tools such as users, permissions, groups, announcements, platform branding, AI configuration, workspace, pages, RLS, audit, system management, and BI Studio to plugin commands or authenticated API fallbacks.
 
+Read `docs/agent-operating-playbook.md` when another Codex agent, teammate, or new user needs to understand the platform from zero. It includes the full natural-language router, command families, safety rules, response patterns, and completion checklist.
+
 ## Common Commands
 
 ```powershell
@@ -77,6 +79,7 @@ These are the expected interpretations for Codex agents using this plugin:
 - "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
 - "o que tem no BI Studio/Data Engine": run `studio-inventory` first.
 - "remover workspace": run `delete-workspace` dry-run first; password-protected workspaces require validated workspace password before deletion.
+- For everything else, use `docs/agent-operating-playbook.md` as the routing source before asking questions.
 
 For automation-only cases, the older terminal/API flow is still available:
 

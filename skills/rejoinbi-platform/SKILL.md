@@ -13,9 +13,11 @@ Before publishing generated dashboards, consult `docs/workspace-compatibility.md
 
 For administrative automation, consult `docs/admin-configuration-map.md`. It maps the Rejoin BI manual sidebar tools and permission levels to plugin commands. The manual defines Administrador Principal as the highest profile and the only one that does not request PIN; if the auth flow succeeds without a PIN, treat the connected profile as `Administrador Principal`, not `Master`.
 
+For agents or users who do not know Rejoin BI, consult `docs/agent-operating-playbook.md`. It is the full operational playbook: mental model, natural-language router, command families, safety rules, response patterns, and completion checklist. Use it whenever the user asks what the plugin can do, uses vague admin wording, or asks for a multi-step platform task.
+
 ## Natural Language Intent Map
 
-Use this map before asking clarifying questions. When a tenant is not connected yet, run `ensure` first; if no tenant host was provided, ask only for the full host in the format `subdomain.rejoinbi.com.br`.
+Use this map before asking clarifying questions. When the request is broad, unclear, or from a user who does not know Rejoin BI, also read `docs/agent-operating-playbook.md`. When a tenant is not connected yet, run `ensure` first; if no tenant host was provided, ask only for the full host in the format `subdomain.rejoinbi.com.br`.
 
 - "o que faz", "entenda o plugin", "quais recursos tem": summarize this plugin as tenant connection, workspaces, uploads, dashboard/page publishing, platform admin configuration, BI Studio/Data Engine inventory, and safe cleanup.
 - "mudar o titulo", "qual titulo atual", "trocar nome da aba", "titulo da plataforma": this means the platform browser title in Configuracao Plataforma. Use `platform-title` to read the current title. Use `platform-title --title "Novo titulo"` to change only the title with automatic backup. Do not ask whether it is a workspace/dashboard title unless the user explicitly says workspace, pagina, dashboard, or projeto.
@@ -28,8 +30,18 @@ Use this map before asking clarifying questions. When a tenant is not connected 
 - "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
 - "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`.
 - "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
+- "usuarios", "permissoes", "grupos", "anuncios", "RLS", "IA", "auditoria", "sistema", "gateway", "codex keys": route through `docs/agent-operating-playbook.md` and `docs/admin-configuration-map.md`; do the read command first, then the safest write command with explicit tenant and confirmation.
 
 Do not give generic capability lists when the user already stated an actionable admin intent. Map the phrase to the command above, fetch current state when needed, and then ask only for the missing value required to make the change safely.
+
+## Agent Operating Rules
+
+- Prefer state-first answers. If the user asks "qual esta atual", fetch the current value instead of explaining possibilities.
+- Prefer dedicated commands over raw `api-get` or `api-send`.
+- Use `smoke-admin` for broad tenant/admin health checks and `studio-inventory` for BI Studio/Data Engine questions.
+- Separate plugin failures from tenant/backend optional issues.
+- After any write, provide the changed fields, target tenant, backup path if any, and verification performed.
+- If a user asks for "tudo", "100%", "testa geral", or "evolucao extrema", run or propose the full checklist in `docs/agent-operating-playbook.md` instead of improvising.
 
 ## What the platform exposes
 
