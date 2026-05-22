@@ -310,6 +310,8 @@ def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
     command = str(getattr(args, "command", "") or "").strip()
     if command in MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT:
         return True
+    if command == "platform-title":
+        return bool(str(getattr(args, "title", "") or "").strip())
     if command in {"codex-keys", "data-engine", "email", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
         action = str(getattr(args, "action", "") or "").strip()
         read_only_actions = {
@@ -2877,6 +2879,36 @@ def cmd_backup_platform_branding(args: argparse.Namespace) -> int:
         "backup_output": str(backup_path),
         "browser_title": data.get("browser_title") or (data.get("config") or {}).get("browser_title"),
         "message": "Platform branding backup saved.",
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_platform_title(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    current_data, _ = client.request("GET", "/plataforma/api/platform-config", timeout=60)
+    current_title = current_data.get("browser_title") or (current_data.get("config") or {}).get("browser_title")
+    new_title = str(getattr(args, "title", "") or "").strip()
+    if not new_title:
+        print_payload({
+            "success": True,
+            "base_url": client.base_url,
+            "browser_title": current_title,
+            "message": "Current Rejoin BI platform browser title.",
+            "change_command": f"python scripts/rejoinbi.py --tenant {tenant_host_from_base_url(client.base_url)} platform-title --title \"Novo titulo\"",
+        }, as_json=args.json)
+        return 0
+
+    _backup_data, backup_path = save_platform_config_backup(client, args.backup_output, label="before-title-change")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json={"browser_title": new_title}, timeout=120)
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "previous_browser_title": current_title,
+        "browser_title": new_title,
+        "backup_output": str(backup_path),
+        "changed_fields": ["browser_title"],
+        "platform_response": data,
+        "restore_command": f"python scripts/rejoinbi.py --tenant {tenant_host_from_base_url(client.base_url)} restore-platform-branding --backup \"{backup_path}\" --yes",
     }, as_json=args.json)
     return 0
 
@@ -5608,6 +5640,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("backup-platform-branding", help="Backup current platform title, logos, favicon, and colors")
     p.add_argument("--output", help="Backup JSON output. Defaults to Downloads\\plugin\\branding-backups")
     p.set_defaults(func=cmd_backup_platform_branding)
+
+    p = sub.add_parser("platform-title", help="Read or update the Rejoin BI platform browser title")
+    p.add_argument("--title", help="New browser title. Omit to read the current title.")
+    p.add_argument("--backup-output", help="Where to save the automatic pre-change backup")
+    p.set_defaults(func=cmd_platform_title)
 
     p = sub.add_parser("set-platform-branding", help="Update platform title, logos, favicon, and colors with automatic backup")
     p.add_argument("--backup-output", help="Where to save the automatic pre-change backup")

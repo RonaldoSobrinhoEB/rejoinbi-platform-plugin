@@ -13,6 +13,24 @@ Before publishing generated dashboards, consult `docs/workspace-compatibility.md
 
 For administrative automation, consult `docs/admin-configuration-map.md`. It maps the Rejoin BI manual sidebar tools and permission levels to plugin commands. The manual defines Administrador Principal as the highest profile and the only one that does not request PIN; if the auth flow succeeds without a PIN, treat the connected profile as `Administrador Principal`, not `Master`.
 
+## Natural Language Intent Map
+
+Use this map before asking clarifying questions. When a tenant is not connected yet, run `ensure` first; if no tenant host was provided, ask only for the full host in the format `subdomain.rejoinbi.com.br`.
+
+- "o que faz", "entenda o plugin", "quais recursos tem": summarize this plugin as tenant connection, workspaces, uploads, dashboard/page publishing, platform admin configuration, BI Studio/Data Engine inventory, and safe cleanup.
+- "mudar o titulo", "qual titulo atual", "trocar nome da aba", "titulo da plataforma": this means the platform browser title in Configuracao Plataforma. Use `platform-title` to read the current title. Use `platform-title --title "Novo titulo"` to change only the title with automatic backup. Do not ask whether it is a workspace/dashboard title unless the user explicitly says workspace, pagina, dashboard, or projeto.
+- "mudar logo", "favicon", "icone", "imagem do menu", "cores", "identidade visual": use `backup-platform-branding` first, then `set-platform-branding` with the relevant image/color files. Mention the restore command from the tool output.
+- "restaurar padrao", "voltar como estava", "desfazer visual": use `restore-platform-branding --backup <backup> --yes` when a backup exists. Use `restore-platform-config-defaults --yes` only when the user specifically wants platform defaults.
+- "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
+- "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with explicit `--tenant`.
+- "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
+- "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII.
+- "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
+- "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`.
+- "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
+
+Do not give generic capability lists when the user already stated an actionable admin intent. Map the phrase to the command above, fetch current state when needed, and then ask only for the missing value required to make the change safely.
+
 ## What the platform exposes
 
 The analyzed codebase is a Flask/Python platform. The important API surface is:
@@ -109,6 +127,8 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" announcements
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-announcement --title "Aviso" --message "Mensagem" --all
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" platform-config
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br backup-platform-branding
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br platform-title
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br platform-title --title "Minha BI"
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file C:\path\logo.png --logo-menu-image-file C:\path\logo-menu.png --favicon-image-file C:\path\favicon.png
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup C:\path\backup.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" ai-config --page-id pagina-id

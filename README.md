@@ -49,6 +49,8 @@ python .\scripts\rejoinbi.py users
 python .\scripts\rejoinbi.py groups
 python .\scripts\rejoinbi.py announcements
 python .\scripts\rejoinbi.py platform-config
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --title "Minha BI"
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file .\logo.png --logo-menu-image-file .\logo-menu.png --favicon-image-file .\favicon.png
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes
@@ -64,6 +66,17 @@ python .\scripts\rejoinbi.py data-engine status
 `ensure` first checks whether the tenant already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting tenant session cookies.
 
 The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
+
+## Assistant Intent Shortcuts
+
+These are the expected interpretations for Codex agents using this plugin:
+
+- "mudar o titulo", "qual titulo atual", "trocar nome da aba": use `platform-title`; this is Configuracao Plataforma, not a workspace/dashboard title unless the user explicitly says so.
+- "mudar logo", "favicon", "cores", "identidade visual": use `backup-platform-branding` and `set-platform-branding`.
+- "subir arquivo em uma pasta": use `upload-files --folder`.
+- "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
+- "o que tem no BI Studio/Data Engine": run `studio-inventory` first.
+- "remover workspace": run `delete-workspace` dry-run first; password-protected workspaces require validated workspace password before deletion.
 
 For automation-only cases, the older terminal/API flow is still available:
 
