@@ -66,6 +66,6 @@ python .\scripts\rejoinbi.py restore-platform-config-defaults --yes
 ## Safety Notes
 
 - Destructive commands keep explicit confirmation flags.
-- Workspace deletion remains blocked for password-protected workspaces.
+- Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided and validated by the platform first.
 - Secrets, passwords, PINs, and local session files must never be exported.
 - Use dedicated commands for supported modules; use `api-get` / `api-send` only for mapped endpoints that do not yet have a first-class command.

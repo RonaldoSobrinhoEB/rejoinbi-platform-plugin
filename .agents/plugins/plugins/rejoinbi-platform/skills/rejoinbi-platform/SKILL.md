@@ -157,7 +157,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" delete-workspace --
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" delete-workspace --workspace codex-test-dashboard --yes --confirm-name codex-test-dashboard --confirm-id 12
 ```
 
-For destructive commands, never skip the preview. Confirm exact resolved ids/names, check parent-child-grandchild trees, and block cross-workspace linked pages unless the user explicitly intends that with `--allow-linked-pages`. Never delete a workspace that is password-protected or marked locked/protected by the API; tell the user the plugin cannot remove it because of the password and that manual removal in Rejoin BI is required for security.
+For destructive commands, never skip the preview. Confirm exact resolved ids/names, check parent-child-grandchild trees, and block cross-workspace linked pages unless the user explicitly intends that with `--allow-linked-pages`. For a password-protected workspace, only delete through the plugin when the user provides the workspace password and the platform validates it through `validate-container-password`; otherwise tell the user the plugin cannot remove it and manual removal in Rejoin BI is required.
 
 Unlock a protected workspace:
 

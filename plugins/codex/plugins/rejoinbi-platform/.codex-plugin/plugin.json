@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Operate Rejoin BI tenants, workspaces, uploads, BI projects, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho"

@@ -1624,10 +1624,11 @@ def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> 
             "status": workspace.get("deploy_status") or "",
         },
         "blocked": password_protected,
-        "manual_deletion_required": password_protected,
+        "password_validation_required": password_protected,
+        "manual_deletion_required": False,
         "security_message": (
-            "Workspace protegido por senha detectado. O plugin nunca remove workspaces com senha; "
-            "remova manualmente pela plataforma apos revisao de seguranca."
+            "Workspace protegido por senha detectado. O plugin so remove apos validar a senha do workspace; "
+            "informe --workspace-password ou REJOINBI_WORKSPACE_PASSWORD. Sem senha validada, remova manualmente."
             if password_protected
             else ""
         ),
@@ -1646,7 +1647,7 @@ def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> 
         "guards": [
             "Exact --confirm-name must match the resolved workspace name when --yes is used.",
             "Optional --confirm-id must match the resolved workspace id when provided.",
-            "Password-protected workspaces are never deleted by this plugin; remove them manually in the platform.",
+            "Password-protected workspaces require successful workspace password validation before deletion.",
             "External linked pages block deletion unless --allow-linked-pages is provided.",
             "Reserved workspace names block deletion unless --force-reserved is provided.",
         ],
@@ -2555,11 +2556,15 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
     plan = workspace_delete_plan(client, workspace)
     workspace_name = safe_str(workspace.get("name"))
     workspace_id = safe_str(workspace.get("id"))
+    password_protected = bool(plan.get("workspace", {}).get("password_protected") or plan.get("workspace", {}).get("locked"))
     if args.dry_run or not args.yes:
         print_payload({
             "success": True,
             "dry_run": True,
-            "message": "No deletion performed. Re-run with --yes, --confirm-name, and optional --confirm-id to delete.",
+            "message": (
+                "No deletion performed. Re-run with --yes, --confirm-name, optional --confirm-id, "
+                "and --workspace-password if the workspace is protected."
+            ),
             "plan": plan,
         }, as_json=args.json)
         return 0
@@ -2569,11 +2574,27 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
         errors.append(f"--confirm-name must exactly match resolved workspace name: {workspace_name}")
     if args.confirm_id and safe_str(args.confirm_id) != workspace_id:
         errors.append(f"--confirm-id must exactly match resolved workspace id: {workspace_id}")
-    if plan.get("workspace", {}).get("password_protected") or plan.get("workspace", {}).get("locked"):
-        errors.append(
-            "Workspace protegido por senha detectado. O plugin nao pode remover esse workspace; "
-            "remova manualmente pela plataforma para evitar problema de seguranca."
-        )
+    if password_protected:
+        if not has_secret(getattr(args, "workspace_password", None), "REJOINBI_WORKSPACE_PASSWORD"):
+            errors.append(
+                "Workspace protegido por senha detectado. Para remover pelo plugin, informe --workspace-password "
+                "ou defina REJOINBI_WORKSPACE_PASSWORD. Sem senha validada, remova manualmente pela plataforma."
+            )
+        else:
+            try:
+                workspace_password = secret_value(args.workspace_password, "REJOINBI_WORKSPACE_PASSWORD", "workspace-password")
+                validation = validate_workspace_if_password(client, workspace, workspace_password)
+                validation_success = bool(validation and validation.get("success", True))
+                plan["workspace_password_validation"] = {
+                    "success": validation_success,
+                    "validated": validation_success,
+                    "message": validation.get("message") if isinstance(validation, dict) else "",
+                }
+                if not validation_success:
+                    errors.append("Senha do workspace nao foi validada. A remocao foi bloqueada.")
+            except RejoinBIError as exc:
+                plan["workspace_password_validation"] = {"success": False, "validated": False, "error": str(exc)}
+                errors.append("Senha do workspace invalida ou nao validada. A remocao foi bloqueada.")
     if normalize_text(workspace_name) in RESERVED_WORKSPACE_NAMES and not args.force_reserved:
         errors.append("Workspace name is reserved/protected. Use --force-reserved only after manual review.")
     external = plan.get("pages", {}).get("external_linked_pages") or []
@@ -3526,6 +3547,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm-id", help="Optional extra guard. Must exactly match the resolved workspace id.")
     p.add_argument("--yes", action="store_true", help="Actually delete after all guards pass")
     p.add_argument("--dry-run", action="store_true", help="Only show the deletion plan")
+    p.add_argument("--workspace-password", help="Required to delete a password-protected workspace")
     p.add_argument("--allow-linked-pages", action="store_true", help="Allow deletion when linked pages outside the workspace are in the cascade")
     p.add_argument("--force-reserved", action="store_true", help="Allow reserved/protected workspace names after manual review")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
