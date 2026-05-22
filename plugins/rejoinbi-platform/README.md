@@ -36,6 +36,9 @@ python .\scripts\rejoinbi.py users
 python .\scripts\rejoinbi.py groups
 python .\scripts\rejoinbi.py announcements
 python .\scripts\rejoinbi.py platform-config
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file .\logo.png --logo-menu-image-file .\logo-menu.png --favicon-image-file .\favicon.png
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes
 python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
 python .\scripts\rejoinbi.py audit dashboard
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy

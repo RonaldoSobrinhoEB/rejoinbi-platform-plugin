@@ -44,6 +44,15 @@ DEFAULT_TIMEOUT = 120
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "api-send",
     "assign-user-group",
@@ -66,9 +75,11 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "publish-bi",
     "recalculate-permissions",
     "restore-platform-config-defaults",
+    "restore-platform-branding",
     "rls",
     "set-ai-config",
     "set-page-order",
+    "set-platform-branding",
     "set-platform-config",
     "set-workspace-password",
     "set-user-password",
@@ -345,6 +356,23 @@ def print_payload(payload: Any, as_json: bool = True) -> None:
         print(str(payload))
 
 
+def prefer_utf8_response(response: requests.Response) -> requests.Response:
+    content_type = (response.headers.get("content-type") or "").lower()
+    if not (
+        "application/json" in content_type
+        or "text/" in content_type
+        or "html" in content_type
+        or "javascript" in content_type
+    ):
+        return response
+    try:
+        response.content.decode("utf-8")
+    except UnicodeDecodeError:
+        return response
+    response.encoding = "utf-8"
+    return response
+
+
 def as_bool_flag(value: bool) -> str:
     return "yes" if value else "no"
 
@@ -465,6 +493,7 @@ class RejoinBIClient:
             response = self.session.request(method, self.url(path), timeout=timeout, **kwargs)
         except requests.RequestException as exc:
             raise RejoinBIError(f"{method} {path} failed before response: {exc}") from exc
+        prefer_utf8_response(response)
         content_type = response.headers.get("content-type", "")
         payload: Any
         if "application/json" in content_type.lower():
@@ -1444,6 +1473,59 @@ def suggest_pt_br_display_name(value: str) -> str:
     return "".join(fixed) if changed else ""
 
 
+MOJIBAKE_MARKERS = (
+    "\u00c3\u00a1", "\u00c3\u00a2", "\u00c3\u00a3", "\u00c3\u00aa", "\u00c3\u00a9",
+    "\u00c3\u00ad", "\u00c3\u00b3", "\u00c3\u00b4", "\u00c3\u00b5", "\u00c3\u00ba",
+    "\u00c3\u00a7", "\u00c3\u0081", "\u00c3\u0082", "\u00c3\u0083", "\u00c3\u008a",
+    "\u00c3\u0089", "\u00c3\u008d", "\u00c3\u0093", "\u00c3\u0094", "\u00c3\u0095",
+    "\u00c3\u009a", "\u00c3\u0087", "\u00c2\u00b4", "\u00c2\u00b0", "\u00c2\u00ba",
+    "\u00c2\u00aa", "\u00e2\u20ac",
+)
+
+
+def looks_like_corrupted_text(value: Any) -> bool:
+    text = str(value or "")
+    if not text:
+        return False
+    if "\ufffd" in text:
+        return True
+    if any(marker in text for marker in MOJIBAKE_MARKERS):
+        return True
+    # A literal question mark inside a word usually means a Windows code page
+    # replaced an accent before the JSON reached the platform.
+    if re.search(r"[A-Za-zÀ-ÿ]\?+[A-Za-zÀ-ÿ]", text):
+        return True
+    return False
+
+
+def manifest_text_integrity_errors(manifest: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    visible_fields: list[tuple[str, Any]] = []
+    app_cfg = manifest.get("app") if isinstance(manifest.get("app"), dict) else {}
+    workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
+    for field in ("name", "description", "title"):
+        if isinstance(app_cfg, dict) and field in app_cfg:
+            visible_fields.append((f"app.{field}", app_cfg.get(field)))
+    for field in ("description", "display_name"):
+        if isinstance(workspace_cfg, dict) and field in workspace_cfg:
+            visible_fields.append((f"workspace.{field}", workspace_cfg.get(field)))
+    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    for index, page in enumerate(pages):
+        if not isinstance(page, dict):
+            continue
+        for field in ("name", "nome", "description", "descricao", "expect_text"):
+            if field in page:
+                visible_fields.append((f"pages[{index}].{field}", page.get(field)))
+    for path, value in visible_fields:
+        text = str(value or "")
+        if looks_like_corrupted_text(text):
+            errors.append(
+                f"{path} contains corrupted text ({text!r}). Save the manifest as UTF-8 and keep visible labels localized; "
+                "for pt-BR use accents in name/description while keeping id, route, and file ASCII."
+            )
+    return errors
+
+
 def response_requires_pin(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -2326,6 +2408,38 @@ def image_file_to_data_uri(path: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
+def tenant_file_stem(client: RejoinBIClient) -> str:
+    host = tenant_host_from_base_url(client.base_url).lower()
+    return re.sub(r"[^a-z0-9._-]+", "-", host).strip("-") or "tenant"
+
+
+def default_branding_backup_path(client: RejoinBIClient, label: str = "branding") -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path.home() / "Downloads" / "plugin" / "branding-backups" / f"{tenant_file_stem(client)}-{label}-{timestamp}.json"
+
+
+def platform_config_payload_from_loaded(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise RejoinBIError("Platform branding backup must contain a JSON object.")
+    if isinstance(data.get("platform_config"), dict):
+        data = data["platform_config"]
+    if isinstance(data.get("config"), dict):
+        payload = dict(data["config"])
+        if data.get("browser_title") and not payload.get("browser_title"):
+            payload["browser_title"] = data.get("browser_title")
+        return payload
+    return dict(data)
+
+
+def save_platform_config_backup(client: RejoinBIClient, output: str | None = None, *, label: str = "branding") -> tuple[dict[str, Any], Path]:
+    data, _ = client.request("GET", "/plataforma/api/platform-config", timeout=60)
+    if not isinstance(data, dict):
+        raise RejoinBIError("Platform config backup returned a non-object response.")
+    backup_path = Path(output).expanduser().resolve() if output else default_branding_backup_path(client, label)
+    write_json(backup_path, data)
+    return data, backup_path
+
+
 def cmd_update_user(args: argparse.Namespace) -> int:
     client = make_client(args)
     user = resolve_user(client, args.user)
@@ -2550,11 +2664,9 @@ def cmd_colors_config(args: argparse.Namespace) -> int:
 
 def platform_config_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
     payload: dict[str, Any] = {}
-    if args.data_file:
+    if getattr(args, "data_file", None):
         data = load_json_file(args.data_file)
-        if not isinstance(data, dict):
-            raise RejoinBIError("Platform config file must contain a JSON object.")
-        payload.update(data.get("config") if isinstance(data.get("config"), dict) else data)
+        payload.update(platform_config_payload_from_loaded(data))
     for attr, key in (
         ("browser_title", "browser_title"),
         ("logo_width", "logo_width"),
@@ -2563,19 +2675,20 @@ def platform_config_payload_from_args(args: argparse.Namespace) -> dict[str, Any
         value = getattr(args, attr, None)
         if value is not None:
             payload[key] = value
-    if args.colors_file:
+    if getattr(args, "colors_file", None):
         payload["cores"] = load_json_file(args.colors_file)
-    if args.logo_image_file:
+    if getattr(args, "logo_image_file", None):
         payload["logo_image"] = image_file_to_data_uri(args.logo_image_file)
-    if args.icon_image_file:
-        payload["icon_image"] = image_file_to_data_uri(args.icon_image_file)
-    if args.logo_menu_image_file:
+    icon_file = getattr(args, "icon_image_file", None) or getattr(args, "favicon_image_file", None)
+    if icon_file:
+        payload["icon_image"] = image_file_to_data_uri(icon_file)
+    if getattr(args, "logo_menu_image_file", None):
         payload["logo_menu_image"] = image_file_to_data_uri(args.logo_menu_image_file)
-    if args.remove_logo:
+    if getattr(args, "remove_logo", False):
         payload["remove_logo"] = True
-    if args.remove_icon:
+    if getattr(args, "remove_icon", False) or getattr(args, "remove_favicon", False):
         payload["remove_icon"] = True
-    if args.remove_logo_menu:
+    if getattr(args, "remove_logo_menu", False):
         payload["remove_logo_menu"] = True
     return payload
 
@@ -2597,6 +2710,60 @@ def cmd_export_platform_config(args: argparse.Namespace) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
     print_payload({"success": True, "output": str(output), "platform_config": data}, as_json=args.json)
+    return 0
+
+
+def cmd_backup_platform_branding(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, backup_path = save_platform_config_backup(client, args.output, label="branding-backup")
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "backup_output": str(backup_path),
+        "browser_title": data.get("browser_title") or (data.get("config") or {}).get("browser_title"),
+        "message": "Platform branding backup saved.",
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_set_platform_branding(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = platform_config_payload_from_args(args)
+    if not payload:
+        raise RejoinBIError("No branding values provided.")
+    _backup_data, backup_path = save_platform_config_backup(client, args.backup_output, label="before-branding-change")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json=payload, timeout=120)
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "backup_output": str(backup_path),
+        "changed_fields": sorted(payload.keys()),
+        "platform_response": data,
+        "restore_command": f"python scripts/rejoinbi.py --tenant {tenant_host_from_base_url(client.base_url)} restore-platform-branding --backup \"{backup_path}\" --yes",
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_restore_platform_branding(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Restoring platform branding requires --yes.")
+    client = make_client(args)
+    backup_data = load_json_file(args.backup)
+    payload = platform_config_payload_from_loaded(backup_data)
+    if not payload:
+        raise RejoinBIError("Backup does not contain platform branding values.")
+    pre_restore_path = None
+    if not args.no_pre_restore_backup:
+        _current_data, pre_restore_path = save_platform_config_backup(client, args.backup_output, label="before-branding-restore")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json=payload, timeout=120)
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "restored_from": str(Path(args.backup).expanduser().resolve()),
+        "pre_restore_backup": str(pre_restore_path) if pre_restore_path else None,
+        "restored_fields": sorted(payload.keys()),
+        "platform_response": data,
+    }, as_json=args.json)
     return 0
 
 
@@ -4127,6 +4294,9 @@ def create_page_from_manifest(
 def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     manifest, manifest_path = load_manifest(args.manifest)
     bind_manifest_tenant(args, manifest)
+    text_errors = manifest_text_integrity_errors(manifest)
+    if text_errors:
+        raise RejoinBIError("Manifest text integrity check failed:\n- " + "\n- ".join(text_errors))
     client = make_client(args)
     app_root = Path(args.path).expanduser().resolve() if args.path else (manifest_path.parent / str(manifest.get("app_root") or ".")).resolve()
     workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
@@ -4238,6 +4408,7 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
         status_code = None
         if capture_path:
             response = client.session.get(client.url(capture_path), timeout=args.timeout)
+            prefer_utf8_response(response)
             status_code = response.status_code
             expected = page.get("expect_text") or page.get("name") or ""
             html_ok = response.ok and (not expected or str(expected) in response.text)
@@ -4257,6 +4428,7 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
                 browser_path += "/"
             browser_path = f"{browser_path}?{urlencode({'pagina_id': resolved_page_id, 'capture_strict': '1'})}"
             browser_response = client.session.get(client.url(browser_path), timeout=args.timeout)
+            prefer_utf8_response(browser_response)
             browser_status_code = browser_response.status_code
             expected = page.get("expect_text") or page.get("name") or ""
             browser_route_ok = browser_response.ok and (not expected or str(expected) in browser_response.text)
@@ -4447,6 +4619,7 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
     startup_mode = str(args.startup_mode or upload_cfg.get("startup_mode") or "static").strip().lower()
     manifest_language = detect_manifest_language(manifest)
+    errors.extend(manifest_text_integrity_errors(manifest))
 
     if pages:
         files_by_page = []
@@ -5099,6 +5272,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", required=True)
     p.set_defaults(func=cmd_export_platform_config)
 
+    p = sub.add_parser("backup-platform-branding", help="Backup current platform title, logos, favicon, and colors")
+    p.add_argument("--output", help="Backup JSON output. Defaults to Downloads\\plugin\\branding-backups")
+    p.set_defaults(func=cmd_backup_platform_branding)
+
+    p = sub.add_parser("set-platform-branding", help="Update platform title, logos, favicon, and colors with automatic backup")
+    p.add_argument("--backup-output", help="Where to save the automatic pre-change backup")
+    p.add_argument("--data-file", help="JSON file with platform branding/config fields")
+    p.add_argument("--browser-title")
+    p.add_argument("--logo-width", type=int)
+    p.add_argument("--logo-menu-width", type=int)
+    p.add_argument("--colors-file", help="JSON file with colors payload")
+    p.add_argument("--logo-image-file")
+    p.add_argument("--logo-menu-image-file")
+    p.add_argument("--favicon-image-file", help="Favicon/image file. Alias for icon_image.")
+    p.add_argument("--icon-image-file", help="Icon/favicon image file.")
+    p.add_argument("--remove-logo", action="store_true")
+    p.add_argument("--remove-logo-menu", action="store_true")
+    p.add_argument("--remove-favicon", action="store_true")
+    p.add_argument("--remove-icon", action="store_true")
+    p.set_defaults(func=cmd_set_platform_branding)
+
+    p = sub.add_parser("restore-platform-branding", help="Restore title, logos, favicon, and colors from a backup")
+    p.add_argument("--backup", required=True, help="Backup JSON from backup-platform-branding, set-platform-branding, or export-platform-config")
+    p.add_argument("--backup-output", help="Where to save the current config before restoring")
+    p.add_argument("--no-pre-restore-backup", action="store_true", help="Do not save current config before restoring")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_restore_platform_branding)
+
     p = sub.add_parser("restore-platform-config-defaults", help="Restore default platform colors")
     p.add_argument("--yes", action="store_true")
     p.set_defaults(func=cmd_restore_platform_config_defaults)
@@ -5451,14 +5652,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-auto-start", action="store_true")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--interval", type=float, default=3.0)
-    p.add_argument("--readiness-timeout", type=float, default=45.0, help="Seconds to wait for accessible-pages to expose container_name for every page")
+    p.add_argument("--readiness-timeout", type=float, default=300.0, help="Seconds to wait for accessible-pages to expose container_name for every page")
     p.add_argument("--no-page-readiness", action="store_true", help="Skip post-deploy accessible-pages/menu safety verification")
     p.set_defaults(func=cmd_deploy_manifest)
 
     p = sub.add_parser("smoke-pages", help="Resolve and request every page in a manifest using the authenticated session")
     p.add_argument("--manifest", required=True)
     p.add_argument("--timeout", type=int, default=60)
-    p.add_argument("--readiness-timeout", type=float, default=45.0, help="Seconds to wait for accessible-pages container_name readiness")
+    p.add_argument("--readiness-timeout", type=float, default=120.0, help="Seconds to wait for accessible-pages container_name readiness")
     p.add_argument("--interval", type=float, default=1.5)
     p.add_argument("--no-refresh-menu", action="store_true", help="Do not clear/reload menu cache while waiting")
     p.set_defaults(func=cmd_smoke_pages)

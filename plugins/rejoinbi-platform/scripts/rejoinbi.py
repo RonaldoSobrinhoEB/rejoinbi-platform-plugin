@@ -75,9 +75,11 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "publish-bi",
     "recalculate-permissions",
     "restore-platform-config-defaults",
+    "restore-platform-branding",
     "rls",
     "set-ai-config",
     "set-page-order",
+    "set-platform-branding",
     "set-platform-config",
     "set-workspace-password",
     "set-user-password",
@@ -2406,6 +2408,38 @@ def image_file_to_data_uri(path: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
+def tenant_file_stem(client: RejoinBIClient) -> str:
+    host = tenant_host_from_base_url(client.base_url).lower()
+    return re.sub(r"[^a-z0-9._-]+", "-", host).strip("-") or "tenant"
+
+
+def default_branding_backup_path(client: RejoinBIClient, label: str = "branding") -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path.home() / "Downloads" / "plugin" / "branding-backups" / f"{tenant_file_stem(client)}-{label}-{timestamp}.json"
+
+
+def platform_config_payload_from_loaded(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise RejoinBIError("Platform branding backup must contain a JSON object.")
+    if isinstance(data.get("platform_config"), dict):
+        data = data["platform_config"]
+    if isinstance(data.get("config"), dict):
+        payload = dict(data["config"])
+        if data.get("browser_title") and not payload.get("browser_title"):
+            payload["browser_title"] = data.get("browser_title")
+        return payload
+    return dict(data)
+
+
+def save_platform_config_backup(client: RejoinBIClient, output: str | None = None, *, label: str = "branding") -> tuple[dict[str, Any], Path]:
+    data, _ = client.request("GET", "/plataforma/api/platform-config", timeout=60)
+    if not isinstance(data, dict):
+        raise RejoinBIError("Platform config backup returned a non-object response.")
+    backup_path = Path(output).expanduser().resolve() if output else default_branding_backup_path(client, label)
+    write_json(backup_path, data)
+    return data, backup_path
+
+
 def cmd_update_user(args: argparse.Namespace) -> int:
     client = make_client(args)
     user = resolve_user(client, args.user)
@@ -2630,11 +2664,9 @@ def cmd_colors_config(args: argparse.Namespace) -> int:
 
 def platform_config_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
     payload: dict[str, Any] = {}
-    if args.data_file:
+    if getattr(args, "data_file", None):
         data = load_json_file(args.data_file)
-        if not isinstance(data, dict):
-            raise RejoinBIError("Platform config file must contain a JSON object.")
-        payload.update(data.get("config") if isinstance(data.get("config"), dict) else data)
+        payload.update(platform_config_payload_from_loaded(data))
     for attr, key in (
         ("browser_title", "browser_title"),
         ("logo_width", "logo_width"),
@@ -2643,19 +2675,20 @@ def platform_config_payload_from_args(args: argparse.Namespace) -> dict[str, Any
         value = getattr(args, attr, None)
         if value is not None:
             payload[key] = value
-    if args.colors_file:
+    if getattr(args, "colors_file", None):
         payload["cores"] = load_json_file(args.colors_file)
-    if args.logo_image_file:
+    if getattr(args, "logo_image_file", None):
         payload["logo_image"] = image_file_to_data_uri(args.logo_image_file)
-    if args.icon_image_file:
-        payload["icon_image"] = image_file_to_data_uri(args.icon_image_file)
-    if args.logo_menu_image_file:
+    icon_file = getattr(args, "icon_image_file", None) or getattr(args, "favicon_image_file", None)
+    if icon_file:
+        payload["icon_image"] = image_file_to_data_uri(icon_file)
+    if getattr(args, "logo_menu_image_file", None):
         payload["logo_menu_image"] = image_file_to_data_uri(args.logo_menu_image_file)
-    if args.remove_logo:
+    if getattr(args, "remove_logo", False):
         payload["remove_logo"] = True
-    if args.remove_icon:
+    if getattr(args, "remove_icon", False) or getattr(args, "remove_favicon", False):
         payload["remove_icon"] = True
-    if args.remove_logo_menu:
+    if getattr(args, "remove_logo_menu", False):
         payload["remove_logo_menu"] = True
     return payload
 
@@ -2677,6 +2710,60 @@ def cmd_export_platform_config(args: argparse.Namespace) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
     print_payload({"success": True, "output": str(output), "platform_config": data}, as_json=args.json)
+    return 0
+
+
+def cmd_backup_platform_branding(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, backup_path = save_platform_config_backup(client, args.output, label="branding-backup")
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "backup_output": str(backup_path),
+        "browser_title": data.get("browser_title") or (data.get("config") or {}).get("browser_title"),
+        "message": "Platform branding backup saved.",
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_set_platform_branding(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = platform_config_payload_from_args(args)
+    if not payload:
+        raise RejoinBIError("No branding values provided.")
+    _backup_data, backup_path = save_platform_config_backup(client, args.backup_output, label="before-branding-change")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json=payload, timeout=120)
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "backup_output": str(backup_path),
+        "changed_fields": sorted(payload.keys()),
+        "platform_response": data,
+        "restore_command": f"python scripts/rejoinbi.py --tenant {tenant_host_from_base_url(client.base_url)} restore-platform-branding --backup \"{backup_path}\" --yes",
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_restore_platform_branding(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Restoring platform branding requires --yes.")
+    client = make_client(args)
+    backup_data = load_json_file(args.backup)
+    payload = platform_config_payload_from_loaded(backup_data)
+    if not payload:
+        raise RejoinBIError("Backup does not contain platform branding values.")
+    pre_restore_path = None
+    if not args.no_pre_restore_backup:
+        _current_data, pre_restore_path = save_platform_config_backup(client, args.backup_output, label="before-branding-restore")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json=payload, timeout=120)
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "restored_from": str(Path(args.backup).expanduser().resolve()),
+        "pre_restore_backup": str(pre_restore_path) if pre_restore_path else None,
+        "restored_fields": sorted(payload.keys()),
+        "platform_response": data,
+    }, as_json=args.json)
     return 0
 
 
@@ -5184,6 +5271,34 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-platform-config", help="Export platform branding/configuration to JSON")
     p.add_argument("--output", required=True)
     p.set_defaults(func=cmd_export_platform_config)
+
+    p = sub.add_parser("backup-platform-branding", help="Backup current platform title, logos, favicon, and colors")
+    p.add_argument("--output", help="Backup JSON output. Defaults to Downloads\\plugin\\branding-backups")
+    p.set_defaults(func=cmd_backup_platform_branding)
+
+    p = sub.add_parser("set-platform-branding", help="Update platform title, logos, favicon, and colors with automatic backup")
+    p.add_argument("--backup-output", help="Where to save the automatic pre-change backup")
+    p.add_argument("--data-file", help="JSON file with platform branding/config fields")
+    p.add_argument("--browser-title")
+    p.add_argument("--logo-width", type=int)
+    p.add_argument("--logo-menu-width", type=int)
+    p.add_argument("--colors-file", help="JSON file with colors payload")
+    p.add_argument("--logo-image-file")
+    p.add_argument("--logo-menu-image-file")
+    p.add_argument("--favicon-image-file", help="Favicon/image file. Alias for icon_image.")
+    p.add_argument("--icon-image-file", help="Icon/favicon image file.")
+    p.add_argument("--remove-logo", action="store_true")
+    p.add_argument("--remove-logo-menu", action="store_true")
+    p.add_argument("--remove-favicon", action="store_true")
+    p.add_argument("--remove-icon", action="store_true")
+    p.set_defaults(func=cmd_set_platform_branding)
+
+    p = sub.add_parser("restore-platform-branding", help="Restore title, logos, favicon, and colors from a backup")
+    p.add_argument("--backup", required=True, help="Backup JSON from backup-platform-branding, set-platform-branding, or export-platform-config")
+    p.add_argument("--backup-output", help="Where to save the current config before restoring")
+    p.add_argument("--no-pre-restore-backup", action="store_true", help="Do not save current config before restoring")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_restore_platform_branding)
 
     p = sub.add_parser("restore-platform-config-defaults", help="Restore default platform colors")
     p.add_argument("--yes", action="store_true")

@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "description": "Operate Rejoin BI tenants, full admin configuration, workspaces, uploads, BI projects, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho"
@@ -24,7 +24,7 @@
       "Map and automate Rejoin BI platform configuration",
       "Preview deleting this Rejoin BI workspace"
     ],
-    "brandColor": "#EF4444",
+    "brandColor": "#004090",
     "composerIcon": "./assets/app-icon.png",
     "logo": "./assets/app-icon.png"
   }
