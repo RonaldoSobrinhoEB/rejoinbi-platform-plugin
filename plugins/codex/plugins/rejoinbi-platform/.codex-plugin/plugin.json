@@ -24,7 +24,7 @@
       "Preview deleting this Rejoin BI workspace"
     ],
     "brandColor": "#0F766E",
-    "composerIcon": "assets/plugin-icon.png",
-    "logo": "assets/plugin-icon.png"
+    "composerIcon": "./assets/plugin-icon.png",
+    "logo": "./assets/plugin-icon.png"
   }
 }
