@@ -28,7 +28,7 @@ Correct pattern:
 - The manifest maps each page to its own `file` and `route`.
 - Visible page names may be localized with accents. Technical values (`id`, `route`, filenames) stay ASCII; for static dashboards, `route` should usually be the HTML filename without `.html`.
 
-See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records.
+See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`Visão RLS por Email`) with ASCII route/file values and client-side RLS filtering from the platform config endpoint.
 
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
 
@@ -112,8 +112,10 @@ python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
 python .\scripts\rejoinbi.py set-page-order --page-id pagina-id --parent pagina-pai --position 20
 
 python .\scripts\rejoinbi.py rls pages
-python .\scripts\rejoinbi.py rls page-config --page-id pagina-id
+python .\scripts\rejoinbi.py rls page-config --page-id pagina-id --container-id 12
+python .\scripts\rejoinbi.py rls test-config --page-id pagina-id --container-id 12
 python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
+python .\scripts\rejoinbi.py rls set-page-mapping --data-file .\rls-page-mapping.json --yes
 python .\scripts\rejoinbi.py rls-export --output .\rls.xlsx
 
 python .\scripts\rejoinbi.py audit logs --per-page 50
@@ -145,6 +147,22 @@ python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
 `smoke-admin` runs a read-only API check across the main configuration areas and writes a reusable JSON report. `studio-inventory` links BI Studio projects to Data Engine status, SQL Server driver support, sessions, database connections, repository tree, datasets, and files. It is read-only and redacts passwords, tokens, API keys, secrets, and connection strings. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
 
 For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
+
+### RLS Smoke Workflow
+
+Use this when changing RLS logic, page routing, permissions, or user/PIN handling:
+
+```powershell
+python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-rls-suite\rejoinbi-app.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file .\rls-config.json --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file .\rls-page-mapping.json --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --permissions codex-rls-suite-visao
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-data --data-file .\rls-data.json --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-dimension --data-file .\rls-dimension.json --yes
+```
+
+For a real standard-user test, generate the mailbox at `https://pt.emailfake.com/channel1/`, create the user with that exact address, read the welcome e-mail for the provisional password, attempt login to trigger the PIN, then read the PIN e-mail from the same mailbox. Connect only with `--allow-standard` for this negative/validation test. A correct result shows `plugin_profile_allowed: false` for the standard user, `accessible-pages` containing only the granted page, and `rls test-config` returning `allowed_values` only for that user's configured dimension values.
 
 ## Safe Destructive Commands
 

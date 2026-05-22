@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visão RLS por Email</title>
+  <link rel="stylesheet" href="./assets/rls-suite.css">
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero-panel">
+      <div>
+        <p class="eyebrow">Rejoin BI · Segurança de Dados</p>
+        <h1>Visão RLS por Email</h1>
+        <p class="lede">Painel de telecom com filtragem por região, aplicada a partir do email autenticado no Rejoin BI.</p>
+      </div>
+      <div class="rls-chip" id="rlsStatus">Carregando RLS...</div>
+    </section>
+
+    <section class="summary-grid" aria-label="Indicadores principais">
+      <article>
+        <span>Receita permitida</span>
+        <strong id="kpiReceita">-</strong>
+      </article>
+      <article>
+        <span>Clientes visíveis</span>
+        <strong id="kpiClientes">-</strong>
+      </article>
+      <article>
+        <span>Churn médio</span>
+        <strong id="kpiChurn">-</strong>
+      </article>
+      <article>
+        <span>Regiões liberadas</span>
+        <strong id="kpiRegioes">-</strong>
+      </article>
+    </section>
+
+    <section class="insight-grid">
+      <div class="chart-card">
+        <div class="card-heading">
+          <span>Receita por Região</span>
+          <small>Depois do filtro RLS</small>
+        </div>
+        <div id="chartReceita" class="chart"></div>
+      </div>
+      <div class="chart-card">
+        <div class="card-heading">
+          <span>Clientes por Plano</span>
+          <small>Base visível ao usuário</small>
+        </div>
+        <div id="chartPlanos" class="chart"></div>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <div class="card-heading">
+        <span>Linhas entregues ao usuário</span>
+        <small id="rlsDetails">Aguardando configuração</small>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Região</th>
+              <th>Plano</th>
+              <th>Clientes</th>
+              <th>Receita</th>
+              <th>Churn</th>
+              <th>SLA</th>
+            </tr>
+          </thead>
+          <tbody id="dataRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./assets/rls-suite.js"></script>
+</body>
+</html>

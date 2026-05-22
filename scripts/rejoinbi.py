@@ -3459,14 +3459,16 @@ def cmd_rls(args: argparse.Namespace) -> int:
     client = make_client(args)
     path_map = {
         "pages": lambda: ("GET", "/plataforma/api/rls-pages", False, {}),
-        "page-config": lambda: ("GET", "/plataforma/api/rls-page-config", False, {"pagina": required_arg(args, "page_id", "--page-id")}),
-        "config": lambda: ("GET", "/plataforma/api/rls-config", False, compact_params(pagina=args.page_id, user_id=args.user_id)),
-        "data": lambda: ("GET", "/plataforma/api/rls-data", False, compact_params(pagina=args.page_id, user_id=args.user_id)),
+        "page-config": lambda: ("GET", "/plataforma/api/rls-page-config", False, compact_params(pagina=required_arg(args, "page_id", "--page-id"), container_id=args.container_id)),
+        "page-info": lambda: ("GET", "/plataforma/api/rls/page-info", False, {"pagina_id": required_arg(args, "page_id", "--page-id")}),
+        "config": lambda: ("GET", "/plataforma/api/rls-config", False, compact_params(pagina_id=args.page_id, container_id=args.container_id, user_id=args.user_id)),
+        "data": lambda: ("GET", "/plataforma/api/rls-data", False, compact_params(container_id=args.container_id, user_id=args.user_id)),
         "dimensions": lambda: ("GET", f"/plataforma/api/rls-dimensions/{required_int(args, 'rls_id', '--rls-id')}", False, {}),
         "values": lambda: ("GET", "/plataforma/api/rls/values", False, compact_params(rls_id=required_arg(args, "rls_id", "--rls-id"), column=args.column)),
         "validate": lambda: ("POST", "/plataforma/api/rls/validate", False, {}),
         "set-config": lambda: ("POST", "/plataforma/api/rls-config", True, {}),
-        "delete-config": lambda: ("DELETE", "/plataforma/api/rls-config", True, compact_params(pagina=args.page_id, user_id=args.user_id)),
+        "set-page-mapping": lambda: ("POST", "/plataforma/api/rls-page", True, {}),
+        "delete-config": lambda: ("DELETE", "/plataforma/api/rls-config", True, {}),
         "create-data": lambda: ("POST", "/plataforma/api/rls-data", True, {}),
         "update-data": lambda: ("PUT", f"/plataforma/api/rls-data/{required_int(args, 'rls_id', '--rls-id')}", True, {}),
         "delete-data": lambda: ("DELETE", f"/plataforma/api/rls-data/{required_int(args, 'rls_id', '--rls-id')}", True, {}),
@@ -3475,12 +3477,22 @@ def cmd_rls(args: argparse.Namespace) -> int:
         "delete-dimension": lambda: ("DELETE", f"/plataforma/api/rls-dimension/{required_int(args, 'dimension_id', '--dimension-id')}", True, {}),
         "scan-columns": lambda: ("POST", "/plataforma/api/rls/scan-columns", False, {}),
         "fetch-columns": lambda: ("POST", "/plataforma/api/rls/fetch-columns", False, {}),
-        "test-config": lambda: ("GET", "/plataforma/api/rls/test-config", False, compact_params(pagina=args.page_id)),
+        "test-config": lambda: ("GET", "/plataforma/api/rls/test-config", False, compact_params(pagina_id=args.page_id, container_id=args.container_id)),
     }
     method, path, destructive, params = path_map[args.action]()
     if destructive:
         require_yes(args, f"{args.action} changes RLS configuration and requires --yes.")
-    payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    payload = None
+    if method in {"POST", "PUT", "PATCH", "DELETE"}:
+        payload = parse_json_payload(args)
+        if not isinstance(payload, dict):
+            raise RejoinBIError("RLS payload must be a JSON object.")
+        if args.page_id and not any(key in payload for key in ("pagina_id", "pagina", "page_id")):
+            payload["pagina_id"] = args.page_id
+        if args.container_id and "container_id" not in payload:
+            payload["container_id"] = int(args.container_id) if str(args.container_id).isdigit() else args.container_id
+        if args.page_rls_id and args.action == "set-page-mapping" and "pagina_rls_id" not in payload:
+            payload["pagina_rls_id"] = args.page_rls_id
     data, _ = client.request(method, path_with_query(path, params), json=payload, timeout=args.timeout)
     print_payload(data, as_json=args.json)
     return 0
@@ -5526,7 +5538,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("update-user", help="Edit a user profile")
     p.add_argument("--user", required=True, help="User id or email")
     p.add_argument("--name")
-    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "UsuÃ¡rio", "Gestor"])
+    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "Usuário", "Gestor"])
     p.add_argument("--setor")
     p.add_argument("--matricula")
     p.add_argument("--contato")
@@ -5970,12 +5982,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("rls", help="Manage RLS pages, configs, data, dimensions, and validation")
     p.add_argument("action", choices=[
-        "pages", "page-config", "config", "data", "dimensions", "values", "validate",
-        "set-config", "delete-config", "create-data", "update-data", "delete-data",
+        "pages", "page-config", "page-info", "config", "data", "dimensions", "values", "validate",
+        "set-config", "set-page-mapping", "delete-config", "create-data", "update-data", "delete-data",
         "create-dimension", "update-dimension", "delete-dimension",
         "scan-columns", "fetch-columns", "test-config",
     ])
     p.add_argument("--page-id")
+    p.add_argument("--page-rls-id")
+    p.add_argument("--container-id")
     p.add_argument("--user-id")
     p.add_argument("--rls-id")
     p.add_argument("--dimension-id")

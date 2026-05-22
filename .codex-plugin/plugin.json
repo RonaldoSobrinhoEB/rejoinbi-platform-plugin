@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.21",
+  "version": "0.4.22",
   "description": "Operate Rejoin BI tenants, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",
@@ -24,7 +24,7 @@
   "interface": {
     "displayName": "Rejoin BI Platform",
     "shortDescription": "Develop, publish, and administer Rejoin BI tenants",
-    "longDescription": "Helps Codex connect to Rejoin BI tenants, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, automate platform/admin configuration including users, pages, permissions, RLS, announcements, platform title/logos/favicon/colors, messaging, Codex keys, system tools, upload gateway, and safely preview workspace/page cleanup using the platform API. Includes a detailed agent operating playbook so users and Codex agents who do not know Rejoin BI can route natural language requests to the correct safe command. If a user asks to see or change the title, use platform-title for the current browser title or set-platform-branding for full branding. Before any other action, validate a full tenant host and confirm authentication/permission.",
+    "longDescription": "Helps Codex connect to Rejoin BI tenants, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, automate platform/admin configuration including users, pages, permissions, RLS, announcements, platform title/logos/favicon/colors, messaging, Codex keys, system tools, upload gateway, and safely preview workspace/page cleanup using the platform API. Includes a detailed agent operating playbook and RLS smoke workflow so users and Codex agents who do not know Rejoin BI can route natural language requests to the correct safe command. If a user asks to see or change the title, use platform-title for the current browser title or set-platform-branding for full branding. Before any other action, validate a full tenant host and confirm authentication/permission.",
     "developerName": "Ronaldo Sobrinho",
     "category": "Engineering",
     "capabilities": [
@@ -39,7 +39,8 @@
       "Connect to my Rejoin BI tenant",
       "List Rejoin BI workspaces",
       "Show the current platform title",
-      "Inventory BI Studio and Data Engine"
+      "Inventory BI Studio and Data Engine",
+      "Create and validate an RLS smoke page"
     ],
     "brandColor": "#004090",
     "composerIcon": "./assets/app-icon.svg",

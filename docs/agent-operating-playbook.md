@@ -181,14 +181,29 @@ Confirm audience before creating announcements.
 
 ```powershell
 python .\scripts\rejoinbi.py rls pages
-python .\scripts\rejoinbi.py rls page-config --page-id page-id
-python .\scripts\rejoinbi.py rls config --page-id page-id
-python .\scripts\rejoinbi.py rls data --page-id page-id
+python .\scripts\rejoinbi.py rls page-info --page-id page-id
+python .\scripts\rejoinbi.py rls page-config --page-id page-id --container-id 12
+python .\scripts\rejoinbi.py rls config --page-id page-id --container-id 12
+python .\scripts\rejoinbi.py rls data --container-id 12
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --data-file C:\rls-config.json --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --data-file C:\rls-page-mapping.json --yes
+python .\scripts\rejoinbi.py rls test-config --page-id page-id --container-id 12
 python .\scripts\rejoinbi.py rls-export --output C:\rls.xlsx
 ```
 
-Use JSON files for complex RLS payloads.
+Use JSON files for complex RLS payloads. RLS is page and workspace/container scoped; always pass `container_id` when a page lives in a workspace, because the same page id/route pattern can exist in different contexts during tests. For N-cardinality tests, configure `coluna_usuario_1` as the user column, `coluna_dim_n` as the dimension column, create the user row with `rls create-data`, then add explicit allowed values with `rls create-dimension`.
+
+End-to-end RLS smoke sequence:
+
+```powershell
+python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-rls-suite\rejoinbi-app.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --permissions codex-rls-suite-visao
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-rls-suite\rejoinbi-app.json
+```
+
+For realistic user/PIN validation, create the mailbox only through `https://pt.emailfake.com/channel1/`. Use the generated mailbox to create a standard `Usuario`, read the welcome e-mail for the provisional password, attempt the login to trigger a PIN e-mail, then complete the login with that PIN. Standard users are not valid plugin operators; `--allow-standard` is only for this test. After login, verify `accessible-pages` contains only the granted page and `rls test-config` contains only the allowed dimension values for that e-mail.
 
 ### Email And WhatsApp
 
@@ -297,4 +312,3 @@ Before saying a task is finished:
 - Any dashboard page was checked for `container_name`, `browser_route_ok`, and `menu_safe`.
 - Any temporary users/workspaces/files created for tests were cleaned up.
 - Any server-side limitation was separated from plugin failure.
-

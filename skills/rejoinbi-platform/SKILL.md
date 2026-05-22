@@ -31,6 +31,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`.
 - "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
 - "usuarios", "permissoes", "grupos", "anuncios", "RLS", "IA", "auditoria", "sistema", "gateway", "codex keys": route through `docs/agent-operating-playbook.md` and `docs/admin-configuration-map.md`; do the read command first, then the safest write command with explicit tenant and confirmation.
+- "testar RLS", "usuario padrao com RLS", "validar PIN", "filtro por email": use `examples/codex-rls-suite`, create/read the mailbox through `https://pt.emailfake.com/channel1/`, grant only the target page, configure RLS by `container_id`, and connect the standard user only with `--allow-standard` for validation.
 
 Do not give generic capability lists when the user already stated an actionable admin intent. Map the phrase to the command above, fetch current state when needed, and then ask only for the missing value required to make the change safely.
 
@@ -148,6 +149,8 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" storage-path
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" audit dashboard
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance verify-hierarchy
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls pages
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls page-config --page-id pagina-id --container-id 12
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls test-config --page-id pagina-id --container-id 12
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" email sessions
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" whatsapp sessions
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" codex-keys list
@@ -167,6 +170,7 @@ For configuration payloads with many fields, use JSON files instead of ad hoc ch
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br email create-group --data-file C:\path\email-group.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br whatsapp create-group --data-file C:\path\whatsapp-group.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --data-file C:\path\rls-config.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --data-file C:\path\rls-page-mapping.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br sleep-manager set-config --data-file C:\path\sleep-config.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br codex-keys create --data-file C:\path\codex-key.json --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine create-db-connection --data-file C:\path\db-connection.json --yes
@@ -318,6 +322,21 @@ The plugin includes two examples:
 
 - `examples/codex-echarts-dashboard`: simple single-page ECharts dashboard.
 - `examples/codex-advanced-suite`: platform-managed multi-page package with one HTML file per Rejoin BI page, shared assets, filters, forms, local draft storage, JSON export, and a deploy manifest.
+- `examples/codex-rls-suite`: single-page RLS smoke dashboard with accented visible page name, ASCII `id/route/file`, platform-managed route, and client-side filtering from `/plataforma/api/rls/config`.
+
+## RLS Validation Workflow
+
+Use `examples/codex-rls-suite` whenever you need to verify RLS, page permissions, PIN behavior, or route creation:
+
+```powershell
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" validate-app --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file C:\path\rls-config.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file C:\path\rls-page-mapping.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12
+```
+
+For end-to-end standard-user tests, open `https://pt.emailfake.com/channel1/` first and copy the generated mailbox. Create the Rejoin BI user with that exact address, then read the welcome e-mail in that same mailbox to get the provisional password. The first login for non-Administrador-Principal users must trigger a PIN e-mail; read that PIN from the mailbox and complete the login. Use `--allow-standard` only in this test. Expected security result: `status` shows `profile: Usuário` and `plugin_profile_allowed: false`, admin commands are rejected by the plugin, `accessible-pages` returns only explicitly granted pages, and `rls test-config` returns only that user's allowed dimension values.
 
 ## Dashboard Development Guidance
 

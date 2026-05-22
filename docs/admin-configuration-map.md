@@ -26,7 +26,7 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Configuracao Plataforma | `GET/POST /plataforma/api/platform-config`, `GET /plataforma/api/cores-config`, `POST /plataforma/api/platform-config/restore-defaults` | `platform-title`, `platform-config`, `colors-config`, `backup-platform-branding`, `set-platform-branding`, `restore-platform-branding`, `set-platform-config`, `export-platform-config`, `restore-platform-config-defaults` |
 | Workspace | `GET/POST/PUT /plataforma/api/containers`, workspace actions, logs, schedules, notifications, versions, upload endpoints | `workspaceall`, `create-workspace`, `update-workspace`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-schedule`, `workspace-notification`, `workspace-build`, `deploy-manifest` |
 | Gerenciar Paginas | `GET/POST/PUT/DELETE /plataforma/api/paginas*`, hierarchy/order/repair endpoints | `pages`, `page-files`, `create-page`, `update-page`, `delete-page`, `set-page-order`, `page-maintenance`, `resolve-page`, `smoke-pages` |
-| Gerenciar RLS | `/plataforma/api/rls*` | `rls pages`, `rls page-config`, `rls config`, `rls set-config`, `rls data`, `rls create-data`, `rls dimensions`, `rls validate`, `rls-export` |
+| Gerenciar RLS | `/plataforma/api/rls*` | `rls pages`, `rls page-info`, `rls page-config --container-id`, `rls config --container-id`, `rls set-config`, `rls set-page-mapping`, `rls data --container-id`, `rls create-data`, `rls create-dimension`, `rls test-config`, `rls-export` |
 | Configuracao IA | `GET/POST/DELETE /plataforma/api/ai-config`, `POST /plataforma/api/ai-config/cleanup` | `ai-config`, `set-ai-config`, `delete-ai-config`, `cleanup-ai-config` |
 | Chaves Codex/IA | `/plataforma/api/codex/keys*`, `/plataforma/api/codex/auth-*` | `codex-keys stats`, `codex-keys list`, `codex-keys create`, `codex-keys update`, `codex-keys delete`, `codex-keys usage` |
 | Sistema de Auditoria | `GET /plataforma/api/audit/*`, `GET /plataforma/api/audit/export`, `POST /plataforma/api/audit-cleanup` | `audit logs`, `audit dashboard`, `audit health`, `audit log`, `audit cleanup`, `audit-export` |
@@ -102,6 +102,8 @@ python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config
 python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
 python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes
 ```
+
+RLS needs both page mapping and user dimension data. For platform-created workspace pages, always include `container_id`; it prevents route/page confusion when the same technical page id pattern appears in another workspace. A complete RLS validation should prove four things: the page exists in `accessible-pages`, the standard user has direct permission only for that page, `rls test-config` returns only that e-mail's dimension values, and an admin command attempted as `Usuario` is rejected by the plugin profile guard.
 
 Inspect platform infrastructure and upload support:
 
