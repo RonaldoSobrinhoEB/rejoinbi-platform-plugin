@@ -9,19 +9,24 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import html
 import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import sys
+import threading
 import time
 import unicodedata
 from contextlib import ExitStack
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
+import webbrowser
 
 try:
     import requests
@@ -34,7 +39,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 DEFAULT_TIMEOUT = 120
-SAFE_PROFILE_COMMANDS = {"connect", "login", "status"}
+SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "login", "status"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 FICTITIOUS_PAGE_PREFIXES = ("avo-ficticio-", "pai-ficticio-", "filho-ficticio-")
@@ -260,6 +265,414 @@ def secret_value(cli_value: str | None, env_name: str, label: str, *, required: 
     return ""
 
 
+def has_secret(cli_value: str | None, env_name: str) -> bool:
+    return bool(cli_value or os.environ.get(env_name))
+
+
+def open_browser_url(url: str) -> bool:
+    try:
+        if webbrowser.open(url, new=1, autoraise=True):
+            return True
+    except Exception:
+        pass
+    if os.name == "nt":
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def auth_html(
+    *,
+    title: str,
+    base_url: str,
+    state: str,
+    body: str,
+    email: str = "",
+    require_pin: bool = False,
+    error: str = "",
+) -> bytes:
+    safe_title = html.escape(title)
+    safe_base_url = html.escape(base_url)
+    safe_state = html.escape(state)
+    safe_email = html.escape(email)
+    error_block = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    if require_pin:
+        form = f"""
+        <form method="post" action="/pin">
+          <input type="hidden" name="state" value="{safe_state}">
+          <label>PIN de seguranca</label>
+          <input name="pin" inputmode="numeric" autocomplete="one-time-code" autofocus required>
+          <button type="submit">Concluir conexao</button>
+        </form>
+        """
+    else:
+        form = f"""
+        <form method="post" action="/login">
+          <input type="hidden" name="state" value="{safe_state}">
+          <label>Email</label>
+          <input name="email" type="email" value="{safe_email}" autocomplete="username" autofocus required>
+          <label>Senha</label>
+          <input name="password" type="password" autocomplete="current-password" required>
+          <button type="submit">Conectar Rejoin BI</button>
+        </form>
+        """
+    page = f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{safe_title}</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0b1115;
+      color: #eef6f4;
+    }}
+    body {{
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, .22), transparent 32rem),
+        linear-gradient(135deg, #0b1115 0%, #101820 58%, #151615 100%);
+    }}
+    main {{
+      width: min(440px, calc(100vw - 32px));
+      border: 1px solid rgba(255, 255, 255, .12);
+      border-radius: 18px;
+      background: rgba(16, 24, 32, .92);
+      box-shadow: 0 24px 72px rgba(0, 0, 0, .38);
+      padding: 28px;
+    }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #90f2df;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }}
+    .badge::before {{
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 20px rgba(34, 197, 94, .8);
+    }}
+    h1 {{
+      margin: 18px 0 8px;
+      font-size: 28px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }}
+    p {{
+      margin: 0 0 18px;
+      color: #adc0bd;
+      line-height: 1.55;
+    }}
+    .tenant {{
+      margin: 18px 0;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .06);
+      color: #d7fffa;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+    }}
+    form {{
+      display: grid;
+      gap: 12px;
+    }}
+    label {{
+      color: #d6e4e1;
+      font-size: 13px;
+      font-weight: 700;
+    }}
+    input {{
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 46px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, .14);
+      background: rgba(255, 255, 255, .08);
+      color: #fff;
+      padding: 0 13px;
+      font: inherit;
+      outline: none;
+    }}
+    input:focus {{
+      border-color: #2dd4bf;
+      box-shadow: 0 0 0 3px rgba(45, 212, 191, .16);
+    }}
+    button {{
+      margin-top: 4px;
+      min-height: 48px;
+      border: 0;
+      border-radius: 10px;
+      background: #14b8a6;
+      color: #03110f;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }}
+    .error {{
+      margin: 0 0 14px;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(239, 68, 68, .12);
+      color: #fecaca;
+    }}
+    .success {{
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(34, 197, 94, .12);
+      color: #d9fbe8;
+    }}
+    a {{
+      color: #67e8f9;
+      font-weight: 700;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="badge">Rejoin BI</div>
+    <h1>{safe_title}</h1>
+    <p>{html.escape(body)}</p>
+    <div class="tenant">{safe_base_url}</div>
+    {error_block}
+    {form}
+  </main>
+</body>
+</html>"""
+    return page.encode("utf-8")
+
+
+def success_html(base_url: str, email: str, profile: str) -> bytes:
+    safe_base_url = html.escape(base_url)
+    safe_email = html.escape(email)
+    safe_profile = html.escape(profile or "perfil validado")
+    page = f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rejoin BI conectado</title>
+  <style>
+    body {{
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background: #0b1115;
+      color: #eef6f4;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      width: min(460px, calc(100vw - 32px));
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, .12);
+      background: #101820;
+      padding: 28px;
+      box-shadow: 0 24px 72px rgba(0, 0, 0, .38);
+    }}
+    h1 {{ margin: 0 0 10px; font-size: 28px; letter-spacing: 0; }}
+    p {{ margin: 0 0 14px; color: #adc0bd; line-height: 1.55; }}
+    .success {{
+      margin-bottom: 16px;
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(34, 197, 94, .12);
+      color: #d9fbe8;
+    }}
+    a {{ color: #67e8f9; font-weight: 800; }}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="success">Sessao do plugin salva com seguranca.</div>
+    <h1>Conectado</h1>
+    <p>{safe_email} foi validado como {safe_profile}. Voce ja pode voltar ao Codex e pedir workspaces, paginas, uploads e dashboards.</p>
+    <p>Tenant: <a href="{safe_base_url}/plataforma" target="_blank" rel="noreferrer">{safe_base_url}</a></p>
+  </main>
+</body>
+</html>"""
+    return page.encode("utf-8")
+
+
+def browser_auth_flow(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    client.clear_session()
+    lang = getattr(args, "lang", "pt-BR") or "pt-BR"
+    initial_email = str(getattr(args, "email", "") or os.environ.get("REJOINBI_EMAIL") or "").strip().lower()
+    state = secrets.token_urlsafe(24)
+    done = threading.Event()
+    result: dict[str, Any] = {}
+    pending: dict[str, str] = {}
+
+    class AuthHandler(BaseHTTPRequestHandler):
+        server_version = "RejoinBIAuth/1.0"
+
+        def log_message(self, _format: str, *_args: Any) -> None:
+            return
+
+        def read_form(self) -> dict[str, str]:
+            length = int(self.headers.get("content-length") or 0)
+            raw = self.rfile.read(length).decode("utf-8", errors="replace")
+            parsed = parse_qs(raw, keep_blank_values=True)
+            return {key: values[-1] if values else "" for key, values in parsed.items()}
+
+        def send_html(self, payload: bytes, status: int = 200) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def render_login(self, error: str = "") -> None:
+            self.send_html(auth_html(
+                title="Conectar tenant",
+                base_url=client.base_url,
+                state=state,
+                body="Digite seu login Rejoin BI nesta janela local. A senha e o PIN nao vao para o chat.",
+                email=initial_email,
+                error=error,
+            ))
+
+        def render_pin(self, error: str = "") -> None:
+            self.send_html(auth_html(
+                title="Confirmar PIN",
+                base_url=client.base_url,
+                state=state,
+                body="O tenant pediu PIN. Digite o codigo para concluir a conexao do plugin.",
+                email=pending.get("email", ""),
+                require_pin=True,
+                error=error,
+            ))
+
+        def finish_success(self, data: Any, email: str) -> None:
+            try:
+                identity = require_allowed_profile(client, args)
+                client.save_session()
+            except RejoinBIError as exc:
+                client.clear_session()
+                self.render_login(str(exc))
+                return
+            result.update({
+                "success": True,
+                "base_url": client.base_url,
+                "email": email,
+                "profile": identity.get("profile"),
+                "message": data.get("message") if isinstance(data, dict) else "Connected.",
+                "session_path": str(client.session_path),
+                "auth_method": "browser",
+            })
+            self.send_html(success_html(client.base_url, email, str(identity.get("profile") or "")))
+            done.set()
+
+        def do_GET(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path in {"/", "/login"}:
+                self.render_login()
+                return
+            if parsed.path == "/health":
+                payload = json.dumps({"ok": True}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            self.send_error(404)
+
+        def do_POST(self) -> None:
+            form = self.read_form()
+            if form.get("state") != state:
+                self.send_error(403)
+                return
+            if self.path == "/login":
+                email = str(form.get("email") or "").strip().lower()
+                password = str(form.get("password") or "")
+                if not email or not password:
+                    self.render_login("Informe email e senha.")
+                    return
+                try:
+                    try:
+                        client.request("GET", f"/plataforma/credencial?lang={lang}", timeout=30)
+                    except Exception:
+                        pass
+                    payload = {"email": email, "password": password, "lang": lang}
+                    data, _ = client.request("POST", f"/plataforma/api/login?lang={lang}", json=payload)
+                    if isinstance(data, dict) and data.get("require_pin"):
+                        pending.clear()
+                        pending.update(payload)
+                        self.render_pin(data.get("message") or "")
+                        return
+                    if isinstance(data, dict) and data.get("success"):
+                        self.finish_success(data, email)
+                        return
+                    self.render_login(str(data))
+                except RejoinBIError as exc:
+                    client.clear_session()
+                    self.render_login(str(exc))
+                return
+            if self.path == "/pin":
+                pin = str(form.get("pin") or "").strip()
+                if not pending:
+                    self.render_login("Sessao de PIN expirada. Faca login novamente.")
+                    return
+                if not pin:
+                    self.render_pin("Informe o PIN.")
+                    return
+                try:
+                    payload = {**pending, "pin": pin}
+                    data, _ = client.request("POST", f"/plataforma/api/login?lang={lang}", json=payload)
+                    if isinstance(data, dict) and data.get("success"):
+                        self.finish_success(data, pending.get("email", ""))
+                        pending.clear()
+                        return
+                    self.render_pin(str(data))
+                except RejoinBIError as exc:
+                    client.clear_session()
+                    self.render_pin(str(exc))
+                return
+            self.send_error(404)
+
+    host = "127.0.0.1"
+    port = int(getattr(args, "auth_port", 0) or 0)
+    timeout = int(getattr(args, "auth_timeout", 600) or 600)
+    server = ThreadingHTTPServer((host, port), AuthHandler)
+    auth_url = f"http://{host}:{server.server_port}/?state={quote(state)}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    opened = False
+    if not getattr(args, "no_open_browser", False):
+        opened = open_browser_url(auth_url)
+    try:
+        if not done.wait(timeout):
+            raise RejoinBIError(
+                "Browser authentication timed out. "
+                f"Open {auth_url} and complete login, or run connect again."
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    result.setdefault("opened_browser", opened)
+    result.setdefault("auth_url", auth_url)
+    print_payload(result, as_json=args.json)
+    return 0
+
+
 def normalize_text(value: Any) -> str:
     raw = str(value or "").strip()
     normalized = unicodedata.normalize("NFKD", raw)
@@ -309,11 +722,14 @@ def require_allowed_profile(client: RejoinBIClient, args: argparse.Namespace) ->
 
 
 def cmd_connect(args: argparse.Namespace) -> int:
+    if not getattr(args, "terminal", False) and not has_secret(args.password, "REJOINBI_PASSWORD"):
+        return browser_auth_flow(args)
+
     client = make_client(args)
     client.clear_session()
     email = str(args.email or os.environ.get("REJOINBI_EMAIL") or "").strip().lower()
     if not email:
-        raise RejoinBIError("Email not provided. Use --email or set REJOINBI_EMAIL.")
+        return browser_auth_flow(args)
     password = secret_value(args.password, "REJOINBI_PASSWORD", "password")
     lang = args.lang or "pt-BR"
 
@@ -361,6 +777,10 @@ def cmd_connect(args: argparse.Namespace) -> int:
         return 0
 
     raise RejoinBIError(str(data))
+
+
+def cmd_browser_login(args: argparse.Namespace) -> int:
+    return browser_auth_flow(args)
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1732,11 +2152,11 @@ $HOME\\plugins\\rejoinbi-platform
 ## Configure A Tenant
 
 ```powershell
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py --subdomain cliente connect --email user@example.com
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --subdomain cliente connect
 python .\\rejoinbi-platform\\scripts\\rejoinbi.py workspaceall
 ```
 
-Passwords and PINs are never saved in the package. Use environment variables or local prompts.
+The `connect` command opens a local browser login wizard. Passwords and PINs are never saved in the package and do not need to be pasted into chat.
 
 ## Dashboard Pattern
 
@@ -1810,12 +2230,25 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     for name in ("connect", "login"):
-        p = sub.add_parser(name, help="Authenticate and save tenant session cookies")
+        p = sub.add_parser(name, help="Authenticate and save tenant session cookies. Opens a browser wizard if no password is provided.")
         p.add_argument("--email")
         p.add_argument("--password")
         p.add_argument("--pin")
         p.add_argument("--lang", default="pt-BR")
+        p.add_argument("--terminal", action="store_true", help="Use terminal/env password flow instead of the browser auth wizard")
+        p.add_argument("--auth-port", type=int, default=0, help="Local browser auth port. Default: random free port")
+        p.add_argument("--auth-timeout", type=int, default=600, help="Seconds to wait for browser auth")
+        p.add_argument("--no-open-browser", action="store_true", help="Print/use the local auth URL without opening the browser automatically")
         p.set_defaults(func=cmd_connect)
+
+    for name in ("auth", "browser-login"):
+        p = sub.add_parser(name, help="Open a local browser login wizard and save tenant session cookies")
+        p.add_argument("--email", help="Optional email to prefill in the browser wizard")
+        p.add_argument("--lang", default="pt-BR")
+        p.add_argument("--auth-port", type=int, default=0, help="Local browser auth port. Default: random free port")
+        p.add_argument("--auth-timeout", type=int, default=600, help="Seconds to wait for browser auth")
+        p.add_argument("--no-open-browser", action="store_true", help="Print/use the local auth URL without opening the browser automatically")
+        p.set_defaults(func=cmd_browser_login, password=None, pin=None, terminal=False)
 
     p = sub.add_parser("status", help="Check current session")
     p.set_defaults(func=cmd_status)
@@ -2064,7 +2497,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args) or 0)
     except RejoinBIError as exc:
-        print_payload({"success": False, "error": str(exc)})
+        error = str(exc)
+        payload: dict[str, Any] = {"success": False, "error": error}
+        if "401" in error or "Sess" in error or "session" in error.lower():
+            try:
+                base_url = resolve_base_url(
+                    subdomain=getattr(args, "subdomain", "") or "",
+                    domain=getattr(args, "domain", DEFAULT_DOMAIN) or DEFAULT_DOMAIN,
+                    base_url=getattr(args, "base_url", "") or "",
+                )
+                payload["reauth_command"] = f"python scripts/rejoinbi.py --base-url {base_url} connect"
+            except Exception:
+                payload["reauth_command"] = "python scripts/rejoinbi.py --subdomain <tenant> connect"
+            payload["reauth_note"] = "Run connect without a password to open the browser auth wizard."
+        print_payload(payload)
         return 1
     except KeyboardInterrupt:
         print_payload({"success": False, "error": "Interrupted"})

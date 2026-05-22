@@ -31,6 +31,25 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 
 The plugin client enforces the operational rule for this platform: persisted sessions and privileged commands are allowed only for `Administrador Principal`, `Master`, or `Administrador`. A standard `Usuario` login is rejected by default. Use `--allow-standard` only for an intentional negative test.
 
+## Default Auth Flow
+
+When a user asks to connect a tenant and gives only the subdomain, do not ask for password or PIN in chat. Run the browser auth wizard:
+
+```powershell
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect
+```
+
+This opens a local browser page, prefilled with the resolved tenant URL, where the user enters email, password, and PIN if required. The helper posts to the tenant login API, validates that the profile is `Administrador Principal`, `Master`, or `Administrador`, then saves only the session cookies in `%USERPROFILE%\.rejoinbi-platform`.
+
+If any command returns `HTTP 401`, `Sessão expirada`, or says there is no saved session, immediately start this browser auth flow for the same subdomain instead of asking the user to configure `REJOINBI_PASSWORD`.
+
+Use the older terminal/API auth only when the user explicitly asks for automation or already provided local environment variables:
+
+```powershell
+$env:REJOINBI_PASSWORD = "..."
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect --email user@example.com --terminal
+```
+
 ## Script
 
 Use the bundled client:
@@ -49,12 +68,12 @@ After a successful `connect`, later commands can omit `--subdomain`; the script 
 
 ## Secure Credential Handling
 
-Do not ask the user to paste passwords or PINs into chat unless they explicitly choose that. Prefer environment variables or local terminal prompts:
+Do not ask the user to paste passwords or PINs into chat unless they explicitly choose that. Prefer the browser auth wizard. For automation-only terminal auth, use environment variables or local terminal prompts:
 
 ```powershell
 $env:REJOINBI_PASSWORD = "..."
 $env:REJOINBI_PIN = "123456"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect --email user@example.com
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect --email user@example.com --terminal
 ```
 
 The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-platform`. It does not save the password or PIN.
@@ -64,10 +83,10 @@ The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-pl
 Connect:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect --email user@example.com
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect
 ```
 
-If the API asks for PIN and none was provided, ask the user to set `REJOINBI_PIN` locally and rerun the connect command.
+If the API asks for PIN, the browser wizard shows a PIN field and completes the session in the same flow.
 
 List workspaces:
 
