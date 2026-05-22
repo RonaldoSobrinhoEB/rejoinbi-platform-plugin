@@ -33,8 +33,8 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Cloudflare/Dominio | `/plataforma/api/cloudflare/*` | `cloudflare status`, `cloudflare dns-records`, `cloudflare configure`, `cloudflare create-dns-record`, `cloudflare ssl-mode`, `cloudflare set-ssl-mode` |
 | Gateway/Upload | `/plataforma/api/python-versions`, `/upload-capabilities`, `/gateway/*`, `/upload-status/<id>`, `/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
 | Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
-| Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
-| BI Studio | `/plataforma/api/bi/*` | `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
+| Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `studio-inventory`, `data-engine inventory`, `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
+| BI Studio | `/plataforma/api/bi/*` | `studio-inventory`, `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
 
 ## Fast Platform Branding
 
@@ -113,6 +113,26 @@ python .\scripts\rejoinbi.py route-map routes
 python .\scripts\rejoinbi.py upload-admin capabilities
 python .\scripts\rejoinbi.py upload-admin gateway-pairings
 ```
+
+## BI Studio and Data Engine Inventory
+
+Before answering what exists in BI Studio/Data Engine, creating a linked dataset, changing repository files, or publishing a BI project, run the read-only inventory:
+
+```powershell
+python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
+python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
+python .\scripts\rejoinbi.py data-engine inventory --project-uid projeto-uid
+```
+
+The inventory links each BI Studio project to project-scoped Data Engine resources:
+
+- Data Engine service status and SQL Server driver availability.
+- Project session status.
+- Database connections, with credentials and connection strings redacted.
+- Repository tree and global context.
+- Datasets and uploaded files.
+
+Use the inventory as the first source of truth for "o que tem no BI Studio" or "o que tem no Data Engine". It is safe for summaries because password, token, key, secret, credential, and connection-string fields are redacted. Use `--include-raw` only when troubleshooting because it includes sanitized endpoint payloads.
 
 Data Engine session, repository, and dataset endpoints are project-scoped. Pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload so the plugin validates the request before reaching the tenant API.
 

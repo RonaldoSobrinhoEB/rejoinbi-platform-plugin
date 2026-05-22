@@ -36,12 +36,16 @@ python .\scripts\rejoinbi.py users
 python .\scripts\rejoinbi.py groups
 python .\scripts\rejoinbi.py announcements
 python .\scripts\rejoinbi.py platform-config
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file .\logo.png --logo-menu-image-file .\logo-menu.png --favicon-image-file .\favicon.png
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes
 python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
 python .\scripts\rejoinbi.py audit dashboard
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
 python .\scripts\rejoinbi.py rls pages
 python .\scripts\rejoinbi.py cloudflare status
 python .\scripts\rejoinbi.py codex-keys stats
+python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py data-engine status
 ```
 
@@ -106,13 +110,15 @@ python .\scripts\rejoinbi.py upload-admin gateway-pairings
 python .\scripts\rejoinbi.py route-map routes
 python .\scripts\rejoinbi.py system-admin database-status
 
+python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
+python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
 python .\scripts\rejoinbi.py data-engine db-connections --project-id 1
 python .\scripts\rejoinbi.py data-engine repository-list --project-id 1
 python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
 ```
 
-`smoke-admin` runs a read-only API check across the main configuration areas and writes a reusable JSON report. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
+`smoke-admin` runs a read-only API check across the main configuration areas and writes a reusable JSON report. `studio-inventory` links BI Studio projects to Data Engine status, SQL Server driver support, sessions, database connections, repository tree, datasets, and files. It is read-only and redacts passwords, tokens, API keys, secrets, and connection strings. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
 
 For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Cloudflare, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 

@@ -316,14 +316,20 @@ def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
             "capabilities",
             "database-status",
             "db-connections",
+            "datasets-list",
             "dns-records",
             "gateway-pairings",
             "history",
+            "inventory",
             "list",
+            "list-files",
+            "repository-global-context",
             "repository-list",
             "route",
             "routes",
             "sessions",
+            "session-status",
+            "sqlserver-drivers",
             "status",
             "stats",
             "usage",
@@ -2275,6 +2281,155 @@ def cmd_echarts_template(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_studio_inventory(client: RejoinBIClient, args: argparse.Namespace) -> dict[str, Any]:
+    timeout = int(getattr(args, "timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT)
+    limit = int(getattr(args, "limit", 25) or 25)
+    include_raw = bool(getattr(args, "include_raw", False))
+    include_files = bool(getattr(args, "include_files", True))
+    include_sessions = bool(getattr(args, "include_sessions", True))
+    include_global_context = bool(getattr(args, "include_global_context", True))
+    requested_project_id = safe_str(getattr(args, "project_id", "") or "")
+    requested_project_uid = safe_str(getattr(args, "project_uid", "") or "")
+    issues: list[dict[str, Any]] = []
+
+    bi_payload = optional_inventory_get(
+        client,
+        "/plataforma/api/bi/projects",
+        label="bi_projects",
+        timeout=timeout,
+        issues=issues,
+    )
+    projects = extract_inventory_items(bi_payload or {}, ("projects", "data", "items", "results"))
+    project_records = [project for project in projects if isinstance(project, dict)]
+    if requested_project_id or requested_project_uid:
+        project_records = [
+            project
+            for project in project_records
+            if (
+                not requested_project_id
+                or safe_str(first_present_value(project, ("id", "project_id", "projectId"))) == requested_project_id
+            )
+            and (
+                not requested_project_uid
+                or safe_str(first_present_value(project, ("uid", "project_uid", "projectUid"))) == requested_project_uid
+            )
+        ]
+
+    data_engine_base = "/plataforma/data-engine"
+    data_engine: dict[str, Any] = {}
+    global_status = optional_inventory_get(
+        client,
+        f"{data_engine_base}/api/status",
+        label="data_engine_status",
+        timeout=timeout,
+        issues=issues,
+    )
+    data_engine["status"] = (
+        inventory_endpoint_result(global_status, limit=limit, include_raw=include_raw)
+        if global_status is not None
+        else inventory_error_result("status endpoint unavailable")
+    )
+    drivers_payload = optional_inventory_get(
+        client,
+        f"{data_engine_base}/api/db/providers/sqlserver/drivers",
+        label="sqlserver_drivers",
+        timeout=timeout,
+        issues=issues,
+    )
+    data_engine["sqlserver_drivers"] = (
+        inventory_endpoint_result(drivers_payload, limit=limit, include_raw=include_raw)
+        if drivers_payload is not None
+        else inventory_error_result("sqlserver drivers endpoint unavailable")
+    )
+
+    project_summaries: list[dict[str, Any]] = []
+    for project in project_records:
+        ref = project_inventory_ref(project)
+        query = project_query_from_ref(ref)
+        project_summary: dict[str, Any] = {
+            "project": compact_inventory_item(project),
+            "project_ref": ref,
+            "data_engine": {},
+        }
+        if not query:
+            project_summary["data_engine"]["skipped"] = "Project has no id or uid for Data Engine project-scoped endpoints."
+            project_summaries.append(project_summary)
+            continue
+
+        endpoint_specs: list[tuple[str, str, tuple[str, ...]]] = []
+        if include_sessions:
+            endpoint_specs.append(("session", f"{data_engine_base}/api/session/status", INVENTORY_COLLECTION_KEYS))
+        endpoint_specs.extend([
+            ("db_connections", f"{data_engine_base}/api/db/connections", ("connections", "data", "items", "results")),
+            ("repository", f"{data_engine_base}/api/repository/list", ("items", "children", "files", "data", "results")),
+            ("datasets", f"{data_engine_base}/api/datasets/list", ("datasets", "data", "items", "results")),
+        ])
+        if include_files:
+            endpoint_specs.append(("files", f"{data_engine_base}/api/list-files", ("files", "items", "data", "results")))
+        if include_global_context:
+            endpoint_specs.append(("global_context", f"{data_engine_base}/api/repository/global-context", INVENTORY_COLLECTION_KEYS))
+
+        for key, path, collection_keys in endpoint_specs:
+            payload = optional_inventory_get(
+                client,
+                path,
+                label=f"data_engine_{key}",
+                timeout=timeout,
+                issues=issues,
+                query=query,
+            )
+            if payload is None:
+                project_summary["data_engine"][key] = inventory_error_result("endpoint unavailable")
+            else:
+                project_summary["data_engine"][key] = inventory_endpoint_result(
+                    payload,
+                    limit=limit,
+                    include_raw=include_raw,
+                    collection_keys=collection_keys,
+                )
+        project_summaries.append(project_summary)
+
+    result: dict[str, Any] = {
+        "success": True,
+        "read_only": True,
+        "tenant": tenant_host_from_base_url(client.base_url),
+        "generated_at": utc_now(),
+        "bi_studio": {
+            "projects_endpoint": (
+                inventory_endpoint_result(
+                    bi_payload,
+                    limit=limit,
+                    include_raw=include_raw,
+                    collection_keys=("projects", "data", "items", "results"),
+                )
+                if bi_payload is not None
+                else inventory_error_result("BI Studio projects endpoint unavailable")
+            ),
+            "projects_count": len(project_records),
+            "projects": project_summaries,
+        },
+        "data_engine": data_engine,
+        "issues": issues,
+        "usage_notes": [
+            "This command is read-only and redacts password, token, key, secret, and connection-string fields.",
+            "Use --project-id or --project-uid to inspect one project. Use --include-raw only for sanitized troubleshooting output.",
+            "Use data-engine repository-content, preview-file, dataset-get, or query-preview only after reviewing this inventory.",
+        ],
+    }
+    return result
+
+
+def cmd_studio_inventory(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    result = build_studio_inventory(client, args)
+    if getattr(args, "output", None):
+        output = Path(args.output).expanduser().resolve()
+        write_json(output, result)
+        result = {**result, "output": str(output)}
+    print_payload(result, as_json=args.json)
+    return 0
+
+
 def load_users(client: RejoinBIClient) -> list[dict[str, Any]]:
     data, _ = client.request("GET", "/plataforma/api/users", timeout=60)
     if isinstance(data, dict):
@@ -2909,6 +3064,177 @@ def payload_has_project_reference(payload: Any) -> bool:
     return bool(payload.get("project_id") or payload.get("project_uid") or payload.get("projectId") or payload.get("projectUid"))
 
 
+SENSITIVE_INVENTORY_KEY_RE = re.compile(
+    r"(password|senha|secret|token|credential|connection[_-]?string|conn[_-]?str|api[_-]?key|access[_-]?key|private[_-]?key)",
+    flags=re.I,
+)
+INVENTORY_COLLECTION_KEYS = (
+    "projects",
+    "connections",
+    "datasets",
+    "files",
+    "items",
+    "children",
+    "objects",
+    "records",
+    "rows",
+    "data",
+    "result",
+    "results",
+)
+INVENTORY_SCALAR_KEYS = (
+    "id",
+    "uid",
+    "project_id",
+    "project_uid",
+    "projectId",
+    "projectUid",
+    "name",
+    "nome",
+    "title",
+    "titulo",
+    "type",
+    "tipo",
+    "kind",
+    "status",
+    "state",
+    "engine",
+    "provider",
+    "created_by",
+    "owner",
+    "tab_count",
+    "database",
+    "schema",
+    "table",
+    "path",
+    "file",
+    "filename",
+    "route",
+    "created_at",
+    "updated_at",
+    "createdAt",
+    "updatedAt",
+)
+
+
+def scrub_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        clean: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if SENSITIVE_INVENTORY_KEY_RE.search(key_text):
+                clean[key_text] = "***redacted***"
+            else:
+                clean[key_text] = scrub_sensitive(item)
+        return clean
+    if isinstance(value, list):
+        return [scrub_sensitive(item) for item in value]
+    return value
+
+
+def extract_inventory_items(payload: Any, keys: tuple[str, ...] = INVENTORY_COLLECTION_KEYS) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            nested = extract_inventory_items(value, keys)
+            if nested:
+                return nested
+    return []
+
+
+def compact_inventory_item(item: Any) -> dict[str, Any]:
+    item = scrub_sensitive(item)
+    if not isinstance(item, dict):
+        return {"value": item}
+    compact: dict[str, Any] = {}
+    for key in INVENTORY_SCALAR_KEYS:
+        if key in item and isinstance(item.get(key), (str, int, float, bool, type(None))):
+            compact[key] = item.get(key)
+    compact["raw_keys"] = sorted(str(key) for key in item.keys())[:30]
+    return compact
+
+
+def inventory_endpoint_result(
+    payload: Any,
+    *,
+    limit: int,
+    include_raw: bool,
+    collection_keys: tuple[str, ...] = INVENTORY_COLLECTION_KEYS,
+) -> dict[str, Any]:
+    clean = scrub_sensitive(payload)
+    items = extract_inventory_items(clean, collection_keys)
+    result: dict[str, Any] = {
+        "ok": True,
+        "summary": payload_summary(clean),
+    }
+    if items:
+        result["count"] = len(items)
+        result["items"] = [compact_inventory_item(item) for item in items[: max(0, limit)]]
+        if len(items) > limit:
+            result["truncated"] = True
+            result["limit"] = limit
+    if include_raw:
+        result["raw"] = clean
+    return result
+
+
+def inventory_error_result(error: Exception | str) -> dict[str, Any]:
+    return {"ok": False, "error": str(error)}
+
+
+def optional_inventory_get(
+    client: RejoinBIClient,
+    path: str,
+    *,
+    label: str,
+    timeout: int,
+    issues: list[dict[str, Any]],
+    query: dict[str, Any] | None = None,
+) -> Any:
+    try:
+        data, _ = client.request("GET", path_with_query(path, query), timeout=timeout)
+        return data
+    except RejoinBIError as exc:
+        issues.append({"area": label, "path": path, "error": str(exc)})
+        return None
+
+
+def first_present_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def project_inventory_ref(project: dict[str, Any]) -> dict[str, str]:
+    project_id_value = first_present_value(project, ("id", "project_id", "projectId"))
+    project_uid_value = first_present_value(project, ("uid", "project_uid", "projectUid"))
+    name_value = first_present_value(project, ("name", "nome", "title", "titulo"))
+    ref: dict[str, str] = {}
+    if project_id_value not in (None, ""):
+        ref["project_id"] = safe_str(project_id_value)
+    if project_uid_value not in (None, ""):
+        ref["project_uid"] = safe_str(project_uid_value)
+    if name_value not in (None, ""):
+        ref["name"] = safe_str(name_value)
+    return ref
+
+
+def project_query_from_ref(ref: dict[str, str]) -> dict[str, str]:
+    if ref.get("project_id"):
+        return {"project_id": ref["project_id"]}
+    if ref.get("project_uid"):
+        return {"project_uid": ref["project_uid"]}
+    return {}
+
+
 def payload_summary(payload: Any) -> dict[str, Any]:
     if isinstance(payload, list):
         return {"type": "list", "count": len(payload)}
@@ -3450,6 +3776,14 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         query_params["project_id"] = args.project_id
     if getattr(args, "project_uid", None):
         query_params["project_uid"] = args.project_uid
+    if args.action == "inventory":
+        result = build_studio_inventory(client, args)
+        if getattr(args, "output", None):
+            output = Path(args.output).expanduser().resolve()
+            write_json(output, result)
+            result = {**result, "output": str(output)}
+        print_payload(result, as_json=args.json)
+        return 0
     if args.action in DATA_ENGINE_PROJECT_ACTIONS and not (
         query_params.get("project_id")
         or query_params.get("project_uid")
@@ -5092,6 +5426,25 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("bi-projects", help="List BI Studio projects")
     p.set_defaults(func=cmd_bi_projects)
 
+    p = sub.add_parser(
+        "studio-inventory",
+        aliases=["bi-inventory", "bi-data-inventory"],
+        help="Read-only inventory of BI Studio projects and linked Data Engine resources",
+    )
+    p.add_argument("--project-id", help="Limit inventory to one BI/Data Engine project id")
+    p.add_argument("--project-uid", help="Limit inventory to one BI/Data Engine project uid")
+    p.add_argument("--limit", type=int, default=25, help="Maximum summarized items per endpoint")
+    p.add_argument("--include-raw", action="store_true", help="Include sanitized raw endpoint payloads")
+    p.add_argument("--include-global-context", action="store_true", default=True)
+    p.add_argument("--no-global-context", dest="include_global_context", action="store_false")
+    p.add_argument("--include-sessions", action="store_true", default=True)
+    p.add_argument("--no-sessions", dest="include_sessions", action="store_false")
+    p.add_argument("--include-files", action="store_true", default=True)
+    p.add_argument("--no-files", dest="include_files", action="store_false")
+    p.add_argument("--output", help="Optional JSON report path")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_studio_inventory)
+
     p = sub.add_parser("bi-create-project", help="Create a BI Studio project")
     p.add_argument("--name", required=True)
     p.add_argument("--password")
@@ -5514,7 +5867,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("data-engine", help="Manage Data Engine DB connections, repository, datasets, notebook, and terminal")
     p.add_argument("action", choices=[
-        "status", "session-status", "db-connections", "create-db-connection", "db-connection",
+        "inventory", "status", "session-status", "db-connections", "create-db-connection", "db-connection",
         "update-db-connection", "delete-db-connection", "test-db-connection", "sqlserver-drivers",
         "db-objects", "query", "query-preview", "query-materialize", "query-materialize-saved",
         "query-run", "ai-sql-query", "repository-list", "repository-content",
@@ -5531,6 +5884,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run-id")
     p.add_argument("--project-id", help="Data Engine project id for project-scoped endpoints")
     p.add_argument("--project-uid", help="Data Engine project uid for project-scoped endpoints")
+    p.add_argument("--limit", type=int, default=25, help="Inventory summary item limit")
+    p.add_argument("--include-raw", action="store_true", help="Inventory only: include sanitized raw endpoint payloads")
+    p.add_argument("--include-global-context", action="store_true", default=True)
+    p.add_argument("--no-global-context", dest="include_global_context", action="store_false")
+    p.add_argument("--include-sessions", action="store_true", default=True)
+    p.add_argument("--no-sessions", dest="include_sessions", action="store_false")
+    p.add_argument("--include-files", action="store_true", default=True)
+    p.add_argument("--no-files", dest="include_files", action="store_false")
+    p.add_argument("--output", help="Inventory only: optional JSON report path")
     p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)

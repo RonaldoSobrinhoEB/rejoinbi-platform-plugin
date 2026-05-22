@@ -44,6 +44,15 @@ DEFAULT_TIMEOUT = 120
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "api-send",
     "assign-user-group",
@@ -66,9 +75,11 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "publish-bi",
     "recalculate-permissions",
     "restore-platform-config-defaults",
+    "restore-platform-branding",
     "rls",
     "set-ai-config",
     "set-page-order",
+    "set-platform-branding",
     "set-platform-config",
     "set-workspace-password",
     "set-user-password",
@@ -305,14 +316,20 @@ def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
             "capabilities",
             "database-status",
             "db-connections",
+            "datasets-list",
             "dns-records",
             "gateway-pairings",
             "history",
+            "inventory",
             "list",
+            "list-files",
+            "repository-global-context",
             "repository-list",
             "route",
             "routes",
             "sessions",
+            "session-status",
+            "sqlserver-drivers",
             "status",
             "stats",
             "usage",
@@ -343,6 +360,23 @@ def print_payload(payload: Any, as_json: bool = True) -> None:
         print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
     else:
         print(str(payload))
+
+
+def prefer_utf8_response(response: requests.Response) -> requests.Response:
+    content_type = (response.headers.get("content-type") or "").lower()
+    if not (
+        "application/json" in content_type
+        or "text/" in content_type
+        or "html" in content_type
+        or "javascript" in content_type
+    ):
+        return response
+    try:
+        response.content.decode("utf-8")
+    except UnicodeDecodeError:
+        return response
+    response.encoding = "utf-8"
+    return response
 
 
 def as_bool_flag(value: bool) -> str:
@@ -465,6 +499,7 @@ class RejoinBIClient:
             response = self.session.request(method, self.url(path), timeout=timeout, **kwargs)
         except requests.RequestException as exc:
             raise RejoinBIError(f"{method} {path} failed before response: {exc}") from exc
+        prefer_utf8_response(response)
         content_type = response.headers.get("content-type", "")
         payload: Any
         if "application/json" in content_type.lower():
@@ -1444,6 +1479,59 @@ def suggest_pt_br_display_name(value: str) -> str:
     return "".join(fixed) if changed else ""
 
 
+MOJIBAKE_MARKERS = (
+    "\u00c3\u00a1", "\u00c3\u00a2", "\u00c3\u00a3", "\u00c3\u00aa", "\u00c3\u00a9",
+    "\u00c3\u00ad", "\u00c3\u00b3", "\u00c3\u00b4", "\u00c3\u00b5", "\u00c3\u00ba",
+    "\u00c3\u00a7", "\u00c3\u0081", "\u00c3\u0082", "\u00c3\u0083", "\u00c3\u008a",
+    "\u00c3\u0089", "\u00c3\u008d", "\u00c3\u0093", "\u00c3\u0094", "\u00c3\u0095",
+    "\u00c3\u009a", "\u00c3\u0087", "\u00c2\u00b4", "\u00c2\u00b0", "\u00c2\u00ba",
+    "\u00c2\u00aa", "\u00e2\u20ac",
+)
+
+
+def looks_like_corrupted_text(value: Any) -> bool:
+    text = str(value or "")
+    if not text:
+        return False
+    if "\ufffd" in text:
+        return True
+    if any(marker in text for marker in MOJIBAKE_MARKERS):
+        return True
+    # A literal question mark inside a word usually means a Windows code page
+    # replaced an accent before the JSON reached the platform.
+    if re.search(r"[A-Za-zÀ-ÿ]\?+[A-Za-zÀ-ÿ]", text):
+        return True
+    return False
+
+
+def manifest_text_integrity_errors(manifest: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    visible_fields: list[tuple[str, Any]] = []
+    app_cfg = manifest.get("app") if isinstance(manifest.get("app"), dict) else {}
+    workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
+    for field in ("name", "description", "title"):
+        if isinstance(app_cfg, dict) and field in app_cfg:
+            visible_fields.append((f"app.{field}", app_cfg.get(field)))
+    for field in ("description", "display_name"):
+        if isinstance(workspace_cfg, dict) and field in workspace_cfg:
+            visible_fields.append((f"workspace.{field}", workspace_cfg.get(field)))
+    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    for index, page in enumerate(pages):
+        if not isinstance(page, dict):
+            continue
+        for field in ("name", "nome", "description", "descricao", "expect_text"):
+            if field in page:
+                visible_fields.append((f"pages[{index}].{field}", page.get(field)))
+    for path, value in visible_fields:
+        text = str(value or "")
+        if looks_like_corrupted_text(text):
+            errors.append(
+                f"{path} contains corrupted text ({text!r}). Save the manifest as UTF-8 and keep visible labels localized; "
+                "for pt-BR use accents in name/description while keeping id, route, and file ASCII."
+            )
+    return errors
+
+
 def response_requires_pin(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -2193,6 +2281,155 @@ def cmd_echarts_template(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_studio_inventory(client: RejoinBIClient, args: argparse.Namespace) -> dict[str, Any]:
+    timeout = int(getattr(args, "timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT)
+    limit = int(getattr(args, "limit", 25) or 25)
+    include_raw = bool(getattr(args, "include_raw", False))
+    include_files = bool(getattr(args, "include_files", True))
+    include_sessions = bool(getattr(args, "include_sessions", True))
+    include_global_context = bool(getattr(args, "include_global_context", True))
+    requested_project_id = safe_str(getattr(args, "project_id", "") or "")
+    requested_project_uid = safe_str(getattr(args, "project_uid", "") or "")
+    issues: list[dict[str, Any]] = []
+
+    bi_payload = optional_inventory_get(
+        client,
+        "/plataforma/api/bi/projects",
+        label="bi_projects",
+        timeout=timeout,
+        issues=issues,
+    )
+    projects = extract_inventory_items(bi_payload or {}, ("projects", "data", "items", "results"))
+    project_records = [project for project in projects if isinstance(project, dict)]
+    if requested_project_id or requested_project_uid:
+        project_records = [
+            project
+            for project in project_records
+            if (
+                not requested_project_id
+                or safe_str(first_present_value(project, ("id", "project_id", "projectId"))) == requested_project_id
+            )
+            and (
+                not requested_project_uid
+                or safe_str(first_present_value(project, ("uid", "project_uid", "projectUid"))) == requested_project_uid
+            )
+        ]
+
+    data_engine_base = "/plataforma/data-engine"
+    data_engine: dict[str, Any] = {}
+    global_status = optional_inventory_get(
+        client,
+        f"{data_engine_base}/api/status",
+        label="data_engine_status",
+        timeout=timeout,
+        issues=issues,
+    )
+    data_engine["status"] = (
+        inventory_endpoint_result(global_status, limit=limit, include_raw=include_raw)
+        if global_status is not None
+        else inventory_error_result("status endpoint unavailable")
+    )
+    drivers_payload = optional_inventory_get(
+        client,
+        f"{data_engine_base}/api/db/providers/sqlserver/drivers",
+        label="sqlserver_drivers",
+        timeout=timeout,
+        issues=issues,
+    )
+    data_engine["sqlserver_drivers"] = (
+        inventory_endpoint_result(drivers_payload, limit=limit, include_raw=include_raw)
+        if drivers_payload is not None
+        else inventory_error_result("sqlserver drivers endpoint unavailable")
+    )
+
+    project_summaries: list[dict[str, Any]] = []
+    for project in project_records:
+        ref = project_inventory_ref(project)
+        query = project_query_from_ref(ref)
+        project_summary: dict[str, Any] = {
+            "project": compact_inventory_item(project),
+            "project_ref": ref,
+            "data_engine": {},
+        }
+        if not query:
+            project_summary["data_engine"]["skipped"] = "Project has no id or uid for Data Engine project-scoped endpoints."
+            project_summaries.append(project_summary)
+            continue
+
+        endpoint_specs: list[tuple[str, str, tuple[str, ...]]] = []
+        if include_sessions:
+            endpoint_specs.append(("session", f"{data_engine_base}/api/session/status", INVENTORY_COLLECTION_KEYS))
+        endpoint_specs.extend([
+            ("db_connections", f"{data_engine_base}/api/db/connections", ("connections", "data", "items", "results")),
+            ("repository", f"{data_engine_base}/api/repository/list", ("items", "children", "files", "data", "results")),
+            ("datasets", f"{data_engine_base}/api/datasets/list", ("datasets", "data", "items", "results")),
+        ])
+        if include_files:
+            endpoint_specs.append(("files", f"{data_engine_base}/api/list-files", ("files", "items", "data", "results")))
+        if include_global_context:
+            endpoint_specs.append(("global_context", f"{data_engine_base}/api/repository/global-context", INVENTORY_COLLECTION_KEYS))
+
+        for key, path, collection_keys in endpoint_specs:
+            payload = optional_inventory_get(
+                client,
+                path,
+                label=f"data_engine_{key}",
+                timeout=timeout,
+                issues=issues,
+                query=query,
+            )
+            if payload is None:
+                project_summary["data_engine"][key] = inventory_error_result("endpoint unavailable")
+            else:
+                project_summary["data_engine"][key] = inventory_endpoint_result(
+                    payload,
+                    limit=limit,
+                    include_raw=include_raw,
+                    collection_keys=collection_keys,
+                )
+        project_summaries.append(project_summary)
+
+    result: dict[str, Any] = {
+        "success": True,
+        "read_only": True,
+        "tenant": tenant_host_from_base_url(client.base_url),
+        "generated_at": utc_now(),
+        "bi_studio": {
+            "projects_endpoint": (
+                inventory_endpoint_result(
+                    bi_payload,
+                    limit=limit,
+                    include_raw=include_raw,
+                    collection_keys=("projects", "data", "items", "results"),
+                )
+                if bi_payload is not None
+                else inventory_error_result("BI Studio projects endpoint unavailable")
+            ),
+            "projects_count": len(project_records),
+            "projects": project_summaries,
+        },
+        "data_engine": data_engine,
+        "issues": issues,
+        "usage_notes": [
+            "This command is read-only and redacts password, token, key, secret, and connection-string fields.",
+            "Use --project-id or --project-uid to inspect one project. Use --include-raw only for sanitized troubleshooting output.",
+            "Use data-engine repository-content, preview-file, dataset-get, or query-preview only after reviewing this inventory.",
+        ],
+    }
+    return result
+
+
+def cmd_studio_inventory(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    result = build_studio_inventory(client, args)
+    if getattr(args, "output", None):
+        output = Path(args.output).expanduser().resolve()
+        write_json(output, result)
+        result = {**result, "output": str(output)}
+    print_payload(result, as_json=args.json)
+    return 0
+
+
 def load_users(client: RejoinBIClient) -> list[dict[str, Any]]:
     data, _ = client.request("GET", "/plataforma/api/users", timeout=60)
     if isinstance(data, dict):
@@ -2324,6 +2561,38 @@ def image_file_to_data_uri(path: str) -> str:
     mime = mimetypes.guess_type(str(image_path))[0] or "application/octet-stream"
     encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
     return f"data:{mime};base64,{encoded}"
+
+
+def tenant_file_stem(client: RejoinBIClient) -> str:
+    host = tenant_host_from_base_url(client.base_url).lower()
+    return re.sub(r"[^a-z0-9._-]+", "-", host).strip("-") or "tenant"
+
+
+def default_branding_backup_path(client: RejoinBIClient, label: str = "branding") -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Path.home() / "Downloads" / "plugin" / "branding-backups" / f"{tenant_file_stem(client)}-{label}-{timestamp}.json"
+
+
+def platform_config_payload_from_loaded(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise RejoinBIError("Platform branding backup must contain a JSON object.")
+    if isinstance(data.get("platform_config"), dict):
+        data = data["platform_config"]
+    if isinstance(data.get("config"), dict):
+        payload = dict(data["config"])
+        if data.get("browser_title") and not payload.get("browser_title"):
+            payload["browser_title"] = data.get("browser_title")
+        return payload
+    return dict(data)
+
+
+def save_platform_config_backup(client: RejoinBIClient, output: str | None = None, *, label: str = "branding") -> tuple[dict[str, Any], Path]:
+    data, _ = client.request("GET", "/plataforma/api/platform-config", timeout=60)
+    if not isinstance(data, dict):
+        raise RejoinBIError("Platform config backup returned a non-object response.")
+    backup_path = Path(output).expanduser().resolve() if output else default_branding_backup_path(client, label)
+    write_json(backup_path, data)
+    return data, backup_path
 
 
 def cmd_update_user(args: argparse.Namespace) -> int:
@@ -2550,11 +2819,9 @@ def cmd_colors_config(args: argparse.Namespace) -> int:
 
 def platform_config_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
     payload: dict[str, Any] = {}
-    if args.data_file:
+    if getattr(args, "data_file", None):
         data = load_json_file(args.data_file)
-        if not isinstance(data, dict):
-            raise RejoinBIError("Platform config file must contain a JSON object.")
-        payload.update(data.get("config") if isinstance(data.get("config"), dict) else data)
+        payload.update(platform_config_payload_from_loaded(data))
     for attr, key in (
         ("browser_title", "browser_title"),
         ("logo_width", "logo_width"),
@@ -2563,19 +2830,20 @@ def platform_config_payload_from_args(args: argparse.Namespace) -> dict[str, Any
         value = getattr(args, attr, None)
         if value is not None:
             payload[key] = value
-    if args.colors_file:
+    if getattr(args, "colors_file", None):
         payload["cores"] = load_json_file(args.colors_file)
-    if args.logo_image_file:
+    if getattr(args, "logo_image_file", None):
         payload["logo_image"] = image_file_to_data_uri(args.logo_image_file)
-    if args.icon_image_file:
-        payload["icon_image"] = image_file_to_data_uri(args.icon_image_file)
-    if args.logo_menu_image_file:
+    icon_file = getattr(args, "icon_image_file", None) or getattr(args, "favicon_image_file", None)
+    if icon_file:
+        payload["icon_image"] = image_file_to_data_uri(icon_file)
+    if getattr(args, "logo_menu_image_file", None):
         payload["logo_menu_image"] = image_file_to_data_uri(args.logo_menu_image_file)
-    if args.remove_logo:
+    if getattr(args, "remove_logo", False):
         payload["remove_logo"] = True
-    if args.remove_icon:
+    if getattr(args, "remove_icon", False) or getattr(args, "remove_favicon", False):
         payload["remove_icon"] = True
-    if args.remove_logo_menu:
+    if getattr(args, "remove_logo_menu", False):
         payload["remove_logo_menu"] = True
     return payload
 
@@ -2597,6 +2865,60 @@ def cmd_export_platform_config(args: argparse.Namespace) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
     print_payload({"success": True, "output": str(output), "platform_config": data}, as_json=args.json)
+    return 0
+
+
+def cmd_backup_platform_branding(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, backup_path = save_platform_config_backup(client, args.output, label="branding-backup")
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "backup_output": str(backup_path),
+        "browser_title": data.get("browser_title") or (data.get("config") or {}).get("browser_title"),
+        "message": "Platform branding backup saved.",
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_set_platform_branding(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = platform_config_payload_from_args(args)
+    if not payload:
+        raise RejoinBIError("No branding values provided.")
+    _backup_data, backup_path = save_platform_config_backup(client, args.backup_output, label="before-branding-change")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json=payload, timeout=120)
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "backup_output": str(backup_path),
+        "changed_fields": sorted(payload.keys()),
+        "platform_response": data,
+        "restore_command": f"python scripts/rejoinbi.py --tenant {tenant_host_from_base_url(client.base_url)} restore-platform-branding --backup \"{backup_path}\" --yes",
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_restore_platform_branding(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Restoring platform branding requires --yes.")
+    client = make_client(args)
+    backup_data = load_json_file(args.backup)
+    payload = platform_config_payload_from_loaded(backup_data)
+    if not payload:
+        raise RejoinBIError("Backup does not contain platform branding values.")
+    pre_restore_path = None
+    if not args.no_pre_restore_backup:
+        _current_data, pre_restore_path = save_platform_config_backup(client, args.backup_output, label="before-branding-restore")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json=payload, timeout=120)
+    print_payload({
+        "success": True,
+        "base_url": client.base_url,
+        "restored_from": str(Path(args.backup).expanduser().resolve()),
+        "pre_restore_backup": str(pre_restore_path) if pre_restore_path else None,
+        "restored_fields": sorted(payload.keys()),
+        "platform_response": data,
+    }, as_json=args.json)
     return 0
 
 
@@ -2740,6 +3062,177 @@ def payload_has_project_reference(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
     return bool(payload.get("project_id") or payload.get("project_uid") or payload.get("projectId") or payload.get("projectUid"))
+
+
+SENSITIVE_INVENTORY_KEY_RE = re.compile(
+    r"(password|senha|secret|token|credential|connection[_-]?string|conn[_-]?str|api[_-]?key|access[_-]?key|private[_-]?key)",
+    flags=re.I,
+)
+INVENTORY_COLLECTION_KEYS = (
+    "projects",
+    "connections",
+    "datasets",
+    "files",
+    "items",
+    "children",
+    "objects",
+    "records",
+    "rows",
+    "data",
+    "result",
+    "results",
+)
+INVENTORY_SCALAR_KEYS = (
+    "id",
+    "uid",
+    "project_id",
+    "project_uid",
+    "projectId",
+    "projectUid",
+    "name",
+    "nome",
+    "title",
+    "titulo",
+    "type",
+    "tipo",
+    "kind",
+    "status",
+    "state",
+    "engine",
+    "provider",
+    "created_by",
+    "owner",
+    "tab_count",
+    "database",
+    "schema",
+    "table",
+    "path",
+    "file",
+    "filename",
+    "route",
+    "created_at",
+    "updated_at",
+    "createdAt",
+    "updatedAt",
+)
+
+
+def scrub_sensitive(value: Any) -> Any:
+    if isinstance(value, dict):
+        clean: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if SENSITIVE_INVENTORY_KEY_RE.search(key_text):
+                clean[key_text] = "***redacted***"
+            else:
+                clean[key_text] = scrub_sensitive(item)
+        return clean
+    if isinstance(value, list):
+        return [scrub_sensitive(item) for item in value]
+    return value
+
+
+def extract_inventory_items(payload: Any, keys: tuple[str, ...] = INVENTORY_COLLECTION_KEYS) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            nested = extract_inventory_items(value, keys)
+            if nested:
+                return nested
+    return []
+
+
+def compact_inventory_item(item: Any) -> dict[str, Any]:
+    item = scrub_sensitive(item)
+    if not isinstance(item, dict):
+        return {"value": item}
+    compact: dict[str, Any] = {}
+    for key in INVENTORY_SCALAR_KEYS:
+        if key in item and isinstance(item.get(key), (str, int, float, bool, type(None))):
+            compact[key] = item.get(key)
+    compact["raw_keys"] = sorted(str(key) for key in item.keys())[:30]
+    return compact
+
+
+def inventory_endpoint_result(
+    payload: Any,
+    *,
+    limit: int,
+    include_raw: bool,
+    collection_keys: tuple[str, ...] = INVENTORY_COLLECTION_KEYS,
+) -> dict[str, Any]:
+    clean = scrub_sensitive(payload)
+    items = extract_inventory_items(clean, collection_keys)
+    result: dict[str, Any] = {
+        "ok": True,
+        "summary": payload_summary(clean),
+    }
+    if items:
+        result["count"] = len(items)
+        result["items"] = [compact_inventory_item(item) for item in items[: max(0, limit)]]
+        if len(items) > limit:
+            result["truncated"] = True
+            result["limit"] = limit
+    if include_raw:
+        result["raw"] = clean
+    return result
+
+
+def inventory_error_result(error: Exception | str) -> dict[str, Any]:
+    return {"ok": False, "error": str(error)}
+
+
+def optional_inventory_get(
+    client: RejoinBIClient,
+    path: str,
+    *,
+    label: str,
+    timeout: int,
+    issues: list[dict[str, Any]],
+    query: dict[str, Any] | None = None,
+) -> Any:
+    try:
+        data, _ = client.request("GET", path_with_query(path, query), timeout=timeout)
+        return data
+    except RejoinBIError as exc:
+        issues.append({"area": label, "path": path, "error": str(exc)})
+        return None
+
+
+def first_present_value(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def project_inventory_ref(project: dict[str, Any]) -> dict[str, str]:
+    project_id_value = first_present_value(project, ("id", "project_id", "projectId"))
+    project_uid_value = first_present_value(project, ("uid", "project_uid", "projectUid"))
+    name_value = first_present_value(project, ("name", "nome", "title", "titulo"))
+    ref: dict[str, str] = {}
+    if project_id_value not in (None, ""):
+        ref["project_id"] = safe_str(project_id_value)
+    if project_uid_value not in (None, ""):
+        ref["project_uid"] = safe_str(project_uid_value)
+    if name_value not in (None, ""):
+        ref["name"] = safe_str(name_value)
+    return ref
+
+
+def project_query_from_ref(ref: dict[str, str]) -> dict[str, str]:
+    if ref.get("project_id"):
+        return {"project_id": ref["project_id"]}
+    if ref.get("project_uid"):
+        return {"project_uid": ref["project_uid"]}
+    return {}
 
 
 def payload_summary(payload: Any) -> dict[str, Any]:
@@ -3283,6 +3776,14 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         query_params["project_id"] = args.project_id
     if getattr(args, "project_uid", None):
         query_params["project_uid"] = args.project_uid
+    if args.action == "inventory":
+        result = build_studio_inventory(client, args)
+        if getattr(args, "output", None):
+            output = Path(args.output).expanduser().resolve()
+            write_json(output, result)
+            result = {**result, "output": str(output)}
+        print_payload(result, as_json=args.json)
+        return 0
     if args.action in DATA_ENGINE_PROJECT_ACTIONS and not (
         query_params.get("project_id")
         or query_params.get("project_uid")
@@ -3560,6 +4061,10 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
                 }
                 if not validation_success:
                     errors.append("Senha do workspace nao foi validada. A remocao foi bloqueada.")
+                else:
+                    plan["blocked"] = False
+                    plan["password_validation_required"] = False
+                    plan["security_message"] = "Senha do workspace validada pela plataforma; remocao liberada pelos guards do plugin."
             except RejoinBIError as exc:
                 plan["workspace_password_validation"] = {"success": False, "validated": False, "error": str(exc)}
                 errors.append("Senha do workspace invalida ou nao validada. A remocao foi bloqueada.")
@@ -4127,6 +4632,9 @@ def create_page_from_manifest(
 def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     manifest, manifest_path = load_manifest(args.manifest)
     bind_manifest_tenant(args, manifest)
+    text_errors = manifest_text_integrity_errors(manifest)
+    if text_errors:
+        raise RejoinBIError("Manifest text integrity check failed:\n- " + "\n- ".join(text_errors))
     client = make_client(args)
     app_root = Path(args.path).expanduser().resolve() if args.path else (manifest_path.parent / str(manifest.get("app_root") or ".")).resolve()
     workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
@@ -4238,6 +4746,7 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
         status_code = None
         if capture_path:
             response = client.session.get(client.url(capture_path), timeout=args.timeout)
+            prefer_utf8_response(response)
             status_code = response.status_code
             expected = page.get("expect_text") or page.get("name") or ""
             html_ok = response.ok and (not expected or str(expected) in response.text)
@@ -4257,6 +4766,7 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
                 browser_path += "/"
             browser_path = f"{browser_path}?{urlencode({'pagina_id': resolved_page_id, 'capture_strict': '1'})}"
             browser_response = client.session.get(client.url(browser_path), timeout=args.timeout)
+            prefer_utf8_response(browser_response)
             browser_status_code = browser_response.status_code
             expected = page.get("expect_text") or page.get("name") or ""
             browser_route_ok = browser_response.ok and (not expected or str(expected) in browser_response.text)
@@ -4447,6 +4957,7 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
     startup_mode = str(args.startup_mode or upload_cfg.get("startup_mode") or "static").strip().lower()
     manifest_language = detect_manifest_language(manifest)
+    errors.extend(manifest_text_integrity_errors(manifest))
 
     if pages:
         files_by_page = []
@@ -4915,6 +5426,25 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("bi-projects", help="List BI Studio projects")
     p.set_defaults(func=cmd_bi_projects)
 
+    p = sub.add_parser(
+        "studio-inventory",
+        aliases=["bi-inventory", "bi-data-inventory"],
+        help="Read-only inventory of BI Studio projects and linked Data Engine resources",
+    )
+    p.add_argument("--project-id", help="Limit inventory to one BI/Data Engine project id")
+    p.add_argument("--project-uid", help="Limit inventory to one BI/Data Engine project uid")
+    p.add_argument("--limit", type=int, default=25, help="Maximum summarized items per endpoint")
+    p.add_argument("--include-raw", action="store_true", help="Include sanitized raw endpoint payloads")
+    p.add_argument("--include-global-context", action="store_true", default=True)
+    p.add_argument("--no-global-context", dest="include_global_context", action="store_false")
+    p.add_argument("--include-sessions", action="store_true", default=True)
+    p.add_argument("--no-sessions", dest="include_sessions", action="store_false")
+    p.add_argument("--include-files", action="store_true", default=True)
+    p.add_argument("--no-files", dest="include_files", action="store_false")
+    p.add_argument("--output", help="Optional JSON report path")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_studio_inventory)
+
     p = sub.add_parser("bi-create-project", help="Create a BI Studio project")
     p.add_argument("--name", required=True)
     p.add_argument("--password")
@@ -5098,6 +5628,34 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-platform-config", help="Export platform branding/configuration to JSON")
     p.add_argument("--output", required=True)
     p.set_defaults(func=cmd_export_platform_config)
+
+    p = sub.add_parser("backup-platform-branding", help="Backup current platform title, logos, favicon, and colors")
+    p.add_argument("--output", help="Backup JSON output. Defaults to Downloads\\plugin\\branding-backups")
+    p.set_defaults(func=cmd_backup_platform_branding)
+
+    p = sub.add_parser("set-platform-branding", help="Update platform title, logos, favicon, and colors with automatic backup")
+    p.add_argument("--backup-output", help="Where to save the automatic pre-change backup")
+    p.add_argument("--data-file", help="JSON file with platform branding/config fields")
+    p.add_argument("--browser-title")
+    p.add_argument("--logo-width", type=int)
+    p.add_argument("--logo-menu-width", type=int)
+    p.add_argument("--colors-file", help="JSON file with colors payload")
+    p.add_argument("--logo-image-file")
+    p.add_argument("--logo-menu-image-file")
+    p.add_argument("--favicon-image-file", help="Favicon/image file. Alias for icon_image.")
+    p.add_argument("--icon-image-file", help="Icon/favicon image file.")
+    p.add_argument("--remove-logo", action="store_true")
+    p.add_argument("--remove-logo-menu", action="store_true")
+    p.add_argument("--remove-favicon", action="store_true")
+    p.add_argument("--remove-icon", action="store_true")
+    p.set_defaults(func=cmd_set_platform_branding)
+
+    p = sub.add_parser("restore-platform-branding", help="Restore title, logos, favicon, and colors from a backup")
+    p.add_argument("--backup", required=True, help="Backup JSON from backup-platform-branding, set-platform-branding, or export-platform-config")
+    p.add_argument("--backup-output", help="Where to save the current config before restoring")
+    p.add_argument("--no-pre-restore-backup", action="store_true", help="Do not save current config before restoring")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_restore_platform_branding)
 
     p = sub.add_parser("restore-platform-config-defaults", help="Restore default platform colors")
     p.add_argument("--yes", action="store_true")
@@ -5309,7 +5867,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("data-engine", help="Manage Data Engine DB connections, repository, datasets, notebook, and terminal")
     p.add_argument("action", choices=[
-        "status", "session-status", "db-connections", "create-db-connection", "db-connection",
+        "inventory", "status", "session-status", "db-connections", "create-db-connection", "db-connection",
         "update-db-connection", "delete-db-connection", "test-db-connection", "sqlserver-drivers",
         "db-objects", "query", "query-preview", "query-materialize", "query-materialize-saved",
         "query-run", "ai-sql-query", "repository-list", "repository-content",
@@ -5326,6 +5884,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run-id")
     p.add_argument("--project-id", help="Data Engine project id for project-scoped endpoints")
     p.add_argument("--project-uid", help="Data Engine project uid for project-scoped endpoints")
+    p.add_argument("--limit", type=int, default=25, help="Inventory summary item limit")
+    p.add_argument("--include-raw", action="store_true", help="Inventory only: include sanitized raw endpoint payloads")
+    p.add_argument("--include-global-context", action="store_true", default=True)
+    p.add_argument("--no-global-context", dest="include_global_context", action="store_false")
+    p.add_argument("--include-sessions", action="store_true", default=True)
+    p.add_argument("--no-sessions", dest="include_sessions", action="store_false")
+    p.add_argument("--include-files", action="store_true", default=True)
+    p.add_argument("--no-files", dest="include_files", action="store_false")
+    p.add_argument("--output", help="Inventory only: optional JSON report path")
     p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -5451,14 +6018,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-auto-start", action="store_true")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--interval", type=float, default=3.0)
-    p.add_argument("--readiness-timeout", type=float, default=45.0, help="Seconds to wait for accessible-pages to expose container_name for every page")
+    p.add_argument("--readiness-timeout", type=float, default=300.0, help="Seconds to wait for accessible-pages to expose container_name for every page")
     p.add_argument("--no-page-readiness", action="store_true", help="Skip post-deploy accessible-pages/menu safety verification")
     p.set_defaults(func=cmd_deploy_manifest)
 
     p = sub.add_parser("smoke-pages", help="Resolve and request every page in a manifest using the authenticated session")
     p.add_argument("--manifest", required=True)
     p.add_argument("--timeout", type=int, default=60)
-    p.add_argument("--readiness-timeout", type=float, default=45.0, help="Seconds to wait for accessible-pages container_name readiness")
+    p.add_argument("--readiness-timeout", type=float, default=120.0, help="Seconds to wait for accessible-pages container_name readiness")
     p.add_argument("--interval", type=float, default=1.5)
     p.add_argument("--no-refresh-menu", action="store_true", help="Do not clear/reload menu cache while waiting")
     p.set_defaults(func=cmd_smoke_pages)

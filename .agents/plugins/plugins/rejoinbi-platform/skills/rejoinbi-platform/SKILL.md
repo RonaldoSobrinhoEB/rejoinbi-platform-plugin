@@ -41,6 +41,7 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Runtime/system diagnostics and cache controls: `/plataforma/api/*` status/cache/runtime endpoints are available through `system-admin` and `route-map`.
 - Upload gateway and capability endpoints: `/plataforma/api/gateway/*`, `/upload-capabilities`, `/python-versions`, and `/upload-status/<id>` are available through `upload-admin`.
 - Data Engine DB/repository/dataset/session endpoints: `/plataforma/data-engine/api/*` are available through `data-engine`.
+- BI Studio + Data Engine inventory: `studio-inventory` joins BI projects with Data Engine status, sessions, DB connections, repository, datasets, and files.
 
 The plugin client enforces the operational rule for this platform: persisted sessions and privileged commands are allowed only for `Administrador Principal`, `Master`, or `Administrador`. A standard `Usuario` login is rejected by default. Use `--allow-standard` only for an intentional negative test.
 
@@ -124,10 +125,11 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" upload-admin capabi
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" system-admin database-status
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" route-map routes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" smoke-admin --output-dir C:\path\smoke-admin
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" studio-inventory --output C:\path\bi-data-inventory.json
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine db-connections --project-id 1
 ```
 
-`smoke-admin` is read-only and useful after plugin changes or tenant upgrades. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
+`smoke-admin` is read-only and useful after plugin changes or tenant upgrades. For BI Studio/Data Engine work, run `studio-inventory` first. It is read-only, links projects to Data Engine resources, and redacts password, token, key, secret, credential, and connection-string fields. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
 
 For configuration payloads with many fields, use JSON files instead of ad hoc chat text:
 
@@ -146,6 +148,8 @@ The CLI accepts JSON files saved with UTF-8 BOM, which is common when payloads a
 Use dedicated commands before falling back to `api-get` or `api-send`. The dedicated commands preserve profile checks, safe confirmations, workspace password validation, and consistent output.
 
 For title, logos, menu logo, favicon, and color/theme changes, prefer `set-platform-branding` over raw `set-platform-config`. It saves an automatic JSON backup in `Downloads\plugin\branding-backups` before changing the tenant and prints a `restore-platform-branding` command. Use that backup to roll back visual tests exactly.
+
+For any request like "o que tem no BI Studio", "o que tem no Data Engine", "vincula com o BI Studio", "reconhece datasets", "publica um BI", or "usa os dados do engine", run `studio-inventory` before choosing a follow-up command. Summarize projects, connections, datasets, repository files, sessions, and issues from that inventory. Only call write actions such as `create-db-connection`, `create-dataset`, `terminal-command`, `execute-code`, or `publish-bi` after the tenant, project id/uid, and intended target are explicit.
 
 ## Common Workflows
 

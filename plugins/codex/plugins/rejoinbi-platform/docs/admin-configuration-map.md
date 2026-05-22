@@ -23,7 +23,7 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Anuncios Internos | `GET /plataforma/api/anuncios/historico`, `GET /plataforma/api/anuncios/ativos`, `POST /plataforma/api/anuncios`, `DELETE /plataforma/api/anuncios/<id>` | `announcements`, `create-announcement`, `delete-announcement`, `announcement-groups` |
 | Configuracao WhatsApp | `/plataforma/api/whatsapp/*` | `whatsapp sessions`, `whatsapp groups`, `whatsapp create-group`, `whatsapp broadcast`, `whatsapp schedules`, `whatsapp diagnostics`, `whatsapp restart-service` |
 | Gestao de E-mails | `/plataforma/api/email/*` | `email sessions`, `email create-session`, `email groups`, `email create-group`, `email broadcast`, `email schedules`, `email external-contacts` |
-| Configuracao Plataforma | `GET/POST /plataforma/api/platform-config`, `GET /plataforma/api/cores-config`, `POST /plataforma/api/platform-config/restore-defaults` | `platform-config`, `colors-config`, `set-platform-config`, `export-platform-config`, `restore-platform-config-defaults` |
+| Configuracao Plataforma | `GET/POST /plataforma/api/platform-config`, `GET /plataforma/api/cores-config`, `POST /plataforma/api/platform-config/restore-defaults` | `platform-config`, `colors-config`, `backup-platform-branding`, `set-platform-branding`, `restore-platform-branding`, `set-platform-config`, `export-platform-config`, `restore-platform-config-defaults` |
 | Workspace | `GET/POST/PUT /plataforma/api/containers`, workspace actions, logs, schedules, notifications, versions, upload endpoints | `workspaceall`, `create-workspace`, `update-workspace`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-schedule`, `workspace-notification`, `workspace-build`, `deploy-manifest` |
 | Gerenciar Paginas | `GET/POST/PUT/DELETE /plataforma/api/paginas*`, hierarchy/order/repair endpoints | `pages`, `page-files`, `create-page`, `update-page`, `delete-page`, `set-page-order`, `page-maintenance`, `resolve-page`, `smoke-pages` |
 | Gerenciar RLS | `/plataforma/api/rls*` | `rls pages`, `rls page-config`, `rls config`, `rls set-config`, `rls data`, `rls create-data`, `rls dimensions`, `rls validate`, `rls-export` |
@@ -33,8 +33,8 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Cloudflare/Dominio | `/plataforma/api/cloudflare/*` | `cloudflare status`, `cloudflare dns-records`, `cloudflare configure`, `cloudflare create-dns-record`, `cloudflare ssl-mode`, `cloudflare set-ssl-mode` |
 | Gateway/Upload | `/plataforma/api/python-versions`, `/upload-capabilities`, `/gateway/*`, `/upload-status/<id>`, `/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
 | Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
-| Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
-| BI Studio | `/plataforma/api/bi/*` | `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
+| Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `studio-inventory`, `data-engine inventory`, `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
+| BI Studio | `/plataforma/api/bi/*` | `studio-inventory`, `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
 
 ## Fast Platform Branding
 
@@ -42,23 +42,27 @@ Export current branding:
 
 ```powershell
 python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding
 ```
 
-Apply branding and images:
+Apply title, logos, favicon, and images with an automatic rollback backup:
 
 ```powershell
-python .\scripts\rejoinbi.py set-platform-config `
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding `
   --browser-title "Minha Plataforma BI" `
   --logo-image-file .\logo.png `
   --logo-menu-image-file .\logo-menu.png `
-  --icon-image-file .\icon.png `
+  --favicon-image-file .\favicon.png `
   --colors-file .\cores.json
 ```
+
+The command prints `backup_output` and a ready restore command. Keep that JSON when testing customer branding.
 
 Apply a saved config:
 
 ```powershell
 python .\scripts\rejoinbi.py set-platform-config --data-file .\platform-config.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes
 ```
 
 Reset colors only:
@@ -109,6 +113,26 @@ python .\scripts\rejoinbi.py route-map routes
 python .\scripts\rejoinbi.py upload-admin capabilities
 python .\scripts\rejoinbi.py upload-admin gateway-pairings
 ```
+
+## BI Studio and Data Engine Inventory
+
+Before answering what exists in BI Studio/Data Engine, creating a linked dataset, changing repository files, or publishing a BI project, run the read-only inventory:
+
+```powershell
+python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
+python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
+python .\scripts\rejoinbi.py data-engine inventory --project-uid projeto-uid
+```
+
+The inventory links each BI Studio project to project-scoped Data Engine resources:
+
+- Data Engine service status and SQL Server driver availability.
+- Project session status.
+- Database connections, with credentials and connection strings redacted.
+- Repository tree and global context.
+- Datasets and uploaded files.
+
+Use the inventory as the first source of truth for "o que tem no BI Studio" or "o que tem no Data Engine". It is safe for summaries because password, token, key, secret, credential, and connection-string fields are redacted. Use `--include-raw` only when troubleshooting because it includes sanitized endpoint payloads.
 
 Data Engine session, repository, and dataset endpoints are project-scoped. Pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload so the plugin validates the request before reaching the tenant API.
 
