@@ -270,12 +270,21 @@ class RejoinBIClient:
         if isinstance(cookies, dict):
             self.session.cookies.update(cookies)
 
-    def save_session(self) -> None:
+    def save_session(self, identity: dict[str, Any] | None = None, auth_context: dict[str, Any] | None = None) -> None:
+        existing = read_json(self.session_path, {})
         payload = {
             "base_url": self.base_url,
             "cookies": requests.utils.dict_from_cookiejar(self.session.cookies),
             "saved_at": utc_now(),
         }
+        if identity:
+            payload["identity"] = identity
+        elif isinstance(existing, dict) and isinstance(existing.get("identity"), dict):
+            payload["identity"] = existing.get("identity")
+        if auth_context:
+            payload["auth_context"] = auth_context
+        elif isinstance(existing, dict) and isinstance(existing.get("auth_context"), dict):
+            payload["auth_context"] = existing.get("auth_context")
         write_json(self.session_path, payload)
         config = read_json(CONFIG_PATH, {})
         if not isinstance(config, dict):
@@ -1097,10 +1106,16 @@ def browser_auth_flow(args: argparse.Namespace) -> int:
                 error=error,
             ))
 
-        def finish_success(self, data: Any, email: str) -> None:
+        def finish_success(self, data: Any, email: str, *, admin_principal_hint: bool = False) -> None:
             try:
-                identity = require_allowed_profile(client, args)
-                client.save_session()
+                identity = require_allowed_profile(client, args, admin_principal_hint=admin_principal_hint)
+                client.save_session(
+                    identity=identity,
+                    auth_context={
+                        "admin_principal_no_pin": bool(admin_principal_hint),
+                        "pin_required": not bool(admin_principal_hint),
+                    },
+                )
             except RejoinBIError as exc:
                 client.clear_session()
                 self.render_login(str(exc))
@@ -1150,13 +1165,13 @@ def browser_auth_flow(args: argparse.Namespace) -> int:
                         pass
                     payload = {"email": email, "password": password, "lang": lang}
                     data, _ = client.request("POST", f"/plataforma/api/login?lang={lang}", json=payload)
-                    if isinstance(data, dict) and data.get("require_pin"):
+                    if response_requires_pin(data):
                         pending.clear()
                         pending.update(payload)
                         self.render_pin(data.get("message") or "")
                         return
                     if isinstance(data, dict) and data.get("success"):
-                        self.finish_success(data, email)
+                        self.finish_success(data, email, admin_principal_hint=True)
                         return
                     self.render_login(str(data))
                 except RejoinBIError as exc:
@@ -1175,7 +1190,7 @@ def browser_auth_flow(args: argparse.Namespace) -> int:
                     payload = {**pending, "pin": pin}
                     data, _ = client.request("POST", f"/plataforma/api/login?lang={lang}", json=payload)
                     if isinstance(data, dict) and data.get("success"):
-                        self.finish_success(data, pending.get("email", ""))
+                        self.finish_success(data, pending.get("email", ""), admin_principal_hint=False)
                         pending.clear()
                         return
                     self.render_pin(str(data))
@@ -1230,7 +1245,13 @@ def slugify_page_id(value: Any) -> str:
     return ascii_text or "pagina"
 
 
-def extract_session_identity(payload: Any) -> dict[str, Any]:
+def response_requires_pin(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return any(truthy_flag(payload.get(key)) for key in ("require_pin", "requires_pin", "pin_required", "need_pin"))
+
+
+def extract_session_identity(payload: Any, *, admin_principal_hint: bool = False) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"email": "", "profile": "", "permissions": []}
     session_data = payload.get("session_data") if isinstance(payload.get("session_data"), dict) else {}
@@ -1240,11 +1261,17 @@ def extract_session_identity(payload: Any) -> dict[str, Any]:
     if not isinstance(permissions, list):
         permissions = []
     profile = payload.get("user_perfil") or payload.get("perfil") or session_data.get("user_perfil") or session_data.get("perfil") or ""
-    if not profile and ("*" in permissions or "admin_principal" in permissions):
+    profile_source = "session"
+    if admin_principal_hint:
         profile = "Administrador Principal"
+        profile_source = "no_pin_login"
+    elif not profile and ("*" in permissions or "admin_principal" in permissions):
+        profile = "Administrador Principal"
+        profile_source = "permissions"
     return {
         "email": payload.get("user_email") or session_data.get("user_email") or "",
         "profile": profile,
+        "profile_source": profile_source,
         "permissions": permissions,
         "logged_in": bool(payload.get("logged_in", True) or session_data.get("user_email")),
     }
@@ -1256,9 +1283,24 @@ def is_allowed_identity(identity: dict[str, Any]) -> bool:
     return profile_key in ALLOWED_PROFILE_KEYS or "*" in permissions or "admin_principal" in permissions
 
 
-def require_allowed_profile(client: RejoinBIClient, args: argparse.Namespace) -> dict[str, Any]:
+def require_allowed_profile(
+    client: RejoinBIClient,
+    args: argparse.Namespace,
+    *,
+    admin_principal_hint: bool = False,
+) -> dict[str, Any]:
     data, _ = client.request("GET", "/plataforma/api/session-status", timeout=30)
-    identity = extract_session_identity(data)
+    saved_session = read_json(client.session_path, {})
+    saved_context = saved_session.get("auth_context") if isinstance(saved_session, dict) else {}
+    saved_identity = saved_session.get("identity") if isinstance(saved_session, dict) else {}
+    saved_admin_principal = isinstance(saved_context, dict) and truthy_flag(saved_context.get("admin_principal_no_pin"))
+    identity = extract_session_identity(data, admin_principal_hint=admin_principal_hint or saved_admin_principal)
+    if isinstance(saved_identity, dict):
+        if not identity.get("email") and saved_identity.get("email"):
+            identity["email"] = saved_identity.get("email")
+        if saved_admin_principal:
+            identity["profile"] = "Administrador Principal"
+            identity["profile_source"] = "saved_no_pin_login"
     if getattr(args, "allow_standard", False):
         return identity
     if not is_allowed_identity(identity):
@@ -1322,8 +1364,10 @@ def cmd_connect(args: argparse.Namespace) -> int:
 
     payload = {"email": email, "password": password, "lang": lang}
     data, _ = client.request("POST", f"/plataforma/api/login?lang={lang}", json=payload)
+    admin_principal_hint = isinstance(data, dict) and data.get("success") and not response_requires_pin(data)
 
-    if isinstance(data, dict) and data.get("require_pin"):
+    if response_requires_pin(data):
+        admin_principal_hint = False
         pin = args.pin or os.environ.get("REJOINBI_PIN") or ""
         if not pin and sys.stdin.isatty():
             pin = getpass.getpass("PIN: ")
@@ -1341,11 +1385,17 @@ def cmd_connect(args: argparse.Namespace) -> int:
 
     if isinstance(data, dict) and data.get("success"):
         try:
-            identity = require_allowed_profile(client, args)
+            identity = require_allowed_profile(client, args, admin_principal_hint=admin_principal_hint)
         except RejoinBIError:
             client.clear_session()
             raise
-        client.save_session()
+        client.save_session(
+            identity=identity,
+            auth_context={
+                "admin_principal_no_pin": bool(admin_principal_hint),
+                "pin_required": not bool(admin_principal_hint),
+            },
+        )
         print_payload({
             "success": True,
             "base_url": client.base_url,
@@ -2028,6 +2078,436 @@ def cmd_user_permissions(args: argparse.Namespace) -> int:
         f"/plataforma/api/user-permissions/{user.get('user_id') or user.get('id')}",
         timeout=60,
     )
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def split_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            payload = json.loads(raw)
+            if isinstance(payload, list):
+                return [str(item).strip() for item in payload if str(item).strip()]
+        except Exception:
+            pass
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def load_json_file(path: str) -> Any:
+    payload_path = Path(path).expanduser().resolve()
+    if not payload_path.is_file():
+        raise RejoinBIError(f"JSON file not found: {payload_path}")
+    return json.loads(payload_path.read_text(encoding="utf-8"))
+
+
+def image_file_to_data_uri(path: str) -> str:
+    image_path = Path(path).expanduser().resolve()
+    if not image_path.is_file():
+        raise RejoinBIError(f"Image file not found: {image_path}")
+    mime = mimetypes.guess_type(str(image_path))[0] or "application/octet-stream"
+    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def cmd_update_user(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    user = resolve_user(client, args.user)
+    payload = {
+        "user_id": user.get("user_id") or user.get("id"),
+        "nome": args.name if args.name is not None else user.get("nome", ""),
+        "matricula": args.matricula if args.matricula is not None else user.get("matricula", ""),
+        "setor": args.setor if args.setor is not None else user.get("setor", ""),
+        "email": user.get("email", ""),
+        "perfil": args.perfil if args.perfil is not None else user.get("perfil", "Usuario"),
+        "contato": args.contato if args.contato is not None else user.get("contato", ""),
+    }
+    data, _ = client.request("POST", "/plataforma/api/update-user", json=payload, timeout=60)
+    result = data if isinstance(data, dict) else {"raw": data}
+    try:
+        result = {**result, "user": resolve_user(client, str(user.get("email") or args.user))}
+    except RejoinBIError:
+        pass
+    print_payload(result, as_json=args.json)
+    return 0
+
+
+def cmd_set_user_permissions(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    user = resolve_user(client, args.user)
+    if args.permissions_file:
+        payload = load_json_file(args.permissions_file)
+        if not isinstance(payload, dict):
+            raise RejoinBIError("Permissions file must contain a JSON object.")
+        permissions = split_list(payload.get("permissions", []))
+        denied_permissions = split_list(payload.get("denied_permissions", []))
+    else:
+        permissions = split_list(args.permissions)
+        denied_permissions = split_list(args.denied_permissions)
+    data, _ = client.request(
+        "POST",
+        "/plataforma/api/update-permissions",
+        json={
+            "user_id": user.get("user_id") or user.get("id"),
+            "permissions": permissions,
+            "denied_permissions": denied_permissions,
+        },
+        timeout=60,
+    )
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_recalculate_permissions(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Recalculating permissions for all users requires --yes.")
+    client = make_client(args)
+    data, _ = client.request("POST", "/plataforma/api/recalcular-permissoes", json={}, timeout=120)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def load_groups(client: RejoinBIClient) -> list[dict[str, Any]]:
+    data, _ = client.request("GET", "/plataforma/api/groups", timeout=60)
+    if isinstance(data, dict):
+        return list(data.get("groups") or data.get("grupos") or [])
+    return []
+
+
+def resolve_group(client: RejoinBIClient, selector: str) -> dict[str, Any]:
+    raw = str(selector or "").strip().lower()
+    for group in load_groups(client):
+        group_id = str(group.get("id") or "").strip().lower()
+        name = str(group.get("nome") or group.get("name") or "").strip().lower()
+        if raw and raw in {group_id, name}:
+            return group
+    raise RejoinBIError(f"Group not found: {selector}")
+
+
+def cmd_groups(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    groups = load_groups(client)
+    if args.json:
+        print_payload({"success": True, "groups": groups, "count": len(groups)})
+    else:
+        print(render_table(groups, [
+            ("id", "ID"),
+            ("nome", "Group"),
+            ("descricao", "Description"),
+            ("cor", "Color"),
+        ]))
+    return 0
+
+
+def cmd_create_group(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = {
+        "nome": args.name,
+        "descricao": args.description or "",
+        "permissoes": split_list(args.permissions),
+        "cor": args.color or "#6c757d",
+    }
+    data, _ = client.request("POST", "/plataforma/api/create-group", json=payload, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_update_group(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    group = resolve_group(client, args.group)
+    payload = {
+        "id": group.get("id"),
+        "nome": args.name if args.name is not None else group.get("nome", ""),
+        "descricao": args.description if args.description is not None else group.get("descricao", ""),
+        "permissoes": split_list(args.permissions) if args.permissions is not None else split_list(group.get("permissoes", [])),
+        "cor": args.color if args.color is not None else group.get("cor", "#6c757d"),
+    }
+    data, _ = client.request("POST", "/plataforma/api/update-group", json=payload, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_delete_group(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Deleting groups requires --yes.")
+    client = make_client(args)
+    group = resolve_group(client, args.group)
+    data, _ = client.request("POST", "/plataforma/api/delete-group", json={"id": group.get("id")}, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_assign_user_group(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    user = resolve_user(client, args.user)
+    group = resolve_group(client, args.group)
+    data, _ = client.request(
+        "POST",
+        "/plataforma/api/assign-user-to-group",
+        json={
+            "user_id": user.get("user_id") or user.get("id"),
+            "group_id": group.get("id"),
+            "action": args.action,
+        },
+        timeout=60,
+    )
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_users_for_groups(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/users-for-groups", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_announcements(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    path = "/plataforma/api/anuncios/ativos" if args.active else "/plataforma/api/anuncios/historico"
+    data, _ = client.request("GET", path, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_announcement_groups(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/grupos", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_create_announcement(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    groups = split_list(args.groups)
+    payload = {
+        "titulo": args.title,
+        "mensagem": args.message,
+        "prioridade": args.priority,
+        "enviar_todos": str(bool(args.all)).lower(),
+        "grupos_destino": groups,
+    }
+    if args.expires:
+        payload["data_expiracao"] = args.expires
+    if args.color:
+        payload["cor"] = args.color
+    if args.icon:
+        payload["icone"] = args.icon
+    if args.file:
+        with ExitStack() as stack:
+            file_path = Path(args.file).expanduser().resolve()
+            if not file_path.is_file():
+                raise RejoinBIError(f"Announcement file not found: {file_path}")
+            handle = stack.enter_context(file_path.open("rb"))
+            form_data = {key: json.dumps(value, ensure_ascii=False) if isinstance(value, list) else str(value) for key, value in payload.items()}
+            files = {"arquivo": (file_path.name, handle, mimetypes.guess_type(str(file_path))[0] or "application/octet-stream")}
+            data, _ = client.request("POST", "/plataforma/api/anuncios", data=form_data, files=files, timeout=120)
+    else:
+        data, _ = client.request("POST", "/plataforma/api/anuncios", json=payload, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_delete_announcement(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Deleting announcements requires --yes.")
+    client = make_client(args)
+    data, _ = client.request("DELETE", f"/plataforma/api/anuncios/{int(args.announcement_id)}", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_platform_config(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/platform-config", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_colors_config(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/cores-config", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def platform_config_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if args.data_file:
+        data = load_json_file(args.data_file)
+        if not isinstance(data, dict):
+            raise RejoinBIError("Platform config file must contain a JSON object.")
+        payload.update(data.get("config") if isinstance(data.get("config"), dict) else data)
+    for attr, key in (
+        ("browser_title", "browser_title"),
+        ("logo_width", "logo_width"),
+        ("logo_menu_width", "logo_menu_width"),
+    ):
+        value = getattr(args, attr, None)
+        if value is not None:
+            payload[key] = value
+    if args.colors_file:
+        payload["cores"] = load_json_file(args.colors_file)
+    if args.logo_image_file:
+        payload["logo_image"] = image_file_to_data_uri(args.logo_image_file)
+    if args.icon_image_file:
+        payload["icon_image"] = image_file_to_data_uri(args.icon_image_file)
+    if args.logo_menu_image_file:
+        payload["logo_menu_image"] = image_file_to_data_uri(args.logo_menu_image_file)
+    if args.remove_logo:
+        payload["remove_logo"] = True
+    if args.remove_icon:
+        payload["remove_icon"] = True
+    if args.remove_logo_menu:
+        payload["remove_logo_menu"] = True
+    return payload
+
+
+def cmd_set_platform_config(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    payload = platform_config_payload_from_args(args)
+    if not payload:
+        raise RejoinBIError("No platform config values provided.")
+    data, _ = client.request("POST", "/plataforma/api/platform-config", json=payload, timeout=120)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_export_platform_config(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    data, _ = client.request("GET", "/plataforma/api/platform-config", timeout=60)
+    output = Path(args.output).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
+    print_payload({"success": True, "output": str(output), "platform_config": data}, as_json=args.json)
+    return 0
+
+
+def cmd_restore_platform_config_defaults(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Restoring platform config defaults requires --yes.")
+    client = make_client(args)
+    data, _ = client.request("POST", "/plataforma/api/platform-config/restore-defaults", json={}, timeout=120)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_ai_config_get(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    params = {"pagina_id": args.page_id}
+    if args.workspace:
+        params["container_id"] = safe_str(resolve_workspace(client, args.workspace).get("id"))
+    elif args.container_id:
+        params["container_id"] = safe_str(args.container_id)
+    if args.config_id:
+        params["config_id"] = safe_str(args.config_id)
+    data, _ = client.request("GET", "/plataforma/api/ai-config", params=params, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_ai_config_set(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    if args.data_file:
+        payload = load_json_file(args.data_file)
+        if not isinstance(payload, dict):
+            raise RejoinBIError("AI config file must contain a JSON object.")
+    else:
+        payload = {}
+    payload["pagina_id"] = args.page_id or payload.get("pagina_id")
+    if args.workspace:
+        payload["container_id"] = resolve_workspace(client, args.workspace).get("id")
+    elif args.container_id:
+        payload["container_id"] = args.container_id
+    for attr, key in (
+        ("business_context", "contexto_negocio"),
+        ("title", "titulo_customizado"),
+        ("metrics", "metricas_principais"),
+        ("objectives", "objetivos_dashboard"),
+        ("glossary", "glossario_termos"),
+        ("alerts", "alertas_customizados"),
+        ("benchmarks", "benchmarks"),
+        ("historical_insights", "insights_historicos"),
+        ("analysis_priority", "prioridade_analise"),
+        ("detail_level", "nivel_detalhe"),
+        ("recommendation_focus", "foco_recomendacoes"),
+        ("forced_key_id", "forced_key_id"),
+        ("forced_key_name", "forced_key_name"),
+        ("forced_key_model", "forced_key_model"),
+        ("forced_reasoning_effort", "forced_reasoning_effort"),
+        ("forced_service_tier", "forced_service_tier"),
+        ("page_name", "nome_pagina"),
+        ("full_path", "caminho_completo"),
+    ):
+        value = getattr(args, attr, None)
+        if value is not None:
+            payload[key] = value
+    if args.active is not None:
+        payload["ativo"] = "True" if args.active else "False"
+    if not payload.get("pagina_id"):
+        raise RejoinBIError("AI config requires --page-id or data_file.pagina_id.")
+    if not payload.get("contexto_negocio"):
+        raise RejoinBIError("AI config requires contexto_negocio / --business-context.")
+    data, _ = client.request("POST", "/plataforma/api/ai-config", json=payload, timeout=120)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_ai_config_delete(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Deleting AI config requires --yes.")
+    client = make_client(args)
+    params = {"pagina_id": args.page_id}
+    if args.workspace:
+        params["container_id"] = safe_str(resolve_workspace(client, args.workspace).get("id"))
+    elif args.container_id:
+        params["container_id"] = safe_str(args.container_id)
+    if args.config_id:
+        params["config_id"] = safe_str(args.config_id)
+    data, _ = client.request("DELETE", "/plataforma/api/ai-config", params=params, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_ai_config_cleanup(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise RejoinBIError("Cleaning orphan AI configs requires --yes.")
+    client = make_client(args)
+    data, _ = client.request("POST", "/plataforma/api/ai-config/cleanup", json={}, timeout=120)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_storage_path(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    if args.path:
+        data, _ = client.request("POST", "/api/system/storage-path", json={"path": args.path}, timeout=60)
+    else:
+        data, _ = client.request("GET", "/api/system/storage-path", timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_update_workspace(args: argparse.Namespace) -> int:
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    if args.password is None and workspace_password_protected(workspace):
+        raise RejoinBIError(
+            "Workspace protegido por senha detectado. A API de edicao exige o campo password e poderia limpar a senha; "
+            "informe --password explicitamente ou altere a senha pela tela manual."
+        )
+    payload = {
+        "name": args.name if args.name is not None else workspace.get("name"),
+        "password": args.password if args.password is not None else "",
+        "is_active": True if args.active else (False if args.inactive else bool(workspace.get("is_active", True))),
+    }
+    data, _ = client.request("PUT", f"/plataforma/api/containers/{workspace.get('id')}", json=payload, timeout=args.timeout)
     print_payload(data, as_json=args.json)
     return 0
 
@@ -3031,6 +3511,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_create_workspace)
 
+    p = sub.add_parser("update-workspace", help="Update workspace/container metadata")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--name")
+    p.add_argument("--password")
+    p.add_argument("--active", action="store_true")
+    p.add_argument("--inactive", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_update_workspace)
+
     p = sub.add_parser("delete-workspace", aliases=["workspace-delete"], help="Preview and safely delete one workspace/container")
     p.add_argument("--workspace", required=True, help="Workspace id or exact name")
     p.add_argument("--confirm-name", help="Required with --yes. Must exactly match the resolved workspace name.")
@@ -3129,6 +3618,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--contato", default="")
     p.set_defaults(func=cmd_create_user)
 
+    p = sub.add_parser("update-user", help="Edit a user profile")
+    p.add_argument("--user", required=True, help="User id or email")
+    p.add_argument("--name")
+    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "UsuÃ¡rio", "Gestor"])
+    p.add_argument("--setor")
+    p.add_argument("--matricula")
+    p.add_argument("--contato")
+    p.set_defaults(func=cmd_update_user)
+
     p = sub.add_parser("set-user-password", help="Set a user's password through the admin endpoint")
     p.add_argument("--user", required=True, help="User id or email")
     p.add_argument("--password")
@@ -3142,6 +3640,151 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("user-permissions", help="Read permissions for a user")
     p.add_argument("--user", required=True, help="User id or email")
     p.set_defaults(func=cmd_user_permissions)
+
+    p = sub.add_parser("set-user-permissions", help="Replace direct/denied permissions for a user")
+    p.add_argument("--user", required=True, help="User id or email")
+    p.add_argument("--permissions", help="Comma-separated or JSON array permissions to allow")
+    p.add_argument("--denied-permissions", help="Comma-separated or JSON array permissions to deny")
+    p.add_argument("--permissions-file", help="JSON file with permissions and denied_permissions arrays")
+    p.set_defaults(func=cmd_set_user_permissions)
+
+    p = sub.add_parser("recalculate-permissions", help="Recalculate permissions for all users")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_recalculate_permissions)
+
+    p = sub.add_parser("groups", help="List permission groups")
+    p.set_defaults(func=cmd_groups)
+
+    p = sub.add_parser("create-group", help="Create a permission group")
+    p.add_argument("--name", required=True)
+    p.add_argument("--description", default="")
+    p.add_argument("--permissions", default="")
+    p.add_argument("--color", default="#6c757d")
+    p.set_defaults(func=cmd_create_group)
+
+    p = sub.add_parser("update-group", help="Update a permission group")
+    p.add_argument("--group", required=True, help="Group id or exact name")
+    p.add_argument("--name")
+    p.add_argument("--description")
+    p.add_argument("--permissions")
+    p.add_argument("--color")
+    p.set_defaults(func=cmd_update_group)
+
+    p = sub.add_parser("delete-group", help="Delete a permission group")
+    p.add_argument("--group", required=True, help="Group id or exact name")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_delete_group)
+
+    p = sub.add_parser("assign-user-group", help="Add or remove a user from a permission group")
+    p.add_argument("--user", required=True, help="User id or email")
+    p.add_argument("--group", required=True, help="Group id or exact name")
+    p.add_argument("--action", choices=["add", "remove"], default="add")
+    p.set_defaults(func=cmd_assign_user_group)
+
+    p = sub.add_parser("users-for-groups", help="List users for group management")
+    p.set_defaults(func=cmd_users_for_groups)
+
+    p = sub.add_parser("announcements", help="List internal announcements")
+    p.add_argument("--active", action="store_true", help="List only active announcements")
+    p.set_defaults(func=cmd_announcements)
+
+    p = sub.add_parser("announcement-groups", help="List announcement target groups")
+    p.set_defaults(func=cmd_announcement_groups)
+
+    p = sub.add_parser("create-announcement", help="Create an internal announcement")
+    p.add_argument("--title", required=True)
+    p.add_argument("--message", required=True)
+    p.add_argument("--priority", choices=["normal", "importante", "urgente"], default="normal")
+    p.add_argument("--all", action="store_true", help="Send to all users")
+    p.add_argument("--groups", default="", help="Comma-separated group ids/names when not sending to all")
+    p.add_argument("--expires", help="Expiration datetime in ISO format")
+    p.add_argument("--color")
+    p.add_argument("--icon", default="fa-bullhorn")
+    p.add_argument("--file", help="Optional attachment")
+    p.set_defaults(func=cmd_create_announcement)
+
+    p = sub.add_parser("delete-announcement", help="Delete an internal announcement")
+    p.add_argument("--announcement-id", required=True)
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_delete_announcement)
+
+    p = sub.add_parser("platform-config", help="Read platform branding/configuration")
+    p.set_defaults(func=cmd_platform_config)
+
+    p = sub.add_parser("colors-config", help="Read merged platform color configuration")
+    p.set_defaults(func=cmd_colors_config)
+
+    p = sub.add_parser("set-platform-config", help="Update platform branding/configuration")
+    p.add_argument("--data-file", help="JSON file with platform config fields")
+    p.add_argument("--browser-title")
+    p.add_argument("--logo-width", type=int)
+    p.add_argument("--logo-menu-width", type=int)
+    p.add_argument("--colors-file", help="JSON file with colors payload")
+    p.add_argument("--logo-image-file")
+    p.add_argument("--icon-image-file")
+    p.add_argument("--logo-menu-image-file")
+    p.add_argument("--remove-logo", action="store_true")
+    p.add_argument("--remove-icon", action="store_true")
+    p.add_argument("--remove-logo-menu", action="store_true")
+    p.set_defaults(func=cmd_set_platform_config)
+
+    p = sub.add_parser("export-platform-config", help="Export platform branding/configuration to JSON")
+    p.add_argument("--output", required=True)
+    p.set_defaults(func=cmd_export_platform_config)
+
+    p = sub.add_parser("restore-platform-config-defaults", help="Restore default platform colors")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_restore_platform_config_defaults)
+
+    p = sub.add_parser("ai-config", help="Read AI page configuration")
+    p.add_argument("--page-id", required=True)
+    p.add_argument("--workspace", help="Workspace id or name")
+    p.add_argument("--container-id")
+    p.add_argument("--config-id")
+    p.set_defaults(func=cmd_ai_config_get)
+
+    p = sub.add_parser("set-ai-config", help="Create or update AI page configuration")
+    p.add_argument("--data-file", help="JSON file with AI config fields")
+    p.add_argument("--page-id")
+    p.add_argument("--workspace", help="Workspace id or name")
+    p.add_argument("--container-id")
+    p.add_argument("--business-context")
+    p.add_argument("--title")
+    p.add_argument("--metrics")
+    p.add_argument("--objectives")
+    p.add_argument("--glossary")
+    p.add_argument("--alerts")
+    p.add_argument("--benchmarks")
+    p.add_argument("--historical-insights")
+    p.add_argument("--analysis-priority", choices=["rapida", "balanceada", "profunda"])
+    p.add_argument("--detail-level", choices=["operacional", "executivo", "tecnico"])
+    p.add_argument("--recommendation-focus", choices=["curto_prazo", "medio_prazo", "longo_prazo"])
+    p.add_argument("--forced-key-id")
+    p.add_argument("--forced-key-name")
+    p.add_argument("--forced-key-model")
+    p.add_argument("--forced-reasoning-effort")
+    p.add_argument("--forced-service-tier")
+    p.add_argument("--page-name")
+    p.add_argument("--full-path")
+    p.add_argument("--active", dest="active", action="store_true")
+    p.add_argument("--inactive", dest="active", action="store_false")
+    p.set_defaults(func=cmd_ai_config_set, active=None)
+
+    p = sub.add_parser("delete-ai-config", help="Delete AI page configuration")
+    p.add_argument("--page-id", required=True)
+    p.add_argument("--workspace", help="Workspace id or name")
+    p.add_argument("--container-id")
+    p.add_argument("--config-id")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_ai_config_delete)
+
+    p = sub.add_parser("cleanup-ai-config", help="Remove orphan AI configs")
+    p.add_argument("--yes", action="store_true")
+    p.set_defaults(func=cmd_ai_config_cleanup)
+
+    p = sub.add_parser("storage-path", help="Read or update platform storage path")
+    p.add_argument("--path", help="New storage path. Omit to read current value")
+    p.set_defaults(func=cmd_storage_path)
 
     p = sub.add_parser("pages", help="List platform pages")
     p.add_argument("--workspace", help="Workspace id or name")

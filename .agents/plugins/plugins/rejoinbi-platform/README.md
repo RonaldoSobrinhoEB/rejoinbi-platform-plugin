@@ -18,6 +18,8 @@ See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now in
 
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
 
+Read `docs/admin-configuration-map.md` for the administrative configuration map. It follows the Rejoin BI manual permission levels and maps sidebar tools such as users, permissions, groups, announcements, platform branding, AI configuration, workspace, pages, RLS, audit, system management, and BI Studio to plugin commands or authenticated API fallbacks.
+
 ## Common Commands
 
 ```powershell
@@ -26,9 +28,16 @@ python .\scripts\rejoinbi.py workspaceall
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
 python .\scripts\rejoinbi.py smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
+python .\scripts\rejoinbi.py users
+python .\scripts\rejoinbi.py groups
+python .\scripts\rejoinbi.py announcements
+python .\scripts\rejoinbi.py platform-config
+python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
 ```
 
 `ensure` first checks whether the tenant already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting tenant session cookies.
+
+The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
 
 For automation-only cases, the older terminal/API flow is still available:
 

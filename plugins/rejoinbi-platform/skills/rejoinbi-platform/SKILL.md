@@ -11,6 +11,8 @@ Important dashboard rule: Rejoin BI already manages pages, hierarchy, menu entri
 
 Before publishing generated dashboards, consult `docs/workspace-compatibility.md` and run `validate-app`. This captures the Workspace guidance from the platform so Codex does not create incompatible project structures, route patterns, or upload modes.
 
+For administrative automation, consult `docs/admin-configuration-map.md`. It maps the Rejoin BI manual sidebar tools and permission levels to plugin commands. The manual defines Administrador Principal as the highest profile and the only one that does not request PIN; if the auth flow succeeds without a PIN, treat the connected profile as `Administrador Principal`, not `Master`.
+
 ## What the platform exposes
 
 The analyzed codebase is a Flask/Python platform. The important API surface is:
@@ -83,6 +85,22 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 ```
 
 The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-platform`. It does not save the password or PIN.
+
+Administrative configuration shortcuts:
+
+```powershell
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" update-user --user user@example.com --name "Nome" --setor "Comercial" --perfil Administrador
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" set-user-permissions --user user@example.com --permissions "workspace,paginas"
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" groups
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" create-group --name Comercial --permissions "workspace,paginas"
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" announcements
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" create-announcement --title "Aviso" --message "Mensagem" --all
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" platform-config
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" set-platform-config --browser-title "Minha BI" --logo-image-file C:\path\logo.png
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" ai-config --page-id pagina-id
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" storage-path
+```
 
 ## Common Workflows
 
