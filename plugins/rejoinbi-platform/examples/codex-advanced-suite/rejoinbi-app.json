@@ -1,5 +1,6 @@
 {
   "name": "Codex Platform Pages Suite",
+  "language": "en-US",
   "app_root": ".",
   "replace_pages": true,
   "workspace": {
@@ -16,7 +17,7 @@
     {
       "id": "codex-platform-overview",
       "name": "Overview",
-      "route": "codex-platform-overview",
+      "route": "overview",
       "file": "overview.html",
       "icon": "fas fa-chart-pie",
       "description": "Standalone executive dashboard registered in Gerenciar Paginas.",
@@ -25,7 +26,7 @@
     {
       "id": "codex-platform-sales",
       "name": "Sales",
-      "route": "codex-platform-sales",
+      "route": "sales",
       "file": "sales.html",
       "icon": "fas fa-handshake",
       "description": "Standalone sales dashboard registered in Gerenciar Paginas.",
@@ -34,7 +35,7 @@
     {
       "id": "codex-platform-operations",
       "name": "Operations",
-      "route": "codex-platform-operations",
+      "route": "operations",
       "file": "operations.html",
       "icon": "fas fa-hard-hat",
       "description": "Standalone operations dashboard registered in Gerenciar Paginas.",
@@ -43,7 +44,7 @@
     {
       "id": "codex-platform-forms",
       "name": "Forms",
-      "route": "codex-platform-forms",
+      "route": "forms",
       "file": "forms.html",
       "icon": "fas fa-clipboard-check",
       "description": "Standalone forms page registered in Gerenciar Paginas.",

@@ -13,10 +13,13 @@ Correct pattern:
 - `operations.html` registered as another page.
 - Shared assets can live in `assets/`.
 - The manifest maps each page to its own `file` and `route`.
+- Visible page names may be localized with accents. Technical values (`id`, `route`, filenames) stay ASCII; for static dashboards, `route` should usually be the HTML filename without `.html`.
 
 See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records.
 
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
+
+Read `docs/page-routing-map.md` for the platform route/menu contract. It maps `accessible-pages`, `container_name`, `arquivo`, `rota`, and the `/plataforma/<container_name>/client/<route>` tunnel so generated pages do not fall back to `container_<id>`.
 
 Read `docs/admin-configuration-map.md` for the administrative configuration map. It follows the Rejoin BI manual permission levels and maps sidebar tools such as users, permissions, groups, announcements, platform branding, AI configuration, workspace, pages, RLS, audit, system management, and BI Studio to plugin commands or authenticated API fallbacks.
 
@@ -26,8 +29,8 @@ Read `docs/admin-configuration-map.md` for the administrative configuration map.
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
 python .\scripts\rejoinbi.py workspaceall
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
-python .\scripts\rejoinbi.py deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
-python .\scripts\rejoinbi.py smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
 python .\scripts\rejoinbi.py users
 python .\scripts\rejoinbi.py groups
@@ -115,15 +118,15 @@ For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Cloudflare, Co
 
 ## Safe Destructive Commands
 
-Workspace and page removal always starts as a dry-run plan. The plan includes the resolved workspace/page, parent-child-grandchild page tree, linked fictitious/hierarchy references, and verification guards.
+Workspace and page removal always starts as a dry-run plan. The plan includes the resolved workspace/page, parent-child-grandchild page tree, linked fictitious/hierarchy references, and verification guards. Destructive, upload, publish, and configuration commands require `--tenant subdomain.rejoinbi.com.br` unless you intentionally pass `--use-active-tenant`.
 
 ```powershell
-python .\scripts\rejoinbi.py delete-workspace --workspace codex-suite
-python .\scripts\rejoinbi.py delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12
-python .\scripts\rejoinbi.py delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12 --workspace-password "senha-do-workspace"
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12 --workspace-password "senha-do-workspace"
 
-python .\scripts\rejoinbi.py delete-page --page-id codex-suite-overview
-python .\scripts\rejoinbi.py delete-page --page-id codex-suite-overview --yes --confirm-page-id codex-suite-overview --cascade
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview --yes --confirm-page-id codex-suite-overview --cascade
 ```
 
 If the plan shows the workspace is password-protected, deletion is blocked until the workspace password is passed through `--workspace-password` or `REJOINBI_WORKSPACE_PASSWORD` and validated by the platform. If the password is missing or invalid, no deletion is attempted and manual removal is required. If the plan shows pages linked from another workspace, deletion is blocked until `--allow-linked-pages` is provided. Fictitious pages cannot be deleted directly; delete the original page or workspace instead.

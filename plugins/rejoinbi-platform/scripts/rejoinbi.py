@@ -44,6 +44,54 @@ DEFAULT_TIMEOUT = 120
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
+    "api-send",
+    "assign-user-group",
+    "cleanup-ai-config",
+    "create-announcement",
+    "create-group",
+    "create-page",
+    "create-user",
+    "create-workspace",
+    "delete-ai-config",
+    "delete-announcement",
+    "delete-group",
+    "delete-page",
+    "delete-user",
+    "delete-workspace",
+    "deploy-manifest",
+    "bi-create-project",
+    "menu-maintenance",
+    "page-maintenance",
+    "publish-bi",
+    "recalculate-permissions",
+    "restore-platform-config-defaults",
+    "rls",
+    "set-ai-config",
+    "set-page-order",
+    "set-platform-config",
+    "set-workspace-password",
+    "set-user-password",
+    "set-user-permissions",
+    "update-group",
+    "update-page",
+    "update-user",
+    "update-workspace",
+    "upload-files",
+    "upload-folder-select",
+    "upload-zip-select",
+    "workspace-build",
+    "workspace-delete",
+    "workspace-input",
+    "workspace-notification",
+    "workspace-restart",
+    "workspace-schedule",
+    "workspace-start",
+    "workspace-stop",
+    "workspace-stop-all",
+    "workspace-version-delete",
+    "workspace-version-restore",
+}
 FICTITIOUS_PAGE_PREFIXES = ("avo-ficticio-", "pai-ficticio-", "filho-ficticio-")
 DELETE_PAGE_REFERENCE_FIELDS = ("pai", "ficticio")
 DELETE_WORKSPACE_REFERENCE_FIELDS = ("pai", "pai_real", "pai_ficticio", "ficticio", "hierarquia_id")
@@ -123,6 +171,29 @@ DATA_ENGINE_PROJECT_ACTIONS = {
     "remove-variable",
     "terminal-command",
     "terminal-auto-install",
+}
+
+PT_BR_WORD_ACCENT_FIXES = {
+    "acao": "ação",
+    "acoes": "ações",
+    "analise": "análise",
+    "atencao": "atenção",
+    "automacao": "automação",
+    "avaliacao": "avaliação",
+    "composicao": "composição",
+    "configuracao": "configuração",
+    "configuracoes": "configurações",
+    "conversao": "conversão",
+    "evolucao": "evolução",
+    "gestao": "gestão",
+    "metricas": "métricas",
+    "operacao": "operação",
+    "operacoes": "operações",
+    "producao": "produção",
+    "satisfacao": "satisfação",
+    "usuarios": "usuários",
+    "visao": "visão",
+    "visoes": "visões",
 }
 
 
@@ -214,6 +285,51 @@ def resolve_base_url(subdomain: str = "", domain: str = DEFAULT_DOMAIN, base_url
 
 def tenant_host_from_base_url(base_url: str) -> str:
     return urlparse(clean_base_url(base_url)).netloc
+
+
+def args_have_explicit_tenant(args: argparse.Namespace) -> bool:
+    return bool(
+        str(getattr(args, "tenant", "") or "").strip()
+        or str(getattr(args, "subdomain", "") or "").strip()
+        or str(getattr(args, "base_url", "") or "").strip()
+    )
+
+
+def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
+    command = str(getattr(args, "command", "") or "").strip()
+    if command in MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT:
+        return True
+    if command in {"cloudflare", "codex-keys", "data-engine", "email", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
+        action = str(getattr(args, "action", "") or "").strip()
+        read_only_actions = {
+            "capabilities",
+            "database-status",
+            "db-connections",
+            "dns-records",
+            "gateway-pairings",
+            "history",
+            "list",
+            "repository-list",
+            "route",
+            "routes",
+            "sessions",
+            "status",
+            "stats",
+            "usage",
+        }
+        return action not in read_only_actions
+    return False
+
+
+def ensure_explicit_tenant_for_command(args: argparse.Namespace) -> None:
+    if not command_requires_explicit_tenant(args):
+        return
+    if args_have_explicit_tenant(args) or getattr(args, "use_active_tenant", False):
+        return
+    raise RejoinBIError(
+        "This command can change a tenant. Pass --tenant subdomain.rejoinbi.com.br "
+        "or add --use-active-tenant after explicitly checking the active session."
+    )
 
 
 def session_slug(base_url: str) -> str:
@@ -385,6 +501,7 @@ class RejoinBIClient:
 
 
 def make_client(args: argparse.Namespace) -> RejoinBIClient:
+    ensure_explicit_tenant_for_command(args)
     base_url = resolve_base_url(
         subdomain=getattr(args, "tenant", "") or getattr(args, "subdomain", "") or "",
         domain=getattr(args, "domain", DEFAULT_DOMAIN) or DEFAULT_DOMAIN,
@@ -1284,6 +1401,47 @@ def slugify_page_id(value: Any) -> str:
     ascii_text = re.sub(r"[^a-z0-9_-]+", "", ascii_text)
     ascii_text = re.sub(r"-{2,}", "-", ascii_text).strip("-_")
     return ascii_text or "pagina"
+
+
+def detect_manifest_language(manifest: dict[str, Any]) -> str:
+    explicit = str(manifest.get("language") or manifest.get("lang") or "").strip()
+    if explicit:
+        return explicit
+    text_parts: list[str] = []
+    for page in manifest.get("pages") or []:
+        if isinstance(page, dict):
+            text_parts.append(str(page.get("name") or page.get("nome") or ""))
+            text_parts.append(str(page.get("description") or page.get("descricao") or ""))
+    normalized = normalize_text(" ".join(text_parts))
+    pt_markers = {
+        "analise", "atendimento", "clientes", "comercial", "configuracao", "faturamento",
+        "geral", "gestao", "operacoes", "produtos", "receita", "vendas", "visao",
+    }
+    if any(re.search(rf"\b{re.escape(marker)}\b", normalized) for marker in pt_markers):
+        return "pt-BR"
+    return ""
+
+
+def suggest_pt_br_display_name(value: str) -> str:
+    if not value:
+        return ""
+    parts = re.split(r"(\W+)", value)
+    changed = False
+    fixed: list[str] = []
+    for part in parts:
+        key = normalize_text(part)
+        replacement = PT_BR_WORD_ACCENT_FIXES.get(key)
+        if not replacement:
+            fixed.append(part)
+            continue
+        changed = True
+        if part.isupper():
+            fixed.append(replacement.upper())
+        elif part[:1].isupper():
+            fixed.append(replacement[:1].upper() + replacement[1:])
+        else:
+            fixed.append(replacement)
+    return "".join(fixed) if changed else ""
 
 
 def response_requires_pin(payload: Any) -> bool:
@@ -3599,6 +3757,43 @@ def load_manifest(path: str) -> tuple[dict[str, Any], Path]:
     return payload, manifest_path
 
 
+def manifest_tenant_host(manifest: dict[str, Any]) -> str:
+    tenant = manifest.get("tenant")
+    if isinstance(tenant, str):
+        return tenant.strip()
+    if isinstance(tenant, dict):
+        for key in ("host", "url", "base_url", "baseUrl"):
+            value = str(tenant.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def bind_manifest_tenant(args: argparse.Namespace, manifest: dict[str, Any]) -> None:
+    host = manifest_tenant_host(manifest)
+    if not host:
+        return
+    manifest_base_url = clean_base_url(host)
+    explicit_base_url = ""
+    if str(getattr(args, "base_url", "") or "").strip():
+        explicit_base_url = clean_base_url(str(getattr(args, "base_url")))
+    else:
+        cli_tenant = str(getattr(args, "tenant", "") or getattr(args, "subdomain", "") or "").strip()
+        if cli_tenant:
+            explicit_base_url = resolve_base_url(
+                subdomain=cli_tenant,
+                domain=getattr(args, "domain", DEFAULT_DOMAIN) or DEFAULT_DOMAIN,
+                base_url="",
+            )
+    if explicit_base_url and tenant_host_from_base_url(explicit_base_url) != tenant_host_from_base_url(manifest_base_url):
+        raise RejoinBIError(
+            "Manifest tenant does not match the command tenant: "
+            f"{tenant_host_from_base_url(manifest_base_url)} != {tenant_host_from_base_url(explicit_base_url)}"
+        )
+    if not explicit_base_url:
+        args.base_url = manifest_base_url
+
+
 def manifest_bool(payload: dict[str, Any], key: str, default: bool = False) -> bool:
     value = payload.get(key, default)
     if isinstance(value, bool):
@@ -3736,6 +3931,139 @@ def page_ids_to_replace(page: dict[str, Any], payload: dict[str, Any]) -> list[s
     return ids
 
 
+def manifest_page_ref(page: dict[str, Any]) -> str:
+    return str(page.get("id") or page.get("page_id") or page.get("route") or page.get("rota") or page.get("name") or "").strip()
+
+
+def flatten_page_tree(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        roots = payload
+    elif isinstance(payload, dict):
+        roots = payload.get("pages") or payload.get("data") or payload.get("accessible_pages") or []
+    else:
+        roots = []
+    flat: list[dict[str, Any]] = []
+
+    def walk(items: Any) -> None:
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            flat.append(item)
+            walk(item.get("subpaginas") or item.get("children") or [])
+
+    walk(roots)
+    return flat
+
+
+def load_accessible_pages_flat(client: RejoinBIClient) -> list[dict[str, Any]]:
+    payload, _ = client.request("GET", "/plataforma/api/accessible-pages", timeout=60)
+    return flatten_page_tree(payload)
+
+
+def refresh_menu_caches(client: RejoinBIClient) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for name, path in (("clear-cache", "/plataforma/api/clear-menu-cache"), ("reload", "/plataforma/api/reload-menu")):
+        try:
+            data, response = client.request("POST", path, json={}, timeout=120)
+            results.append({"action": name, "success": True, "status_code": response.status_code, "response": data})
+        except RejoinBIError as exc:
+            results.append({"action": name, "success": False, "error": str(exc)})
+    return results
+
+
+def wait_manifest_pages_ready(
+    client: RejoinBIClient,
+    pages: list[Any],
+    *,
+    timeout: float = 45.0,
+    interval: float = 1.5,
+    refresh: bool = True,
+) -> dict[str, Any]:
+    valid_pages = [page for page in pages if isinstance(page, dict)]
+    deadline = time.monotonic() + max(0.0, timeout)
+    attempts = 0
+    refresh_results: list[dict[str, Any]] = []
+    last_results: list[dict[str, Any]] = []
+    while True:
+        attempts += 1
+        try:
+            accessible_pages = load_accessible_pages_flat(client)
+            accessible_by_id = {
+                str(item.get("id") or "").strip(): item
+                for item in accessible_pages
+                if str(item.get("id") or "").strip()
+            }
+            last_results = []
+            all_ready = True
+            for page in valid_pages:
+                page_ref = manifest_page_ref(page)
+                expected_name = str(page.get("name") or page.get("nome") or "").strip()
+                requires_container_name = bool(str(page.get("file") or page.get("arquivo") or "").strip())
+                resolved: dict[str, Any] = {}
+                resolved_page_id = page_ref
+                resolve_error = ""
+                if page_ref:
+                    try:
+                        resolved_payload, _ = client.request(
+                            "GET",
+                            f"/plataforma/api/capture/resolve-page/{quote(page_ref, safe='-_/')}",
+                            timeout=60,
+                        )
+                        if isinstance(resolved_payload, dict):
+                            resolved = resolved_payload
+                            resolved_page_id = str(resolved.get("resolved_page_id") or page_ref).strip()
+                    except RejoinBIError as exc:
+                        resolve_error = str(exc)
+                accessible_page = accessible_by_id.get(resolved_page_id) or accessible_by_id.get(page_ref) or {}
+                accessible_name = str(
+                    accessible_page.get("nome") or accessible_page.get("name") or ""
+                ).strip() if isinstance(accessible_page, dict) else ""
+                accessible_container_name = str(accessible_page.get("container_name") or "").strip() if isinstance(accessible_page, dict) else ""
+                accessible_container_id = str(accessible_page.get("container_id") or "").strip() if isinstance(accessible_page, dict) else ""
+                name_ok = not expected_name or not accessible_name or expected_name == accessible_name
+                menu_safe = (not requires_container_name) or bool(accessible_container_name)
+                found = bool(accessible_page)
+                ready = found and name_ok and menu_safe and not resolve_error
+                if not ready:
+                    all_ready = False
+                last_results.append({
+                    "page_ref": page_ref,
+                    "resolved_page_id": resolved_page_id,
+                    "found_in_accessible_pages": found,
+                    "expected_name": expected_name,
+                    "accessible_name": accessible_name,
+                    "name_ok": name_ok,
+                    "requires_container_name": requires_container_name,
+                    "container_id": accessible_container_id,
+                    "container_name": accessible_container_name,
+                    "menu_safe": menu_safe,
+                    "resolve_error": resolve_error,
+                    "resolved": resolved,
+                })
+            if all_ready:
+                return {
+                    "success": True,
+                    "attempts": attempts,
+                    "results": last_results,
+                    "refresh": refresh_results,
+                }
+        except RejoinBIError as exc:
+            last_results = [{"success": False, "error": str(exc)}]
+        if time.monotonic() >= deadline:
+            return {
+                "success": False,
+                "attempts": attempts,
+                "results": last_results,
+                "refresh": refresh_results,
+                "message": "Pages are not menu-safe yet. Every client page must appear in accessible-pages with container_name before production is considered ready.",
+            }
+        if refresh:
+            refresh_results.extend(refresh_menu_caches(client))
+        time.sleep(max(0.2, interval))
+
+
 def create_page_from_manifest(
     client: RejoinBIClient,
     workspace: dict[str, Any],
@@ -3797,8 +4125,9 @@ def create_page_from_manifest(
 
 
 def cmd_deploy_manifest(args: argparse.Namespace) -> int:
-    client = make_client(args)
     manifest, manifest_path = load_manifest(args.manifest)
+    bind_manifest_tenant(args, manifest)
+    client = make_client(args)
     app_root = Path(args.path).expanduser().resolve() if args.path else (manifest_path.parent / str(manifest.get("app_root") or ".")).resolve()
     workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
@@ -3852,48 +4181,49 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             replace=replace_pages,
         ))
 
+    menu_refresh = refresh_menu_caches(client)
+    page_readiness = None
+    if not args.no_page_readiness:
+        page_readiness = wait_manifest_pages_ready(
+            client,
+            pages,
+            timeout=args.readiness_timeout,
+            interval=args.interval,
+            refresh=True,
+        )
+    success = page_readiness is None or bool(page_readiness.get("success"))
     print_payload({
-        "success": True,
+        "success": success,
         "manifest": str(manifest_path),
         "app_root": str(app_root),
+        "tenant": tenant_host_from_base_url(client.base_url),
         "workspace": {"id": workspace.get("id"), "name": workspace.get("name"), "status": workspace.get("deploy_status")},
         "workspace_validation": validation,
         "upload": upload_result,
         "pages": page_results,
+        "menu_refresh": menu_refresh,
+        "page_readiness": page_readiness,
         "count": len(page_results),
     }, as_json=args.json)
-    return 0
+    return 0 if success else 1
 
 
 def cmd_smoke_pages(args: argparse.Namespace) -> int:
-    client = make_client(args)
     manifest, manifest_path = load_manifest(args.manifest)
+    bind_manifest_tenant(args, manifest)
+    client = make_client(args)
     pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    readiness = wait_manifest_pages_ready(
+        client,
+        pages,
+        timeout=args.readiness_timeout,
+        interval=args.interval,
+        refresh=not args.no_refresh_menu,
+    )
     try:
         accessible_payload, _ = client.request("GET", "/plataforma/api/accessible-pages", timeout=60)
     except RejoinBIError as exc:
         accessible_payload = {"success": False, "error": str(exc)}
-
-    def flatten_page_tree(payload: Any) -> list[dict[str, Any]]:
-        if isinstance(payload, list):
-            roots = payload
-        elif isinstance(payload, dict):
-            roots = payload.get("pages") or payload.get("data") or payload.get("accessible_pages") or []
-        else:
-            roots = []
-        flat: list[dict[str, Any]] = []
-
-        def walk(items: Any) -> None:
-            if not isinstance(items, list):
-                return
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                flat.append(item)
-                walk(item.get("subpaginas") or item.get("children") or [])
-
-        walk(roots)
-        return flat
 
     accessible_pages = flatten_page_tree(accessible_payload)
     accessible_by_id = {str(item.get("id") or "").strip(): item for item in accessible_pages if str(item.get("id") or "").strip()}
@@ -3956,13 +4286,16 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
                 "container_name": accessible_page.get("container_name") if isinstance(accessible_page, dict) else None,
             },
         })
+    success = all(item.get("html_ok") and item.get("browser_route_ok") and item.get("menu_safe") for item in results) and bool(readiness.get("success"))
     print_payload({
-        "success": all(item.get("html_ok") and item.get("browser_route_ok") and item.get("menu_safe") for item in results),
+        "success": success,
         "manifest": str(manifest_path),
+        "tenant": tenant_host_from_base_url(client.base_url),
+        "readiness": readiness,
         "results": results,
         "count": len(results),
     }, as_json=args.json)
-    return 0
+    return 0 if success else 1
 
 
 def cmd_smoke_admin(args: argparse.Namespace) -> int:
@@ -4113,6 +4446,7 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
     pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
     startup_mode = str(args.startup_mode or upload_cfg.get("startup_mode") or "static").strip().lower()
+    manifest_language = detect_manifest_language(manifest)
 
     if pages:
         files_by_page = []
@@ -4133,6 +4467,8 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
                 errors.append(f"Page missing id/page_id: {page}")
             elif page_id in seen_ids:
                 errors.append(f"Duplicate page id: {page_id}")
+            elif not re.match(r"^[a-z0-9][a-z0-9_-]*$", page_id):
+                errors.append(f"Page id must be ASCII slug with letters, numbers, hyphen, or underscore: {page_id}")
             elif page_display_name and slugify_page_id(page_display_name) != page_id:
                 checks.append({
                     "name": "page_id_display_name_decoupled",
@@ -4148,14 +4484,30 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
                     warnings.append(
                         f"Page '{page_display_name}' includes the workspace prefix. Keep visible page names clean and put the prefix only in id/page_id."
                     )
+            if manifest_language.lower().startswith("pt"):
+                suggested_name = suggest_pt_br_display_name(page_display_name)
+                if suggested_name and suggested_name != page_display_name:
+                    warnings.append(
+                        f"Page '{page_display_name}' looks like pt-BR text without accents. Suggested display name: '{suggested_name}'."
+                    )
             if not route:
                 warnings.append(f"Page {page_id or page.get('name')} has no custom route; Gerenciar Paginas will fall back to file route.")
             elif route in seen_routes:
                 errors.append(f"Duplicate page route: {route}")
+            elif not re.match(r"^[A-Za-z0-9_/-]+$", route) or route.endswith(".html") or ".." in route:
+                errors.append(f"Page route must be a clean ASCII route without .html or traversal: {route}")
             seen_routes.add(route)
             if not file_name:
                 errors.append(f"Page {page_id or route} has no HTML file.")
                 continue
+            file_route = file_name.replace("\\", "/")
+            if file_route.lower().endswith(".html"):
+                file_route = file_route[:-5].strip("/")
+            if route and file_route and route.strip("/") != file_route and not manifest_bool(page, "allow_custom_route", False):
+                warnings.append(
+                    f"Page {page_id or page_display_name} uses route '{route}' but file route is '{file_route}'. "
+                    "For static dashboards, prefer route equal to the HTML file path without .html."
+                )
             page_file = (app_root / file_name).resolve()
             if not str(page_file).startswith(str(app_root)):
                 errors.append(f"Page file escapes app root: {file_name}")
@@ -4315,8 +4667,8 @@ Use `examples\\codex-advanced-suite\\rejoinbi-app.json` as the model: one HTML f
 Workspace and page deletion commands are dry-run by default and print the affected page tree before deleting:
 
 ```powershell
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py delete-workspace --workspace codex-suite
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py delete-page --page-id codex-suite-overview
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
 ```
 
 Actual deletion requires exact confirmation flags such as `--confirm-name`, `--confirm-id`, or `--confirm-page-id`.
@@ -4368,6 +4720,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--subdomain", help="Legacy tenant shorthand or host. Prefer --tenant subdomain.rejoinbi.com.br")
     parser.add_argument("--domain", default=DEFAULT_DOMAIN, help="Base domain used only for legacy short subdomains")
     parser.add_argument("--base-url", help="Exact tenant base URL")
+    parser.add_argument("--use-active-tenant", action="store_true", help="Allow mutating commands to use the last saved active tenant")
     parser.add_argument("--json", action="store_true", default=True, help="Print JSON output")
     parser.add_argument(
         "--allow-standard",
@@ -5098,11 +5451,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-auto-start", action="store_true")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--interval", type=float, default=3.0)
+    p.add_argument("--readiness-timeout", type=float, default=45.0, help="Seconds to wait for accessible-pages to expose container_name for every page")
+    p.add_argument("--no-page-readiness", action="store_true", help="Skip post-deploy accessible-pages/menu safety verification")
     p.set_defaults(func=cmd_deploy_manifest)
 
     p = sub.add_parser("smoke-pages", help="Resolve and request every page in a manifest using the authenticated session")
     p.add_argument("--manifest", required=True)
     p.add_argument("--timeout", type=int, default=60)
+    p.add_argument("--readiness-timeout", type=float, default=45.0, help="Seconds to wait for accessible-pages container_name readiness")
+    p.add_argument("--interval", type=float, default=1.5)
+    p.add_argument("--no-refresh-menu", action="store_true", help="Do not clear/reload menu cache while waiting")
     p.set_defaults(func=cmd_smoke_pages)
 
     p = sub.add_parser("smoke-admin", help="Run a read-only admin API smoke test across tenant configuration areas")
@@ -5150,7 +5508,15 @@ def main(argv: list[str] | None = None) -> int:
     except RejoinBIError as exc:
         error = str(exc)
         payload: dict[str, Any] = {"success": False, "error": error}
-        if "401" in error or "Sess" in error or "session" in error.lower():
+        lower_error = error.lower()
+        if (
+            "401" in error
+            or "sessao" in lower_error
+            or "sessão" in lower_error
+            or "session expired" in lower_error
+            or "no saved session" in lower_error
+            or "login required" in lower_error
+        ):
             try:
                 base_url = resolve_base_url(
                     subdomain=getattr(args, "tenant", "") or getattr(args, "subdomain", "") or "",

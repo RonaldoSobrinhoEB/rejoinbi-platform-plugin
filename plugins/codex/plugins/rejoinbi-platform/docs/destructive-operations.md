@@ -7,19 +7,19 @@ This plugin treats workspace and page deletion as production-risk operations. Ev
 Dry run:
 
 ```powershell
-python .\scripts\rejoinbi.py delete-workspace --workspace codex-suite
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
 ```
 
 Actual delete for a workspace without password:
 
 ```powershell
-python .\scripts\rejoinbi.py delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12
 ```
 
 Actual delete for a password-protected workspace:
 
 ```powershell
-python .\scripts\rejoinbi.py delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12 --workspace-password "senha-do-workspace"
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12 --workspace-password "senha-do-workspace"
 ```
 
 The plan shows:
@@ -42,13 +42,13 @@ Reserved names such as `admin`, `master`, `plataforma`, `default`, `system`, and
 Dry run:
 
 ```powershell
-python .\scripts\rejoinbi.py delete-page --page-id codex-suite-overview
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
 ```
 
 Actual delete:
 
 ```powershell
-python .\scripts\rejoinbi.py delete-page --page-id codex-suite-overview --yes --confirm-page-id codex-suite-overview --cascade
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview --yes --confirm-page-id codex-suite-overview --cascade
 ```
 
 The page delete plan shows:
