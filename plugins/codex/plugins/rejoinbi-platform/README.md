@@ -21,7 +21,7 @@ Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`
 ## Common Commands
 
 ```powershell
-python .\scripts\rejoinbi.py --subdomain cliente ensure
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
 python .\scripts\rejoinbi.py workspaceall
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
@@ -34,7 +34,7 @@ For automation-only cases, the older terminal/API flow is still available:
 
 ```powershell
 $env:REJOINBI_PASSWORD = "..."
-python .\scripts\rejoinbi.py --subdomain cliente connect --email user@example.com --terminal
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
 
 The `examples/codex-echarts-dashboard` folder is a polished single-page ECharts signal dashboard for quick upload and rendering checks.

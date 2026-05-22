@@ -107,7 +107,7 @@ def resolve_base_url(subdomain: str = "", domain: str = DEFAULT_DOMAIN, base_url
         active = str(config.get("active_base_url") or "").strip()
         if active:
             return clean_base_url(active)
-        raise RejoinBIError("No tenant selected. Pass --subdomain or run connect first.")
+        raise RejoinBIError("No tenant selected. Pass --tenant subdomain.rejoinbi.com.br or run ensure first.")
 
     if re.match(r"^https?://", sub, flags=re.I):
         return clean_base_url(sub)
@@ -118,6 +118,10 @@ def resolve_base_url(subdomain: str = "", domain: str = DEFAULT_DOMAIN, base_url
 
     base_domain = str(domain or DEFAULT_DOMAIN).replace("https://", "").replace("http://", "").strip("/")
     return clean_base_url(f"{sub}.{base_domain}")
+
+
+def tenant_host_from_base_url(base_url: str) -> str:
+    return urlparse(clean_base_url(base_url)).netloc
 
 
 def session_slug(base_url: str) -> str:
@@ -240,7 +244,7 @@ class RejoinBIClient:
 
 def make_client(args: argparse.Namespace) -> RejoinBIClient:
     base_url = resolve_base_url(
-        subdomain=getattr(args, "subdomain", "") or "",
+        subdomain=getattr(args, "tenant", "") or getattr(args, "subdomain", "") or "",
         domain=getattr(args, "domain", DEFAULT_DOMAIN) or DEFAULT_DOMAIN,
         base_url=getattr(args, "base_url", "") or "",
     )
@@ -2184,7 +2188,7 @@ $HOME\\plugins\\rejoinbi-platform
 ## Configure A Tenant
 
 ```powershell
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py --subdomain cliente ensure
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
 python .\\rejoinbi-platform\\scripts\\rejoinbi.py workspaceall
 ```
 
@@ -2250,8 +2254,9 @@ def cmd_export_package(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Rejoin BI Platform helper CLI")
-    parser.add_argument("--subdomain", help="Tenant subdomain or full host, e.g. cliente or cliente.rejoinbi.com.br")
-    parser.add_argument("--domain", default=DEFAULT_DOMAIN, help="Base domain used with short subdomains")
+    parser.add_argument("--tenant", help="Full tenant host or URL, e.g. subdomain.rejoinbi.com.br")
+    parser.add_argument("--subdomain", help="Legacy tenant shorthand or host. Prefer --tenant subdomain.rejoinbi.com.br")
+    parser.add_argument("--domain", default=DEFAULT_DOMAIN, help="Base domain used only for legacy short subdomains")
     parser.add_argument("--base-url", help="Exact tenant base URL")
     parser.add_argument("--json", action="store_true", default=True, help="Print JSON output")
     parser.add_argument(
@@ -2543,14 +2548,14 @@ def main(argv: list[str] | None = None) -> int:
         if "401" in error or "Sess" in error or "session" in error.lower():
             try:
                 base_url = resolve_base_url(
-                    subdomain=getattr(args, "subdomain", "") or "",
+                    subdomain=getattr(args, "tenant", "") or getattr(args, "subdomain", "") or "",
                     domain=getattr(args, "domain", DEFAULT_DOMAIN) or DEFAULT_DOMAIN,
                     base_url=getattr(args, "base_url", "") or "",
                 )
-                payload["reauth_command"] = f"python scripts/rejoinbi.py --base-url {base_url} connect"
+                payload["reauth_command"] = f"python scripts/rejoinbi.py --tenant {tenant_host_from_base_url(base_url)} ensure"
             except Exception:
-                payload["reauth_command"] = "python scripts/rejoinbi.py --subdomain <tenant> connect"
-            payload["reauth_note"] = "Run connect without a password to open the browser auth wizard."
+                payload["reauth_command"] = "python scripts/rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure"
+            payload["reauth_note"] = "Run ensure with the full tenant host to verify the session or open the browser auth wizard."
         print_payload(payload)
         return 1
     except KeyboardInterrupt:

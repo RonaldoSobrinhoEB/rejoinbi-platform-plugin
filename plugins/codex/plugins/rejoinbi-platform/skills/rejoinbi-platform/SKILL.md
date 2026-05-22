@@ -33,29 +33,29 @@ The plugin client enforces the operational rule for this platform: persisted ses
 
 ## Default Auth Flow
 
-When a user asks to connect a tenant and gives only the subdomain, do not ask clarifying questions and do not ask for password or PIN in chat. Treat messages like `nome e sima`, `subdominio sima`, `tenant sima`, or just `sima` as the tenant subdomain, then run the ensure flow:
+When a user asks to connect a tenant, expect the full tenant host/URL, not only the short subdomain. Use `subdomain.rejoinbi.com.br` as the placeholder in examples and messages. Treat messages like `tenant sima.rejoinbi.com.br`, `url sima.rejoinbi.com.br`, or just `sima.rejoinbi.com.br` as the tenant host, then run the ensure flow without asking for password or PIN in chat:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente ensure
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
 ```
 
 This first checks whether the tenant already has a saved session and validates that the profile is `Administrador Principal`, `Master`, or `Administrador`. If the session is missing, expired, or not allowed, it opens a local browser page, prefilled with the resolved tenant URL, where the user enters email, password, and PIN if required. The helper posts to the tenant login API, validates the profile, then saves only the session cookies in `%USERPROFILE%\.rejoinbi-platform`.
 
-Example: if the user says `nome e sima`, immediately run:
+Example: if the user says `nome e sima.rejoinbi.com.br`, immediately run:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain sima ensure
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant sima.rejoinbi.com.br ensure
 ```
 
 Continue only after `success: true`, `connected: true`, and `profile_allowed: true` are confirmed.
 
-If any command returns `HTTP 401`, `Sessao expirada`, or says there is no saved session, immediately run `ensure` for the same subdomain instead of asking the user to configure `REJOINBI_PASSWORD`.
+If any command returns `HTTP 401`, `Sessao expirada`, or says there is no saved session, immediately run `ensure` for the same tenant host instead of asking the user to configure `REJOINBI_PASSWORD`.
 
 Use the older terminal/API auth only when the user explicitly asks for automation or already provided local environment variables:
 
 ```powershell
 $env:REJOINBI_PASSWORD = "..."
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect --email user@example.com --terminal
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
 
 ## Script
@@ -68,11 +68,11 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --help
 
 The tenant URL is resolved as:
 
-- `--subdomain cliente` -> `https://cliente.rejoinbi.com.br`
-- `--subdomain cliente.rejoinbi.com.br` -> `https://cliente.rejoinbi.com.br`
-- `--base-url https://cliente.rejoinbi.com.br` -> exact base URL
+- `--tenant subdomain.rejoinbi.com.br` -> `https://subdomain.rejoinbi.com.br`
+- `--tenant https://subdomain.rejoinbi.com.br` -> exact tenant origin
+- `--base-url https://subdomain.rejoinbi.com.br` -> exact base URL
 
-After a successful `ensure` or `connect`, later commands can omit `--subdomain`; the script uses the last active tenant session.
+After a successful `ensure` or `connect`, later commands can omit `--tenant`; the script uses the last active tenant session.
 
 ## Secure Credential Handling
 
@@ -81,7 +81,7 @@ Do not ask the user to paste passwords or PINs into chat unless they explicitly 
 ```powershell
 $env:REJOINBI_PASSWORD = "..."
 $env:REJOINBI_PIN = "123456"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente connect --email user@example.com --terminal
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
 
 The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-platform`. It does not save the password or PIN.
@@ -91,7 +91,7 @@ The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-pl
 Connect:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --subdomain cliente ensure
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
 ```
 
 If the API asks for PIN, the browser wizard shows a PIN field and completes the session in the same flow.

@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Operate Rejoin BI tenants, workspaces, uploads, BI projects, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho"
@@ -18,7 +18,7 @@
       "Interactive"
     ],
     "defaultPrompt": [
-      "Ensure connection to my Rejoin BI tenant",
+      "Ensure connection to subdomain.rejoinbi.com.br",
       "List all Rejoin BI workspaces",
       "Publish this ECharts dashboard",
       "Preview deleting this Rejoin BI workspace"
