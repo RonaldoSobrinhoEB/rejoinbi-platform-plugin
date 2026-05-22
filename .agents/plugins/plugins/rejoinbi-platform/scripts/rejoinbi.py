@@ -3727,6 +3727,10 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
                 }
                 if not validation_success:
                     errors.append("Senha do workspace nao foi validada. A remocao foi bloqueada.")
+                else:
+                    plan["blocked"] = False
+                    plan["password_validation_required"] = False
+                    plan["security_message"] = "Senha do workspace validada pela plataforma; remocao liberada pelos guards do plugin."
             except RejoinBIError as exc:
                 plan["workspace_password_validation"] = {"success": False, "validated": False, "error": str(exc)}
                 errors.append("Senha do workspace invalida ou nao validada. A remocao foi bloqueada.")
