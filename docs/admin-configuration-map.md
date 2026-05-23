@@ -136,7 +136,7 @@ The inventory links each BI Studio project to project-scoped Data Engine resourc
 
 Use the inventory as the first source of truth for "o que tem no BI Studio" or "o que tem no Data Engine". It is safe for summaries because password, token, key, secret, credential, and connection-string fields are redacted. Use `--include-raw` only when troubleshooting because it includes sanitized endpoint payloads.
 
-Data Engine session, repository, and dataset endpoints are project-scoped. Pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload so the plugin validates the request before reaching the tenant API.
+Data Engine session, repository, and dataset endpoints are project-scoped. Pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload so the plugin validates the request before reaching the platform API.
 
 Repository upload coverage includes sheet inspection and upload for Excel/CSV/SQLite-style source files:
 

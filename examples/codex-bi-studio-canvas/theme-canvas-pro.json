@@ -1,0 +1,20 @@
+{
+  "id": "custom-rejoinbi-canvas-executivo-pro",
+  "name": "Rejoin BI Canvas Executivo Pro",
+  "description": "Tema profissional para BI Studio canvas com base escura, acentos Rejoin BI e cores semânticas.",
+  "colors": {
+    "background": "#06121F",
+    "surface": "#0B1726",
+    "surfaceAlt": "#102237",
+    "primary": "#004090",
+    "accent": "#00B8A9",
+    "success": "#25D366",
+    "warning": "#F59E0B",
+    "danger": "#EF4444",
+    "text": "#F4F7FB",
+    "muted": "#9FB6C7",
+    "border": "#24384D"
+  },
+  "radius": 8,
+  "fontFamily": "Inter, Segoe UI, Arial, sans-serif"
+}

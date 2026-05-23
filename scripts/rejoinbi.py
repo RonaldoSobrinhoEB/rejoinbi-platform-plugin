@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rejoin BI Platform helper CLI.
 
-This client talks to the existing Flask API exposed by Rejoin BI tenants.
+This client talks to the existing Flask API exposed by Rejoin BI platform environments.
 It stores cookies after login but never persists passwords or PIN values.
 """
 
@@ -274,7 +274,7 @@ def auth_error_messages(error: str) -> tuple[str, str]:
         return "", ""
     lower = clean.lower()
     if "http 401" in lower or "email ou senha" in lower or "invalid" in lower:
-        return "Email ou senha invalidos.", "Confira as credenciais do tenant e tente novamente."
+        return "Email ou senha invalidos.", "Confira as credenciais da plataforma e tente novamente."
     if "pin" in lower:
         return "Nao foi possivel validar o PIN.", "Confira o codigo informado e tente novamente."
     if "perfil" in lower or "administrador" in lower or "master" in lower:
@@ -342,10 +342,10 @@ def clean_base_url(value: str) -> str:
         raise RejoinBIError(f"Invalid base URL: {value}")
     host = parsed.hostname or parsed.netloc
     if parsed.scheme != "https" and not is_loopback_host(host):
-        raise RejoinBIError("Refusing non-HTTPS tenant URL outside localhost.")
+        raise RejoinBIError("Refusing non-HTTPS platform URL outside localhost.")
     if not is_allowed_tenant_host(host) and os.environ.get("REJOINBI_ALLOW_EXTERNAL_BASE_URL") != "1":
         raise RejoinBIError(
-            f"Refusing tenant host outside {DEFAULT_DOMAIN}: {host}. "
+            f"Refusing platform address outside {DEFAULT_DOMAIN}: {host}. "
             "Set REJOINBI_ALLOW_EXTERNAL_BASE_URL=1 only for trusted local development."
         )
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
@@ -361,7 +361,7 @@ def resolve_base_url(subdomain: str = "", domain: str = DEFAULT_DOMAIN, base_url
         active = str(config.get("active_base_url") or "").strip()
         if active:
             return clean_base_url(active)
-        raise RejoinBIError("No tenant selected. Pass --tenant subdomain.rejoinbi.com.br or run ensure first.")
+        raise RejoinBIError("No Rejoin BI platform address selected. Pass --tenant subdomain.rejoinbi.com.br or run ensure first.")
 
     if re.match(r"^https?://", sub, flags=re.I):
         return clean_base_url(sub)
@@ -426,7 +426,7 @@ def ensure_explicit_tenant_for_command(args: argparse.Namespace) -> None:
     if args_have_explicit_tenant(args) or getattr(args, "use_active_tenant", False):
         return
     raise RejoinBIError(
-        "This command can change a tenant. Pass --tenant subdomain.rejoinbi.com.br "
+        "This command can change the selected Rejoin BI platform. Pass --tenant subdomain.rejoinbi.com.br "
         "or add --use-active-tenant after explicitly checking the active session."
     )
 
@@ -719,7 +719,7 @@ def auth_html(
             <label for="pin">PIN de seguranca</label>
             <input id="pin" name="pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" autofocus required>
           </div>
-          <p class="field-note">Use o codigo exibido pelo tenant para finalizar esta sessao.</p>
+          <p class="field-note">Use o codigo exibido pela plataforma para finalizar esta sessao.</p>
           <button type="submit"><span>Concluir conexao</span></button>
         </form>
         """
@@ -1095,13 +1095,13 @@ def auth_html(
             <p class="brand-name">Plataforma Self-Hosted</p>
           </div>
         </div>
-        <div class="status-line"><span class="status-dot"></span><span>Tenant validado</span></div>
+        <div class="status-line"><span class="status-dot"></span><span>Endereco validado</span></div>
         <h1>{safe_title}</h1>
         <p class="lead">{html.escape(body)}</p>
         <div class="tenant"><span>URL conectada</span><strong>{safe_base_url}</strong></div>
         {error_block}
         {form}
-        <div class="security-note">Senha e PIN ficam somente nesta janela local. O plugin salva apenas a sessao autorizada do tenant.</div>
+        <div class="security-note">Senha e PIN ficam somente nesta janela local. O plugin salva apenas a sessao autorizada da plataforma.</div>
       </div>
     </main>
   </div>
@@ -1331,7 +1331,7 @@ def success_html(base_url: str, email: str, profile: str) -> bytes:
       <div class="success">Sessao salva com seguranca</div>
       <h1>Conectado</h1>
       <p>{safe_email} foi validado como {safe_profile}. Voce ja pode voltar ao Codex para operar workspaces, paginas, uploads e dashboards.</p>
-      <div class="tenant-link"><span>Tenant conectado</span><a href="{safe_base_url}/plataforma" target="_blank" rel="noreferrer">{safe_base_url}</a></div>
+      <div class="tenant-link"><span>Plataforma conectada</span><a href="{safe_base_url}/plataforma" target="_blank" rel="noreferrer">{safe_base_url}</a></div>
     </main>
   </div>
 </body>
@@ -1371,7 +1371,7 @@ def browser_auth_flow(args: argparse.Namespace) -> int:
 
         def render_login(self, error: str = "") -> None:
             self.send_html(auth_html(
-                title="Conectar tenant",
+                title="Conectar plataforma",
                 base_url=client.base_url,
                 state=state,
                 body="Digite seu login Rejoin BI nesta janela local. A senha e o PIN nao vao para o chat.",
@@ -1384,7 +1384,7 @@ def browser_auth_flow(args: argparse.Namespace) -> int:
                 title="Confirmar PIN",
                 base_url=client.base_url,
                 state=state,
-                body="O tenant pediu PIN. Digite o codigo para concluir a conexao do plugin.",
+                body="A plataforma pediu PIN. Digite o codigo para concluir a conexao do plugin.",
                 email=pending.get("email", ""),
                 require_pin=True,
                 error=error,
@@ -1783,7 +1783,7 @@ def cmd_ensure_connected(args: argparse.Namespace) -> int:
         "profile": identity.get("profile"),
         "profile_allowed": True,
         "auth_method": "saved_session",
-        "message": "Tenant session is already connected and allowed.",
+        "message": "Rejoin BI platform session is already connected and allowed.",
         "session_path": str(client.session_path),
     }, as_json=args.json)
     return 0
@@ -5158,7 +5158,7 @@ def bind_manifest_tenant(args: argparse.Namespace, manifest: dict[str, Any]) -> 
             )
     if explicit_base_url and tenant_host_from_base_url(explicit_base_url) != tenant_host_from_base_url(manifest_base_url):
         raise RejoinBIError(
-            "Manifest tenant does not match the command tenant: "
+            "Manifest platform address does not match the command platform address: "
             f"{tenant_host_from_base_url(manifest_base_url)} != {tenant_host_from_base_url(explicit_base_url)}"
         )
     if not explicit_base_url:
@@ -6010,7 +6010,7 @@ def cmd_api_get(args: argparse.Namespace) -> int:
 
 
 def cmd_api_post(args: argparse.Namespace) -> int:
-    require_yes(args, "api-send can mutate tenant state and requires --yes after reviewing the target path and payload.")
+    require_yes(args, "api-send can mutate the selected platform and requires --yes after reviewing the target path and payload.")
     client = make_client(args)
     payload = parse_json_payload(args)
     data, _ = client.request(args.method.upper(), args.path, json=payload, timeout=args.timeout)
@@ -6064,14 +6064,14 @@ Typical local path:
 $HOME\\plugins\\rejoinbi-platform
 ```
 
-## Configure A Tenant
+## Configure The Platform Address
 
 ```powershell
 python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
 python .\\rejoinbi-platform\\scripts\\rejoinbi.py workspaceall
 ```
 
-The `ensure` command checks for a saved tenant session first. If needed, it opens a local browser login wizard. Passwords and PINs are never saved in the package and do not need to be pasted into chat.
+The `ensure` command checks for a saved Rejoin BI session first. If needed, it opens a local browser login wizard. Passwords and PINs are never saved in the package and do not need to be pasted into chat.
 
 ## Dashboard Pattern
 
@@ -6139,11 +6139,11 @@ def cmd_export_package(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Rejoin BI Platform helper CLI")
-    parser.add_argument("--tenant", help="Full tenant host or URL, e.g. subdomain.rejoinbi.com.br")
-    parser.add_argument("--subdomain", help="Legacy tenant shorthand or host. Prefer --tenant subdomain.rejoinbi.com.br")
+    parser.add_argument("--tenant", help="Full Rejoin BI platform address or URL, e.g. subdomain.rejoinbi.com.br")
+    parser.add_argument("--subdomain", help="Legacy shorthand or host. Prefer --tenant subdomain.rejoinbi.com.br")
     parser.add_argument("--domain", default=DEFAULT_DOMAIN, help="Base domain used only for legacy short subdomains")
-    parser.add_argument("--base-url", help="Exact tenant base URL")
-    parser.add_argument("--use-active-tenant", action="store_true", help="Allow mutating commands to use the last saved active tenant")
+    parser.add_argument("--base-url", help="Exact Rejoin BI platform base URL")
+    parser.add_argument("--use-active-tenant", action="store_true", help="Allow mutating commands to use the last saved active platform address")
     parser.add_argument("--json", action="store_true", default=True, help="Print JSON output")
     parser.add_argument(
         "--allow-standard",
@@ -6157,7 +6157,7 @@ def build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument("--data-file", help="JSON payload file for POST/PUT/PATCH/DELETE actions")
 
     for name in ("connect", "login"):
-        p = sub.add_parser(name, help="Authenticate and save tenant session cookies. Opens a browser wizard if no password is provided.")
+        p = sub.add_parser(name, help="Authenticate and save Rejoin BI session cookies. Opens a browser wizard if no password is provided.")
         p.add_argument("--email")
         p.add_argument("--password")
         p.add_argument("--pin")
@@ -6169,7 +6169,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=cmd_connect)
 
     for name in ("ensure", "ensure-connected", "tenant"):
-        p = sub.add_parser(name, help="Check saved tenant session and open browser auth only if needed")
+        p = sub.add_parser(name, help="Check saved Rejoin BI session and open browser auth only if needed")
         p.add_argument("--email", help="Optional email to prefill if browser auth is needed")
         p.add_argument("--lang", default="pt-BR")
         p.add_argument("--auth-port", type=int, default=0, help="Local browser auth port. Default: random free port")
@@ -6178,7 +6178,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=cmd_ensure_connected, password=None, pin=None, terminal=False)
 
     for name in ("auth", "browser-login"):
-        p = sub.add_parser(name, help="Open a local browser login wizard and save tenant session cookies")
+        p = sub.add_parser(name, help="Open a local browser login wizard and save Rejoin BI session cookies")
         p.add_argument("--email", help="Optional email to prefill in the browser wizard")
         p.add_argument("--lang", default="pt-BR")
         p.add_argument("--auth-port", type=int, default=0, help="Local browser auth port. Default: random free port")
@@ -6479,7 +6479,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-non-ascii-routes", action="store_true", help="Allow direct publish even when BI tab slugs contain accents/non-ASCII characters")
     p.set_defaults(func=cmd_publish_bi)
 
-    p = sub.add_parser("echarts-template", help="Fetch an ECharts template from the tenant")
+    p = sub.add_parser("echarts-template", help="Fetch an ECharts template from the selected platform")
     p.add_argument("--template-id", required=True)
     p.add_argument("--output")
     p.set_defaults(func=cmd_echarts_template)
@@ -6978,7 +6978,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--missing-ok", action="store_true")
     p.set_defaults(func=cmd_delete_page)
 
-    p = sub.add_parser("resolve-page", help="Resolve a page id or route to a tenant URL")
+    p = sub.add_parser("resolve-page", help="Resolve a page id or route to a platform URL")
     p.add_argument("--page-ref", required=True)
     p.set_defaults(func=cmd_resolve_page)
 
@@ -7036,7 +7036,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-refresh-menu", action="store_true", help="Do not clear/reload menu cache while waiting")
     p.set_defaults(func=cmd_smoke_pages)
 
-    p = sub.add_parser("smoke-admin", help="Run a read-only admin API smoke test across tenant configuration areas")
+    p = sub.add_parser("smoke-admin", help="Run a read-only admin API smoke test across platform configuration areas")
     p.add_argument("--output-dir", help="Optional folder to write smoke-admin.json")
     p.add_argument("--strict", action="store_true", help="Fail when optional diagnostics are blocked or unavailable")
     p.add_argument("--timeout", type=int, default=60)
@@ -7100,7 +7100,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload["reauth_command"] = f"python scripts/rejoinbi.py --tenant {tenant_host_from_base_url(base_url)} ensure"
             except Exception:
                 payload["reauth_command"] = "python scripts/rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure"
-            payload["reauth_note"] = "Run ensure with the full tenant host to verify the session or open the browser auth wizard."
+            payload["reauth_note"] = "Run ensure with the full platform address to verify the session or open the browser auth wizard."
         print_payload(payload)
         return 1
     except KeyboardInterrupt:

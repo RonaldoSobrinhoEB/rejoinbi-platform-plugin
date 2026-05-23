@@ -1,12 +1,12 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.24",
-  "description": "Operate Rejoin BI tenants, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
+  "version": "0.4.25",
+  "description": "Operate Rejoin BI platform environments, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",
     "url": "https://github.com/RonaldoSobrinhoEB"
   },
-  "homepage": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
+  "homepage": "https://rejoinbi.com.br",
   "repository": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
   "license": "Proprietary",
   "keywords": [
@@ -23,8 +23,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Rejoin BI Platform",
-    "shortDescription": "Develop, publish, and administer Rejoin BI tenants",
-    "longDescription": "Helps Codex connect to Rejoin BI tenants, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, automate platform/admin configuration including users, pages, permissions, RLS, announcements, platform title/logos/favicon/colors, messaging, Codex keys, system tools, upload gateway, and safely preview workspace/page cleanup using the platform API. Includes a detailed agent operating playbook and RLS smoke workflow so users and Codex agents who do not know Rejoin BI can route natural language requests to the correct safe command. If a user asks to see or change the title, use platform-title for the current browser title or set-platform-branding for full branding. Before any other action, validate a full tenant host and confirm authentication/permission.",
+    "shortDescription": "Develop, publish, and administer Rejoin BI platforms",
+    "longDescription": "Helps Codex connect to the full Rejoin BI platform address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, automate platform/admin configuration including users, pages, permissions, RLS, announcements, platform title/logos/favicon/colors, messaging, Codex keys, system tools, upload gateway, and safely preview workspace/page cleanup using the platform API. Includes a detailed agent operating playbook and RLS smoke workflow so users and Codex agents who do not know Rejoin BI can route natural language requests to the correct safe command. If a user asks to see or change the title, use platform-title for the current browser title or set-platform-branding for full branding. Before any other action, validate a full platform address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
     "developerName": "Ronaldo Sobrinho",
     "category": "Engineering",
     "capabilities": [
@@ -32,11 +32,11 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
-    "privacyPolicyURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin/blob/main/docs/PRIVACY.md",
-    "termsOfServiceURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin/blob/main/docs/TERMS.md",
+    "websiteURL": "https://rejoinbi.com.br",
+    "privacyPolicyURL": "https://rejoinbi.com.br/privacy",
+    "termsOfServiceURL": "https://rejoinbi.com.br/terms",
     "defaultPrompt": [
-      "Connect to my Rejoin BI tenant",
+      "Connect to my Rejoin BI platform",
       "List Rejoin BI workspaces",
       "Inventory BI Studio and Data Engine"
     ],

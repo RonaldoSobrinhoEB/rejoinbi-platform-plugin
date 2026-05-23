@@ -1,6 +1,6 @@
 # Rejoin BI Platform Plugin
 
-Codex plugin for Rejoin BI tenants under `rejoinbi.com.br`.
+Codex plugin for Rejoin BI platform environments under `rejoinbi.com.br`.
 
 ## Codex Marketplace Compatibility
 
@@ -28,7 +28,7 @@ Correct pattern:
 - The manifest maps each page to its own `file` and `route`.
 - Visible page names may be localized with accents. Technical values (`id`, `route`, filenames) stay ASCII; for static dashboards, `route` should usually be the HTML filename without `.html`.
 
-See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`Visão RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
+See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For BI Studio canvas work, use `examples/codex-bi-studio-canvas`; it documents the professional canvas standard, Data Engine binding, Rejoin BI theme, export normalization, and Flask manifest shape for BI Studio exports. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`Visão RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
 
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
 
@@ -65,7 +65,7 @@ python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py data-engine status
 ```
 
-`ensure` first checks whether the tenant already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting tenant session cookies.
+`ensure` first checks whether the Rejoin BI platform address already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting session cookies.
 
 The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
 
@@ -77,6 +77,7 @@ These are the expected interpretations for Codex agents using this plugin:
 - "mudar logo", "favicon", "cores", "identidade visual": use `backup-platform-branding` and `set-platform-branding`.
 - "subir arquivo em uma pasta": use `upload-files --folder`.
 - "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
+- "criar dashboard no BI Studio", "canvas profissional", "Data Engine + canvas": use `examples/codex-bi-studio-canvas` as the quality bar. Build the dataset first, save a professional desktop/mobile layout, export, normalize, deploy, and smoke test.
 - "o que tem no BI Studio/Data Engine": run `studio-inventory` first. For BI exports with accents/parquet, run `bi-normalize-export` before uploading.
 - "remover workspace": run `delete-workspace` dry-run first; password-protected workspaces require validated workspace password before deletion.
 - For everything else, use `docs/agent-operating-playbook.md` as the routing source before asking questions.
@@ -88,7 +89,7 @@ $env:REJOINBI_PASSWORD = "..."
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
 
-The `examples/codex-echarts-dashboard` folder is a polished single-page ECharts signal dashboard for quick upload and rendering checks.
+The `examples/codex-echarts-dashboard` folder is a polished single-page ECharts signal dashboard for quick upload and rendering checks. The `examples/codex-bi-studio-canvas` folder is the BI Studio/Data Engine reference for professional canvas dashboards.
 
 ## Administrative Automation
 
@@ -151,6 +152,8 @@ python .\scripts\rejoinbi.py bi-normalize-export --path .\bi-export --remove-old
 
 `bi-normalize-export` is a local safety helper for BI Studio exports. It keeps display names localized, converts technical slugs/files/static folders/routes to ASCII, and adds `pyarrow>=16.0.0` when parquet Data Engine artifacts are present. After using it, upload the normalized folder, update page `arquivo`/`rota` to the ASCII values, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
+Professional BI Studio dashboards must not be treated as generic KPI dumps. Build a metric model first, bind Data Engine outputs, design each tab around a business question, and save both desktop and mobile canvas layouts. A finished BI Studio publication must pass `validate-app --strict`, have a running workspace, and show `html_ok`, `browser_route_ok`, and `menu_safe` for every platform page.
+
 For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 
 ### RLS Smoke Workflow
@@ -173,7 +176,7 @@ The RLS smoke dashboard intentionally uses fictitious local JSON so agents can v
 
 ## Safe Destructive Commands
 
-Workspace and page removal always starts as a dry-run plan. The plan includes the resolved workspace/page, parent-child-grandchild page tree, linked fictitious/hierarchy references, and verification guards. Destructive, upload, publish, and configuration commands require `--tenant subdomain.rejoinbi.com.br` unless you intentionally pass `--use-active-tenant`.
+Workspace and page removal always starts as a dry-run plan. The plan includes the resolved workspace/page, parent-child-grandchild page tree, linked fictitious/hierarchy references, and verification guards. Destructive, upload, publish, and configuration commands require the explicit platform address with `--tenant subdomain.rejoinbi.com.br` unless you intentionally pass `--use-active-tenant`.
 
 ```powershell
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
@@ -186,7 +189,7 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --pa
 
 If the plan shows the workspace is password-protected, deletion is blocked until the workspace password is passed through `--workspace-password` or `REJOINBI_WORKSPACE_PASSWORD` and validated by the platform. If the password is missing or invalid, no deletion is attempted and manual removal is required. If the plan shows pages linked from another workspace, deletion is blocked until `--allow-linked-pages` is provided. Fictitious pages cannot be deleted directly; delete the original page or workspace instead.
 
-Upload and export commands block common secret paths by default, including `.env`, private keys, token/password/credential files, local session folders, and unsafe ZIP entries. Use `--allow-sensitive-files` only after manually reviewing every file. Raw mutating API fallback through `api-send` also requires `--yes` so it cannot silently change tenant state.
+Upload and export commands block common secret paths by default, including `.env`, private keys, token/password/credential files, local session folders, and unsafe ZIP entries. Use `--allow-sensitive-files` only after manually reviewing every file. Raw mutating API fallback through `api-send` also requires `--yes` so it cannot silently change the selected platform.
 
 ## Share Package
 

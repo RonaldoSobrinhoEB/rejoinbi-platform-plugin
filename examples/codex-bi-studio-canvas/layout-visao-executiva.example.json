@@ -1,0 +1,133 @@
+{
+  "tab": "Visão Executiva",
+  "canvas": {
+    "desktop": {
+      "width": 1600,
+      "height": 1080
+    },
+    "mobile": {
+      "width": 430,
+      "height": 940
+    }
+  },
+  "theme": "custom-rejoinbi-canvas-executivo-pro",
+  "dataBindings": {
+    "datasetId": "canvas_executivo_pro",
+    "df_name": "indicadores_canvas_pro",
+    "requiredColumns": [
+      "mes",
+      "regiao",
+      "produto",
+      "receita",
+      "margem",
+      "clientes",
+      "churns",
+      "uptime_pct",
+      "nps",
+      "score_risco"
+    ]
+  },
+  "layoutIntent": [
+    "Hero title states the decision context, not a generic dashboard label.",
+    "Four KPI cards summarize business health before charts.",
+    "Trend chart explains movement over time.",
+    "Risk table names operational follow-up targets.",
+    "Filters are compact, aligned, and scoped to the tab."
+  ],
+  "components": [
+    {
+      "id": "visao-executiva-title",
+      "type": "text",
+      "x": 56,
+      "y": 32,
+      "w": 820,
+      "h": 74,
+      "content": "<h1>Visão Executiva</h1><p>Telecom executive cockpit com receita, margem, base ativa e risco operacional.</p>"
+    },
+    {
+      "id": "kpi-receita",
+      "type": "kpi",
+      "x": 56,
+      "y": 144,
+      "w": 330,
+      "h": 154,
+      "metric": "sum(receita)",
+      "format": "currency",
+      "title": "Receita Total",
+      "trend": "month_over_month"
+    },
+    {
+      "id": "kpi-margem",
+      "type": "kpi",
+      "x": 410,
+      "y": 144,
+      "w": 260,
+      "h": 154,
+      "metric": "weighted_margin_pct",
+      "format": "percent",
+      "title": "Margem Média"
+    },
+    {
+      "id": "chart-receita-margem",
+      "type": "chart",
+      "chart": "line-bar-combo",
+      "x": 56,
+      "y": 334,
+      "w": 940,
+      "h": 360,
+      "xField": "mes",
+      "series": [
+        {
+          "field": "receita",
+          "type": "bar",
+          "label": "Receita"
+        },
+        {
+          "field": "margem",
+          "type": "line",
+          "label": "Margem"
+        }
+      ]
+    },
+    {
+      "id": "table-risco",
+      "type": "table",
+      "x": 1028,
+      "y": 334,
+      "w": 516,
+      "h": 360,
+      "title": "Contas e Regiões com Risco",
+      "columns": [
+        "regiao",
+        "produto",
+        "score_risco",
+        "churns",
+        "nps"
+      ],
+      "sort": {
+        "field": "score_risco",
+        "direction": "desc"
+      }
+    },
+    {
+      "id": "filters-executivos",
+      "type": "filters",
+      "x": 1028,
+      "y": 48,
+      "w": 516,
+      "h": 250,
+      "fields": [
+        "regiao",
+        "produto",
+        "segmento",
+        "mes"
+      ]
+    }
+  ],
+  "mobileRules": [
+    "Collapse KPIs into two columns.",
+    "Place filters below the hero title.",
+    "Stack charts and tables vertically.",
+    "Keep labels visible without horizontal scrolling."
+  ]
+}

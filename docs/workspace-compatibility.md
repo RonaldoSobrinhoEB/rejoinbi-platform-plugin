@@ -85,6 +85,23 @@ After normalization and upload, update Gerenciar Paginas so visible names keep a
 
 `bi-normalize-export` also fixes known BI Studio export runtime hazards, including adding a parquet engine when needed and repairing malformed Python backslash literals such as `replace('\', '/')`.
 
+## BI Studio Canvas Quality
+
+BI Studio canvas dashboards should be built like production BI products, not quick visual drafts. Use `examples/codex-bi-studio-canvas` as the reference before saving layouts.
+
+- Start with the decision model: audience, questions, dimensions, metric formulas, and required filters.
+- Complete and finalize Data Engine datasets before layout work; do not bind components to missing or guessed fields.
+- Treat the dashboard like a data product: define fact grain, joins, dimensions, denominators, period comparison, segment rules, outlier handling, and the business action each metric should drive.
+- Build a desktop canvas around a stable grid such as `1600x1080`, then build a mobile canvas around `430x940`.
+- Use Rejoin BI visual identity: dark base, blue/teal brand accents, semantic green/amber/red, 8px radius, consistent spacing, and restrained borders.
+- Enforce accessible contrast. Primary text on dark surfaces should read as near-white; secondary text must remain legible; chart labels cannot sit on busy gradients; colored KPI strips/badges must keep text readable. Do not use low-contrast gray-on-dark, teal-on-blue, or red/green text without enough background separation.
+- Use professional typography hierarchy: one page title, concise subtitles, KPI labels smaller than KPI values, table text dense but readable, no oversized type inside compact cards, and no text clipped by cards/buttons.
+- Make every tab answer one clear question. Avoid generic tabs, duplicate KPI cards, decorative charts, and internal navigation.
+- Prefer visual forms by analytical purpose: scorecards for headline state, line/bar for trend, stacked/bar list for composition, scatter/table for risk triage, heatmap only when it improves scanning. Avoid pies with many categories, 3D effects, decorative gauges, and charts that repeat the same number already shown in a KPI.
+- After export, use a Flask manifest shape when files live in `templates/`: page `route` should be the ASCII app route, page `file` can point to `templates/<slug>.html`, and `allow_custom_route` should be true.
+- Use an ASCII smoke marker such as `canvas-root` for BI Studio templates when dynamic or encoded titles make text comparison unreliable.
+- After production upload, capture desktop and mobile screenshots in an authenticated browser. The dashboard fails QA if screenshots show raw BI Studio placeholders (`Indicador`, `Sem dados`, `Coluna A`, `Item 1`, generic `123`), blank charts, broken theme CSS, console errors, horizontal mobile overflow, or a light/default export instead of the Rejoin BI professional theme.
+
 ## API Routes
 
 - Use `/api/` for backend data endpoints.
@@ -119,4 +136,4 @@ python .\scripts\rejoinbi.py page-files --workspace <workspace-name>
 ```
 
 Use `--strict` with `validate-app` when warnings should block the publish.
-Use `page-maintenance audit-encoding --strict` when existing page labels and descriptions must be free of mojibake or `?` replacement before considering a tenant production-ready.
+Use `page-maintenance audit-encoding --strict` when existing page labels and descriptions must be free of mojibake or `?` replacement before considering a platform production-ready.

@@ -6,10 +6,10 @@ This playbook is written for Codex agents and users who do not know the Rejoin B
 
 Rejoin BI has two sides that must not be confused:
 
-- The Rejoin BI tenant/server is the source of truth. Workspaces, pages, users, permissions, branding, RLS, BI Studio projects, Data Engine assets, email/WhatsApp configuration, and uploaded files live on the server.
+- The Rejoin BI platform address/server is the source of truth. Workspaces, pages, users, permissions, branding, RLS, BI Studio projects, Data Engine assets, email/WhatsApp configuration, and uploaded files live on the server.
 - The local computer only holds the Codex plugin, login cookies, local dashboard source files before upload, generated backups, and test reports.
 
-If a command changes the tenant, it must use an explicit tenant host such as `--tenant subdomain.rejoinbi.com.br`. Do not rely on the active cached tenant for writes unless the user explicitly chooses `--use-active-tenant` after checking the session.
+If a command changes the platform, it must use the explicit platform address such as `--tenant subdomain.rejoinbi.com.br`. Do not rely on the active cached address for writes unless the user explicitly chooses `--use-active-tenant` after checking the session.
 
 ## Required First Step
 
@@ -19,13 +19,13 @@ Before any real action, confirm a connected and allowed session:
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
 ```
 
-If the user has not supplied a tenant, ask only for the full host:
+If the user has not supplied the platform address, ask only for the full address:
 
 ```text
-Envie o host completo no formato subdomain.rejoinbi.com.br.
+Envie o endereço completo da plataforma no formato subdomain.rejoinbi.com.br.
 ```
 
-Do not ask what they want to do, list features, or request email/password in chat before tenant authentication is confirmed. The browser auth wizard handles email, password, and PIN locally.
+Do not ask what they want to do, list features, or request email/password in chat before platform authentication is confirmed. The browser auth wizard handles email, password, and PIN locally.
 
 Allowed plugin profiles are `Administrador Principal`, `Master`, and `Administrador`. A login that succeeds without PIN is `Administrador Principal`, even if a later raw session payload says `Master`.
 
@@ -36,22 +36,23 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | User says | Meaning | First command | Write command | Required validation |
 | --- | --- | --- | --- | --- |
 | "o que faz", "entenda o plugin", "quais recursos tem" | Explain plugin capabilities | none after session check | none | Mention connection, workspaces, uploads, pages/routes, dashboard publishing, admin config, BI Studio/Data Engine, safe cleanup |
-| "conectar", "usar tenant", host sent | Connect to tenant | `ensure` | none | Continue only after `connected/profile_allowed` |
-| "qual titulo atual", "mudar titulo", "trocar nome da aba" | Platform browser title in Configuracao Plataforma | `platform-title` | `platform-title --title "..."` | Write needs explicit `--tenant`; automatic backup must be reported |
+| "conectar", "usar plataforma", "usar endereço", host sent | Connect to the Rejoin BI platform address | `ensure` | none | Continue only after `connected/profile_allowed` |
+| "qual titulo atual", "mudar titulo", "trocar nome da aba" | Platform browser title in Configuracao Plataforma | `platform-title` | `platform-title --title "..."` | Write needs explicit platform address in `--tenant`; automatic backup must be reported |
 | "mudar logo", "favicon", "icone", "logo do menu" | Platform branding images | `backup-platform-branding`, `platform-config` | `set-platform-branding --logo-image-file ...` | Backup path and restore command |
 | "mudar cores", "identidade visual", "tema" | Platform colors/visual identity | `colors-config`, `backup-platform-branding` | `set-platform-branding --colors-file ...` or `set-platform-config --data-file ...` | Backup path, then visual/smoke check if requested |
 | "restaurar padrao" | Restore default platform colors/config | `backup-platform-branding` | `restore-platform-config-defaults --yes` | Only use platform defaults when the user clearly asks for defaults |
 | "voltar como estava", "desfazer visual" | Restore previous backup | Identify backup path | `restore-platform-branding --backup ... --yes` | Always save pre-restore backup unless user says not to |
 | "listar workspaces", "quais workspaces tem" | Workspace inventory | `workspaceall` | none | Summarize id, name, status, password flag, last upload |
 | "o que tem nesse workspace", "listar arquivos", "pastas" | Workspace file tree | `workspace-content --workspace ...` | none | If asking page files, use `page-files` |
-| "subir arquivo X na pasta Y" | Direct file upload to workspace folder | `workspaceall`, maybe `workspace-content` | `upload-files --workspace ... --files ... --folder ...` | Explicit tenant; list folder after upload |
+| "subir arquivo X na pasta Y" | Direct file upload to workspace folder | `workspaceall`, maybe `workspace-content` | `upload-files --workspace ... --files ... --folder ...` | Explicit platform address; list folder after upload |
 | "subir zip", "subir pasta", "igual usuario subindo" | UI-like upload flow | `workspaceall` | `upload-zip-select` or `upload-folder-select` | Select startup file/mode; poll upload status |
-| "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit tenant; if password requested, pass workspace password locally |
+| "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit platform address; if password requested, pass workspace password locally |
 | "remover workspace", "excluir workspace" | Safe workspace deletion | `delete-workspace --workspace ...` dry-run | `delete-workspace --yes --confirm-name ... --confirm-id ...` | Block if password-protected until `--workspace-password` validates; check page tree |
 | "senha do workspace" | Validate/unlock protected workspace | `workspaceall` | `validate-workspace --workspace ...` or deletion with `--workspace-password` | Never delete protected workspace without platform password validation |
 | "criar pagina", "rota", "menu", "pai/filho/neto" | Gerenciar Paginas | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | `create-page`, `update-page`, `set-page-order`, `delete-page` | Use clean names with accents; technical ids/routes/files ASCII |
 | "dashboard", "painel", "ECharts", "criar 3 paginas" | Generate and publish dashboard package | Inspect local files/data; `validate-app` | `deploy-manifest` | One standalone HTML per Rejoin BI page; `smoke-pages` must pass |
 | "publicar BI", "BI Studio" | BI Studio project work | `studio-inventory`, `bi-projects` | `publish-bi` or `bi-create-project` | Project id/uid and workspace target explicit |
+| "dashboard BI Studio", "canvas profissional", "Data Engine + canvas" | Professional canvas dashboard | `studio-inventory`, inspect datasets | `bi-save-theme`, `bi-save-layout`, export/normalize/deploy | Use `examples/codex-bi-studio-canvas`; dataset completed, desktop/mobile layouts saved, smoke test passes |
 | "Data Engine", "datasets", "repositorio", "conexao banco" | Data Engine work | `studio-inventory`, then project-scoped `data-engine` read | `data-engine create-*`, `terminal-command`, `execute-code` | Project id/uid required; do not run code without user intent |
 | "usuarios", "cadastrar usuario", "editar usuario" | User admin | `users`, `sectors`, `user-presence` | `create-user`, `update-user`, `set-user-password`, `delete-user` | Profiles: Administrador Principal no PIN; others require PIN |
 | "permissoes", "acesso pagina" | Permissions | `permission-pages --permissive`, `user-permissions` | `set-user-permissions`, `recalculate-permissions` | Confirm target user/group and page permissions |
@@ -64,7 +65,7 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "email", "agendar email", "fila email" | Email manager | `email sessions`, `email groups`, `email history`, `email queue-status` | `email create-*`, `email broadcast --yes` | Never broadcast without explicit recipients/payload |
 | "whatsapp", "agendar whatsapp", "fila whatsapp" | WhatsApp manager | `whatsapp sessions`, `whatsapp groups`, `whatsapp diagnostics`, `whatsapp queue-status` | `whatsapp create-*`, `whatsapp broadcast --yes` | Session must be ready; never broadcast without explicit recipients/payload |
 | "codex keys", "chaves IA" | AI provider keys | `codex-keys stats`, `codex-keys list`, `codex-keys usage` | `codex-keys create/update/delete --yes` | Do not print secrets |
-| "sistema", "cache", "runtime", "status banco" | System diagnostics | `system-admin database-status`, `system-admin runtime-readiness`, `route-map routes` | cache/route writes with `--yes` | Tenant may return optional backend errors; report separately |
+| "sistema", "cache", "runtime", "status banco" | System diagnostics | `system-admin database-status`, `system-admin runtime-readiness`, `route-map routes` | cache/route writes with `--yes` | Platform may return optional backend errors; report separately |
 | "gateway", "upload capabilities", "python versions" | Upload gateway diagnostics | `upload-admin capabilities`, `python-versions`, `gateway-pairings` | gateway write actions with `--yes` | Confirm target pairing/action |
 | "exportar pacote do plugin" | Share plugin | local validation | `export-package` | Never include sessions/passwords/PINs |
 
@@ -149,7 +150,7 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-bra
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup C:\backup.json --yes
 ```
 
-Changing title/logos/favicon/colors affects the tenant server and persists after the local computer is formatted. Backups are local files and should be preserved if rollback matters.
+Changing title/logos/favicon/colors affects the Rejoin BI server and persists after the local computer is formatted. Backups are local files and should be preserved if rollback matters.
 
 ### Users, Groups, Permissions
 
@@ -254,17 +255,36 @@ python .\scripts\rejoinbi.py bi-normalize-export --path C:\path\extracted-bi-exp
 
 Project-scoped Data Engine endpoints require `--project-id`, `--project-uid`, or a JSON payload containing `project_id` or `project_uid`. The plugin can resolve known `project_uid` values through BI Studio inventory.
 
-Data Engine repository uploads support CSV, Excel, SQLite, and other files accepted by the tenant. For Excel files, run `repository-inspect-sheets` first, then pass one or more `--selected-sheet` values. The upload command blocks sensitive-looking files such as `.env`, keys, certificates, tokens, and password-named files unless `--allow-sensitive-files` is explicitly provided after manual review.
+Data Engine repository uploads support CSV, Excel, SQLite, and other files accepted by the platform. For Excel files, run `repository-inspect-sheets` first, then pass one or more `--selected-sheet` values. The upload command blocks sensitive-looking files such as `.env`, keys, certificates, tokens, and password-named files unless `--allow-sensitive-files` is explicitly provided after manual review.
 
 Save all BI Studio/Data Engine JSON/code payloads as UTF-8. The CLI rejects strings that look like replaced accents or mojibake (`Vis?o`, `Cr?tico`, byte sequence `Vis\u00c3\u00a3o`) before they can create wrong tabs, filters, materialized datasets, or canvas labels.
 
 Notebook and finalize payloads are strict. `save-notebook-state` expects a list of cell objects, not an object wrapper. `finalize-dataset` with scoped output expects `dataframe_names` items shaped like `{"dataset_id":"Dataset","name":"df_name","cell_id":"cell-id"}`. Plain `"df_name"` can fail when `require_scoped_df` is true.
 
+#### Professional Canvas Standard
+
+Use `examples/codex-bi-studio-canvas` before creating any BI Studio dashboard. A professional canvas starts with a decision model, not with random widgets:
+
+- Define audience, business questions, metric grain, dimensions, and derived metrics.
+- Complete the Data Engine dataset first; every KPI, chart, table, and filter should bind to a known dataframe and field.
+- Work like a data specialist: define grain, joins, denominators, source-of-truth fields, refresh assumptions, trend windows, benchmark/target rules, and segment definitions before creating visuals.
+- Every metric needs a formula and interpretation. If a KPI cannot explain status, trend, variance, risk, or an action, remove or replace it.
+- Use visible tab/page names in the user's language with accents, such as `Visão Executiva`, but keep technical slugs, filenames, routes, dataset ids, and component ids ASCII.
+- Design desktop around a stable grid such as `1600x1080`, then create a separate mobile arrangement around `430x940`.
+- Use the Rejoin BI identity: dark base, blue/teal brand accents, semantic green/amber/red, 8px radius, restrained borders, and enough whitespace for scanability.
+- Enforce contrast and readability: near-white primary text on dark panels, legible muted text, clear chart labels, no gray-on-dark haze, no teal-on-blue text, no red/green meaning without separation, and no text clipped by cards, buttons, tables, or KPI panels.
+- Use UI hierarchy deliberately: title and executive intent first, then KPIs, diagnostic charts, ranked tables, recommendations, and filters. Keep controls compact; reserve large type for page-level messages.
+- Give each tab one job: executive health, financial performance, customer retention, operations/SLA, or another explicit business question.
+- Avoid generic placeholder labels, repeated card shapes without hierarchy, excessive gradients, internal menus, vanity metrics, chart junk, and charts that do not answer a question.
+- Choose charts by analytical job: trend, comparison, composition, distribution, ranking, exception/risk, or relationship. Do not use decorative gauges, 3D charts, overloaded pies, or duplicate KPI values as full charts.
+- After export, run `bi-normalize-export --remove-old`, remove upload-noise folders such as `venv`, create `rejoinbi-app.json` with `startup_mode: "file"` and `selected_file: "app.py"`, then deploy with platform pages mapped to ASCII routes.
+- After deploy, visual QA is mandatory. Capture authenticated desktop and mobile screenshots for every page, then reject any page with BI Studio placeholders (`Indicador`, `Sem dados`, `Coluna A`, `Item 1`, generic `123`), blank charts, broken styling, console errors, horizontal mobile overflow, or a default light export. If the export renderer ignored the intended canvas, fix the package with a production-safe template/static layer or regenerate the canvas before marking it done.
+
 For BI Studio publication, `publish-bi` now performs a post-publish workspace runtime check. It fails the command when runtime logs contain `SyntaxError`, a Python traceback, missing parquet engines (`pyarrow`/`fastparquet`), or missing materialized DataFrames. If the BI export contains parquet files, make sure `requirements.txt` includes `pyarrow>=16.0.0` or `fastparquet`.
 
 Direct `publish-bi` also blocks BI projects whose technical tab slugs contain accents/non-ASCII characters. This prevents the platform from creating workspace files/routes such as `visão-360` or `rls-usuário` that can later confuse Gerenciar Paginas. The correct production path is: export, extract, `bi-normalize-export --remove-old`, upload normalized folder, create platform pages with accented visible names but ASCII `file/route`, then `smoke-pages`. `bi-normalize-export` also fixes known malformed BI export Python literals such as `replace('\', '/')`, and `validate-app` compiles `app.py/main.py` before deploy.
 
-BI Studio tab display names may be localized with accents, but the exported slug, template filename, static folder, router filename, platform `arquivo`, and platform `rota` must be ASCII. If the tenant export produced slugs such as `visão-geral` or `rls-usuário`, run `bi-normalize-export --path <extracted-export> --remove-old`, upload the normalized folder, update platform pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
+BI Studio tab display names may be localized with accents, but the exported slug, template filename, static folder, router filename, platform `arquivo`, and platform `rota` must be ASCII. If the export produced slugs such as `visão-geral` or `rls-usuário`, run `bi-normalize-export --path <extracted-export> --remove-old`, upload the normalized folder, update platform pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
 ### System, Audit, Upload Gateway, Codex Keys
 
@@ -283,11 +303,11 @@ python .\scripts\rejoinbi.py codex-keys list
 python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50
 ```
 
-Treat system errors as tenant/backend diagnostics unless required checks fail.
+Treat system errors as platform/backend diagnostics unless required checks fail.
 
 ## Safety Rules
 
-- Never ask for tenant password or PIN in chat by default. Use browser auth.
+- Never ask for platform password or PIN in chat by default. Use browser auth.
 - Never run mutating commands without explicit `--tenant`.
 - Never delete password-protected workspaces without validating the workspace password through the platform.
 - Never delete pages/workspaces before showing the dry-run plan.
@@ -295,9 +315,11 @@ Treat system errors as tenant/backend diagnostics unless required checks fail.
 - Never print secrets from Codex keys, DB connections, tokens, cookies, passwords, or connection strings.
 - Never upload or export `.env`, key, token, credential, session, or backup files unless the user explicitly accepts the security risk.
 - Never call a dashboard complete until `validate-app`, `deploy-manifest`, and `smoke-pages` pass.
+- Never call a BI Studio canvas complete until the workspace is running and every page has `html_ok`, `browser_route_ok`, and `menu_safe` true.
+- Never call a BI Studio/Data Engine dashboard professional until screenshots prove the published pages are polished on desktop and mobile, with no placeholders, no blank visuals, no console errors, and no horizontal overflow.
 - Never make a dashboard with its own internal page menu when Rejoin BI pages should manage navigation.
-- Never use customer tenant names as generic examples. Use `subdomain.rejoinbi.com.br`.
-- Never let one tenant's cached session drive writes to another tenant.
+- Never use customer platform names as generic examples. Use `subdomain.rejoinbi.com.br`.
+- Never let one platform address's cached session drive writes to another platform address.
 
 ## Response Patterns
 
@@ -306,7 +328,7 @@ When answering a user, prefer concrete state over vague capabilities.
 Good:
 
 ```text
-Conectado ao tenant. O titulo atual da plataforma e "Grupo ADN BI". Para mudar, me diga o novo titulo; vou salvar backup antes.
+Conectado ao endereço da plataforma. O titulo atual da plataforma e "Grupo ADN BI". Para mudar, me diga o novo titulo; vou salvar backup antes.
 ```
 
 Good:
@@ -332,7 +354,7 @@ O plugin pode listar workspaces, publicar dashboards e gerenciar configuracoes.
 Before saying a task is finished:
 
 - Auth/session is valid and allowed.
-- Tenant used for writes was explicit.
+- Platform address used for writes was explicit.
 - Any backup path was reported.
 - Any destructive dry-run plan was reviewed.
 - Any upload/deploy was verified by listing content or smoke test.

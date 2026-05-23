@@ -1,0 +1,65 @@
+{
+  "language": "pt-BR",
+  "app_root": ".",
+  "replace_pages": true,
+  "workspace": {
+    "name": "canvas-executivo-pro",
+    "create": true,
+    "description": "BI Studio canvas profissional com Data Engine, rotas ASCII e nomes visíveis localizados."
+  },
+  "upload": {
+    "startup_mode": "file",
+    "selected_file": "app.py",
+    "auto_start": true,
+    "exclude": [
+      ".git",
+      "venv",
+      ".venv",
+      "__pycache__",
+      "node_modules",
+      ".pytest_cache"
+    ]
+  },
+  "pages": [
+    {
+      "id": "canvas-executivo-visao-executiva",
+      "name": "Visão Executiva",
+      "route": "visao-executiva",
+      "file": "templates/visao-executiva.html",
+      "allow_custom_route": true,
+      "icon": "fas fa-gauge-high",
+      "description": "Resumo executivo com KPIs, tendência, risco e filtros.",
+      "expect_text": "canvas-root"
+    },
+    {
+      "id": "canvas-executivo-receita-margem",
+      "name": "Receita e Margem",
+      "route": "receita-margem",
+      "file": "templates/receita-margem.html",
+      "allow_custom_route": true,
+      "icon": "fas fa-chart-line",
+      "description": "Análise financeira por produto, canal e região.",
+      "expect_text": "canvas-root"
+    },
+    {
+      "id": "canvas-executivo-clientes-churn",
+      "name": "Clientes e Churn",
+      "route": "clientes-churn",
+      "file": "templates/clientes-churn.html",
+      "allow_custom_route": true,
+      "icon": "fas fa-users",
+      "description": "Retenção, NPS e risco de perda por segmento.",
+      "expect_text": "canvas-root"
+    },
+    {
+      "id": "canvas-executivo-rede-sla",
+      "name": "Rede e SLA",
+      "route": "rede-sla",
+      "file": "templates/rede-sla.html",
+      "allow_custom_route": true,
+      "icon": "fas fa-network-wired",
+      "description": "Disponibilidade, SLA, tickets e saúde operacional.",
+      "expect_text": "canvas-root"
+    }
+  ]
+}
