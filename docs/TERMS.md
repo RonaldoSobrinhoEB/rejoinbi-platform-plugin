@@ -1,6 +1,6 @@
 # Terms of Use
 
-Rejoin BI Platform is provided as a Codex plugin for authenticated administration and development workflows on Rejoin BI platform environments.
+Rejoin BI is provided as a Codex plugin for authenticated administration and development workflows on Rejoin BI environments.
 
 ## User responsibility
 

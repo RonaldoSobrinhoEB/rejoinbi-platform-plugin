@@ -1,4 +1,4 @@
-# Rejoin BI Platform Plugin
+# Rejoin BI Plugin
 
 Codex plugin for Rejoin BI platform environments under `rejoinbi.com.br`.
 

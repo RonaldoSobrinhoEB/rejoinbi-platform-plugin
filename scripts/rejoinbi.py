@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rejoin BI Platform helper CLI.
+"""Rejoin BI helper CLI.
 
 This client talks to the existing Flask API exposed by Rejoin BI platform environments.
 It stores cookies after login but never persists passwords or PIN values.
@@ -3790,7 +3790,7 @@ def payload_has_project_reference(payload: Any) -> bool:
 
 
 SENSITIVE_INVENTORY_KEY_RE = re.compile(
-    r"(password|senha|secret|token|credential|connection[_-]?string|conn[_-]?str|api[_-]?key|access[_-]?key|private[_-]?key)",
+    r"(password|senha|secret|token|credential|cookie|session|connection[_-]?string|conn[_-]?str|api[_-]?key|access[_-]?key|private[_-]?key)",
     flags=re.I,
 )
 INVENTORY_COLLECTION_KEYS = (
@@ -4688,7 +4688,7 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         "save-notebook-state": lambda: ("POST", f"{base}/api/datasets/notebook-state/save", True),
         "finalize-dataset": lambda: ("POST", f"{base}/api/datasets/finalize", True),
         "toggle-visibility": lambda: ("POST", f"{base}/api/datasets/toggle-visibility", True),
-        "execute-code": lambda: ("POST", f"{base}/api/execute_code", False),
+        "execute-code": lambda: ("POST", f"{base}/api/execute_code", True),
         "agent-mine": lambda: ("POST", f"{base}/api/agent/mine", False),
         "chat": lambda: ("POST", f"{base}/api/chat", False),
         "load-chat": lambda: ("GET", f"{base}/api/load-chat", False),
@@ -6011,9 +6011,16 @@ def cmd_api_get(args: argparse.Namespace) -> int:
 
 def cmd_api_post(args: argparse.Namespace) -> int:
     require_yes(args, "api-send can mutate the selected platform and requires --yes after reviewing the target path and payload.")
+    method = args.method.upper()
+    path_only = urlparse(args.path).path or args.path
+    if method == "DELETE" and re.match(r"^/plataforma/api/containers/[^/]+/?$", path_only):
+        raise RejoinBIError(
+            "api-send cannot delete workspaces directly. Use delete-workspace so the official plugin preserves "
+            "dry-run output, workspace password validation, and explicit name/id confirmation."
+        )
     client = make_client(args)
     payload = parse_json_payload(args)
-    data, _ = client.request(args.method.upper(), args.path, json=payload, timeout=args.timeout)
+    data, _ = client.request(method, args.path, json=payload, timeout=args.timeout)
     print_payload(scrub_sensitive(data), as_json=args.json)
     return 0
 
@@ -6048,7 +6055,7 @@ def should_ignore_export(dir_path: str, names: list[str]) -> set[str]:
 
 def write_install_notes(target: Path, package_zip: Path | None) -> None:
     zip_line = f"- Zip package with manifest at zip root: `{package_zip.name}`\n" if package_zip else ""
-    notes = f"""# Rejoin BI Platform Plugin
+    notes = f"""# Rejoin BI Plugin
 
 This folder is a shareable Codex plugin package generated from:
 
@@ -6138,7 +6145,7 @@ def cmd_export_package(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Rejoin BI Platform helper CLI")
+    parser = argparse.ArgumentParser(description="Rejoin BI helper CLI")
     parser.add_argument("--tenant", help="Full Rejoin BI platform address or URL, e.g. subdomain.rejoinbi.com.br")
     parser.add_argument("--subdomain", help="Legacy shorthand or host. Prefer --tenant subdomain.rejoinbi.com.br")
     parser.add_argument("--domain", default=DEFAULT_DOMAIN, help="Base domain used only for legacy short subdomains")

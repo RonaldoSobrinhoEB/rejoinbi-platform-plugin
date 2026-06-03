@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Rejoin BI Platform is a Codex plugin for operating Rejoin BI platform addresses selected by the user.
+Rejoin BI is a Codex plugin for operating Rejoin BI addresses selected by the user.
 
 ## Data handled by the plugin
 

@@ -3,7 +3,7 @@ name: rejoinbi-platform
 description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload dashboard/app files, publish BI/ECharts projects, operate BI Studio/Data Engine, and create production-grade data dashboards with specialist data modeling and UI/UX quality rules.
 ---
 
-# Rejoin BI Platform
+# Rejoin BI
 
 Use this skill when the user wants to work with a Rejoin BI platform address under `rejoinbi.com.br`, list or unlock workspaces, upload dashboard/app files, publish a BI Studio project, or build an ECharts dashboard for deployment.
 
