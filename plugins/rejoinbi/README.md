@@ -11,7 +11,7 @@ This repository is a root plugin artifact, matching the structure used by Codex 
 - `scripts/`
 - `docs/`
 - `examples/`
-- `assets/app-icon.svg`
+- `assets/app-icon.png`
 
 Submit it as artifact type `PLUGIN`, branch `main`, with sparse path empty or `.`. Do not submit it as a marketplace wrapper. See `docs/MARKETPLACE_SUBMISSION.md` for the local validation checklist.
 

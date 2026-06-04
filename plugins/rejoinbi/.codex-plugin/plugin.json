@@ -41,8 +41,8 @@
       "Inventory BI Studio and Data Engine"
     ],
     "brandColor": "#004090",
-    "composerIcon": "./assets/app-icon.svg",
-    "logo": "./assets/app-icon.svg",
+    "composerIcon": "./assets/app-icon.png",
+    "logo": "./assets/app-icon.png",
     "screenshots": []
   }
 }

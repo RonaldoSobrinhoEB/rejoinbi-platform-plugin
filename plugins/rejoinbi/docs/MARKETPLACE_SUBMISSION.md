@@ -32,8 +32,8 @@ plugins/rejoinbi/.codex-plugin/plugin.json
 - Manifest uses strict semantic versioning.
 - Manifest includes `homepage`, `repository`, `license`, `keywords`, and interface metadata aligned with Codex plugin conventions.
 - `defaultPrompt` contains three concise prompts.
-- Icon and logo use text SVG under `assets/app-icon.svg`.
-- No binary image assets are required for marketplace recognition.
+- Icon and logo use the real Rejoin BI PNG icon under `assets/app-icon.png`.
+- No SVG fallback is shipped for the marketplace icon.
 - The plugin validates with `plugin-creator/scripts/validate_plugin.py`.
 
 ## Local validation

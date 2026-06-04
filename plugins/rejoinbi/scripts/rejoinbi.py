@@ -687,7 +687,7 @@ def auth_html(
     safe_base_url = html.escape(base_url)
     safe_state = html.escape(state)
     safe_email = html.escape(email)
-    logo_uri = plugin_asset_data_uri("app-icon.svg") or plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
+    logo_uri = plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
     logo_markup = f'<img src="{logo_uri}" alt="" class="brand-logo">' if logo_uri else '<span class="brand-fallback">RJ</span>'
     favicon_link = f'<link rel="icon" href="{logo_uri}">' if logo_uri else ""
     error_title, error_detail = auth_error_messages(error)
@@ -1114,7 +1114,7 @@ def success_html(base_url: str, email: str, profile: str) -> bytes:
     safe_base_url = html.escape(base_url)
     safe_email = html.escape(email)
     safe_profile = html.escape(profile or "perfil validado")
-    logo_uri = plugin_asset_data_uri("app-icon.svg") or plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
+    logo_uri = plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
     logo_markup = f'<img src="{logo_uri}" alt="" class="brand-logo">' if logo_uri else '<span class="brand-fallback">RJ</span>'
     favicon_link = f'<link rel="icon" href="{logo_uri}">' if logo_uri else ""
     page = f"""<!doctype html>
