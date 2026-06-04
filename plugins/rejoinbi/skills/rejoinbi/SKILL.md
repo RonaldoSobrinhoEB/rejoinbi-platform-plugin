@@ -1,5 +1,5 @@
 ---
-name: rejoinbi-platform
+name: rejoinbi
 description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload dashboard/app files, publish BI/ECharts projects, operate BI Studio/Data Engine, and create production-grade data dashboards with specialist data modeling and UI/UX quality rules.
 ---
 
@@ -90,10 +90,10 @@ Never use a real-looking customer address in examples or assistant text. Do not 
 When a user provides a full platform address/URL, use it immediately and run the ensure flow without asking for password or PIN in chat:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
 ```
 
-This first checks whether the platform address already has a saved session and validates that the profile is `Administrador Principal`, `Master`, or `Administrador`. If the session is missing, expired, or not allowed, it opens a local browser page, prefilled with the resolved platform URL, where the user enters email, password, and PIN if required. The helper posts to the Rejoin BI login API, validates the profile, then saves only the session cookies in `%USERPROFILE%\.rejoinbi-platform`.
+This first checks whether the platform address already has a saved session and validates that the profile is `Administrador Principal`, `Master`, or `Administrador`. If the session is missing, expired, or not allowed, it opens a local browser page, prefilled with the resolved platform URL, where the user enters email, password, and PIN if required. The helper posts to the Rejoin BI login API, validates the profile, then saves only the session cookies in `%USERPROFILE%\.rejoinbi`.
 
 Continue only after `success: true`, `connected: true`, and `profile_allowed: true` are confirmed. Only after that may you mention listing workspaces, publishing dashboards, uploading files, creating pages, or other plugin actions.
 
@@ -103,7 +103,7 @@ Use the older terminal/API auth only when the user explicitly asks for automatio
 
 ```powershell
 $env:REJOINBI_PASSWORD = "..."
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
 
 ## Script
@@ -111,7 +111,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 Use the bundled client:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --help
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --help
 ```
 
 The platform address is resolved as:
@@ -129,52 +129,52 @@ Do not ask the user to paste passwords or PINs into chat unless they explicitly 
 ```powershell
 $env:REJOINBI_PASSWORD = "..."
 $env:REJOINBI_PIN = "123456"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
 
-The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-platform`. It does not save the password or PIN.
+The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi`. It does not save the password or PIN.
 
 Administrative configuration shortcuts:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-user --user user@example.com --name "Nome" --setor "Comercial" --perfil Administrador
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-permissions --user user@example.com --permissions "workspace,paginas"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" groups
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-group --name Comercial --permissions "workspace,paginas"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" announcements
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-announcement --title "Aviso" --message "Mensagem" --all
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" platform-config
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br backup-platform-branding
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br platform-title
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br platform-title --title "Minha BI"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file C:\path\logo.png --logo-menu-image-file C:\path\logo-menu.png --favicon-image-file C:\path\favicon.png
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup C:\path\backup.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" ai-config --page-id pagina-id
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" storage-path
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" audit dashboard
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance verify-hierarchy
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" page-maintenance audit-encoding
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls pages
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls page-config --page-id pagina-id --container-id 12
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" rls test-config --page-id pagina-id --container-id 12
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" email sessions
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" whatsapp sessions
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" codex-keys list
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" upload-admin capabilities
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" system-admin database-status
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" route-map routes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" smoke-admin --output-dir C:\path\smoke-admin
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" studio-inventory --output C:\path\bi-data-inventory.json
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-tabs --project-id 1
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-create-tab --project-id 1 --name "Visão 360" --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-save-layout --project-id 1 --tab "Visão 360" --data-file C:\path\layout.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-load-layout --project-id 1 --tab "Visão 360"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-save-theme --project-id 1 --data-file C:\path\theme.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine db-connections --project-id 1
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" data-engine repository-inspect-sheets --file C:\path\dados.xlsx
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file C:\path\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-normalize-export --path C:\path\bi-export --remove-old
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" users
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-user --user user@example.com --name "Nome" --setor "Comercial" --perfil Administrador
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-permissions --user user@example.com --permissions "workspace,paginas"
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" groups
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-group --name Comercial --permissions "workspace,paginas"
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" announcements
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-announcement --title "Aviso" --message "Mensagem" --all
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" platform-config
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br backup-platform-branding
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br platform-title
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br platform-title --title "Minha BI"
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file C:\path\logo.png --logo-menu-image-file C:\path\logo-menu.png --favicon-image-file C:\path\favicon.png
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup C:\path\backup.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" ai-config --page-id pagina-id
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" storage-path
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" audit dashboard
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" page-maintenance verify-hierarchy
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" page-maintenance audit-encoding
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" rls pages
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" rls page-config --page-id pagina-id --container-id 12
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" rls test-config --page-id pagina-id --container-id 12
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" email sessions
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" whatsapp sessions
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" codex-keys list
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" upload-admin capabilities
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" system-admin database-status
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" route-map routes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" smoke-admin --output-dir C:\path\smoke-admin
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" studio-inventory --output C:\path\bi-data-inventory.json
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" bi-tabs --project-id 1
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-create-tab --project-id 1 --name "VisÃ£o 360" --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-save-layout --project-id 1 --tab "VisÃ£o 360" --data-file C:\path\layout.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" bi-load-layout --project-id 1 --tab "VisÃ£o 360"
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-save-theme --project-id 1 --data-file C:\path\theme.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" data-engine db-connections --project-id 1
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" data-engine repository-inspect-sheets --file C:\path\dados.xlsx
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file C:\path\dados.xlsx --folder codex --selected-sheet "VisÃ£o Geral" --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" bi-normalize-export --path C:\path\bi-export --remove-old
 ```
 
 `smoke-admin` is read-only and useful after plugin changes or platform upgrades. For BI Studio/Data Engine work, run `studio-inventory` first. It is read-only, links projects to Data Engine resources, and redacts password, token, key, secret, credential, and connection-string fields. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
@@ -182,13 +182,13 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-normalize-export
 For configuration payloads with many fields, use JSON files instead of ad hoc chat text:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br email create-group --data-file C:\path\email-group.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br whatsapp create-group --data-file C:\path\whatsapp-group.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --data-file C:\path\rls-config.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --data-file C:\path\rls-page-mapping.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br sleep-manager set-config --data-file C:\path\sleep-config.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br codex-keys create --data-file C:\path\codex-key.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine create-db-connection --data-file C:\path\db-connection.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br email create-group --data-file C:\path\email-group.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br whatsapp create-group --data-file C:\path\whatsapp-group.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --data-file C:\path\rls-config.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --data-file C:\path\rls-page-mapping.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br sleep-manager set-config --data-file C:\path\sleep-config.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br codex-keys create --data-file C:\path\codex-key.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine create-db-connection --data-file C:\path\db-connection.json --yes
 ```
 
 The CLI accepts JSON files saved with UTF-8 BOM, which is common when payloads are generated by Windows tooling.
@@ -215,7 +215,7 @@ BI Studio publish rule: `publish-bi` performs post-publish runtime validation. I
 
 BI Studio route safety rule: direct `publish-bi` blocks projects whose technical tab slugs contain accents/non-ASCII characters, because those slugs become workspace files/routes and can produce broken platform pages. Keep visible tab/page names localized with accents, but before production deployment export the BI project, run `bi-normalize-export --remove-old`, upload the normalized folder, create pages with ASCII `file/route`, and run `smoke-pages`.
 
-BI Studio routing rule: visible tab/page names may contain accents, but technical workspace files must be ASCII. If an export has `visão-geral.html`, `rls-usuário.html`, matching static folders, matching manifest slugs, or an invalid Python literal such as `replace('\', '/')`, run `bi-normalize-export --path <export> --remove-old`, upload the normalized folder, update pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
+BI Studio routing rule: visible tab/page names may contain accents, but technical workspace files must be ASCII. If an export has `visÃ£o-geral.html`, `rls-usuÃ¡rio.html`, matching static folders, matching manifest slugs, or an invalid Python literal such as `replace('\', '/')`, run `bi-normalize-export --path <export> --remove-old`, upload the normalized folder, update pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
 Page text integrity rule: `create-page` and `update-page` block corrupted visible text and block non-ASCII technical `file/route` values. After working on older platform environments or after a weak model changed page text, run `page-maintenance audit-encoding`; if it reports issues, fix each exact page id with `update-page` using UTF-8 names/descriptions and ASCII routes/files.
 
@@ -224,7 +224,7 @@ Page text integrity rule: `create-page` and `update-page` block corrupted visibl
 Connect:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
 ```
 
 If the API asks for PIN, the browser wizard shows a PIN field and completes the session in the same flow.
@@ -232,46 +232,46 @@ If the API asks for PIN, the browser wizard shows a PIN field and completes the 
 List workspaces:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" workspaceall
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" workspaceall
 ```
 
 List users and pages:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" pages --all-containers
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" accessible-pages
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" users
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" pages --all-containers
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" accessible-pages
 ```
 
 Create test users and set passwords through the admin endpoint:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-user --email codex-test@example.com --name "Codex Test Master" --perfil Master --setor Codex
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-user --email codex-test@example.com --name "Codex Test Master" --perfil Master --setor Codex
 $env:REJOINBI_NEW_PASSWORD = "..."
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-password --user codex-test@example.com
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-password --user codex-test@example.com
 ```
 
 Create a workspace and an attached page:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-workspace --name codex-test-dashboard
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-page --workspace codex-test-dashboard --name "Painel Codex" --file painel-codex.html --route painel-codex
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-workspace --name codex-test-dashboard
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-page --workspace codex-test-dashboard --name "Painel Codex" --file painel-codex.html --route painel-codex
 ```
 
 Update, delete, or resolve pages:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-page --page-id codex-test-dashboard --name "Painel Atualizado" --route painel-atualizado
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br resolve-page --page-ref painel-atualizado
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-test-dashboard-v2
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-test-dashboard-v2 --yes --confirm-page-id codex-test-dashboard-v2 --cascade
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-page --page-id codex-test-dashboard --name "Painel Atualizado" --route painel-atualizado
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br resolve-page --page-ref painel-atualizado
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-test-dashboard-v2
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-test-dashboard-v2 --yes --confirm-page-id codex-test-dashboard-v2 --cascade
 ```
 
 Delete a workspace only after reviewing the dry-run tree:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-test-dashboard
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-test-dashboard --yes --confirm-name codex-test-dashboard --confirm-id 12
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-test-dashboard
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-test-dashboard --yes --confirm-name codex-test-dashboard --confirm-id 12
 ```
 
 For destructive commands, never skip the preview. Confirm exact resolved ids/names, check parent-child-grandchild trees, and block cross-workspace linked pages unless the user explicitly intends that with `--allow-linked-pages`. For a password-protected workspace, only delete through the plugin when the user provides the workspace password and the platform validates it through `validate-container-password`; otherwise tell the user the plugin cannot remove it and manual removal in Rejoin BI is required.
@@ -279,25 +279,25 @@ For destructive commands, never skip the preview. Confirm exact resolved ids/nam
 Unlock a protected workspace:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br validate-workspace --workspace 12
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br validate-workspace --workspace 12
 ```
 
 Upload a folder like the UI and choose startup options:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start
 ```
 
 Upload a ZIP like the UI:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-zip-select --workspace 12 --zip C:\path\dashboard.zip --selected-file app.py --startup-mode file --auto-start
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-zip-select --workspace 12 --zip C:\path\dashboard.zip --selected-file app.py --startup-mode file --auto-start
 ```
 
 Publish a BI Studio project to a workspace:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br publish-bi --project-id vendas-2026 --workspace 12
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br publish-bi --project-id vendas-2026 --workspace 12
 ```
 
 ## Manifest Deployment
@@ -322,23 +322,23 @@ Minimal manifest:
   "pages": [
     {
       "id": "codex-suite-overview",
-      "name": "Visão Geral",
+      "name": "VisÃ£o Geral",
       "route": "visao-geral",
       "file": "visao-geral.html",
       "description": "Painel executivo"
     },
     {
       "id": "codex-suite-forms",
-      "name": "Formulários",
+      "name": "FormulÃ¡rios",
       "route": "formularios",
       "file": "formularios.html",
-      "description": "Formulários e cenários"
+      "description": "FormulÃ¡rios e cenÃ¡rios"
     }
   ]
 }
 ```
 
-Keep page names clean and localized for the menu. In pt-BR, use accents in `name` (`Visão Geral`, `Operações`, `Configuração`, `Métricas`) while keeping `id`, `route`, and `file` ASCII. Put workspace/client prefixes in `id`; for static dashboards, make `route` equal to the HTML file path without `.html` unless there is a deliberate custom route. The deploy helper creates the technical page id first and then restores the clean display name, because the platform generates new page ids from the creation name.
+Keep page names clean and localized for the menu. In pt-BR, use accents in `name` (`VisÃ£o Geral`, `OperaÃ§Ãµes`, `ConfiguraÃ§Ã£o`, `MÃ©tricas`) while keeping `id`, `route`, and `file` ASCII. Put workspace/client prefixes in `id`; for static dashboards, make `route` equal to the HTML file path without `.html` unless there is a deliberate custom route. The deploy helper creates the technical page id first and then restores the clean display name, because the platform generates new page ids from the creation name.
 
 When generating manifests on Windows, write `rejoinbi-app.json` as a UTF-8 file (or let Python/JSON escape accents) instead of passing accented labels through a PowerShell command string. Run `validate-app` before any deploy; it must fail if visible text contains corrupted markers such as `Vis?o`, `Opera??es`, or mojibake byte sequences such as `Vis\u00c3\u00a3o`.
 
@@ -346,9 +346,9 @@ Deploy, replace existing page definitions if needed, then smoke test every route
 
 ```powershell
 $env:REJOINBI_WORKSPACE_PASSWORD = "..."
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" validate-app --manifest C:\path\rejoinbi-app.json
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --create-workspace --replace-pages
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br smoke-pages --manifest C:\path\rejoinbi-app.json
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" validate-app --manifest C:\path\rejoinbi-app.json
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --create-workspace --replace-pages
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br smoke-pages --manifest C:\path\rejoinbi-app.json
 ```
 
 Treat deploy as incomplete if `page_readiness.success` or `smoke-pages.success` is false. The platform browser menu requires every client page in `/plataforma/api/accessible-pages` to include `container_name`; if it is missing, older menu code can temporarily fall back to `container_<id>` and open a 404 URL. Do not tell the user production is ready until `container_name`, `browser_route_ok`, and `menu_safe` are all true.
@@ -365,14 +365,14 @@ The plugin includes two examples:
 Use `examples/codex-rls-suite` whenever you need to verify RLS, page permissions, PIN behavior, or route creation:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" validate-app --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file C:\path\rls-config.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file C:\path\rls-page-mapping.json --yes
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" validate-app --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file C:\path\rls-config.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file C:\path\rls-page-mapping.json --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12
 ```
 
-For end-to-end standard-user tests, open `https://pt.emailfake.com/channel1/` first and copy the generated mailbox. Create the Rejoin BI user with that exact address, then read the welcome e-mail in that same mailbox to get the provisional password. The first login for non-Administrador-Principal users must trigger a PIN e-mail; read that PIN from the mailbox and complete the login. Use `--allow-standard` only in this test. Expected security result: `status` shows `profile: Usuário` and `plugin_profile_allowed: false`, admin commands are rejected by the plugin, `accessible-pages` returns only explicitly granted pages, and `rls test-config` returns only that user's allowed dimension values.
+For end-to-end standard-user tests, open `https://pt.emailfake.com/channel1/` first and copy the generated mailbox. Create the Rejoin BI user with that exact address, then read the welcome e-mail in that same mailbox to get the provisional password. The first login for non-Administrador-Principal users must trigger a PIN e-mail; read that PIN from the mailbox and complete the login. Use `--allow-standard` only in this test. Expected security result: `status` shows `profile: UsuÃ¡rio` and `plugin_profile_allowed: false`, admin commands are rejected by the plugin, `accessible-pages` returns only explicitly granted pages, and `rls test-config` returns only that user's allowed dimension values.
 
 The smoke page proves platform wiring, not confidentiality of bundled static data. If a user asks for production RLS with sensitive data, generate or call a server endpoint that applies `/plataforma/api/rls/config` on the server side before returning rows.
 
@@ -405,7 +405,7 @@ The Workspace screen documents the platform's preferred project patterns. Apply 
 Use the local validator before upload:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" validate-app --manifest C:\path\rejoinbi-app.json
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" validate-app --manifest C:\path\rejoinbi-app.json
 ```
 
 ## Sharing The Plugin
@@ -413,10 +413,10 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" validate-app --mani
 When the user wants to share or configure the plugin for other people, export it to the Downloads package folder:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" export-package
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" export-package
 ```
 
-This creates `%USERPROFILE%\Downloads\plugin\rejoinbi-platform`, `%USERPROFILE%\Downloads\plugin\rejoinbi-platform.zip`, and an `INSTALL.md` with setup notes. Do not include platform passwords, PINs, or local session files in shared packages.
+This creates `%USERPROFILE%\Downloads\plugin\rejoinbi`, `%USERPROFILE%\Downloads\plugin\rejoinbi.zip`, and an `INSTALL.md` with setup notes. Do not include platform passwords, PINs, or local session files in shared packages.
 
 ## When To Use Browser Automation
 

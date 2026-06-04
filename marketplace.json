@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "rejoinbi-platform",
+      "name": "rejoinbi",
       "source": {
         "source": "local",
-        "path": "./plugins/rejoinbi-platform"
+        "path": "./plugins/rejoinbi"
       },
       "policy": {
         "installation": "AVAILABLE",

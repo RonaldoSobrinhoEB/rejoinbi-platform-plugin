@@ -1,5 +1,5 @@
 {
-  "name": "rejoinbi-platform",
+  "name": "rejoinbi",
   "version": "0.4.25",
   "description": "Operate Rejoin BI environments, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
   "author": {

@@ -1,6 +1,6 @@
 # Codex Marketplace Submission
 
-This repository is structured as a Codex marketplace. The marketplace manifest lives at the repository root, and the Rejoin BI plugin lives under `plugins/rejoinbi-platform`.
+This repository is structured as a Codex marketplace. The marketplace manifest lives at the repository root, and the Rejoin BI plugin lives under `plugins/rejoinbi`.
 
 Use these settings when submitting:
 
@@ -18,14 +18,14 @@ marketplace.json
 The plugin manifest is available at:
 
 ```text
-plugins/rejoinbi-platform/.codex-plugin/plugin.json
+plugins/rejoinbi/.codex-plugin/plugin.json
 ```
 
 ## Compatibility checklist
 
 - Root `marketplace.json` exists.
-- `marketplace.json` points to `./plugins/rejoinbi-platform`.
-- `plugins/rejoinbi-platform/.codex-plugin/plugin.json` exists.
+- `marketplace.json` points to `./plugins/rejoinbi`.
+- `plugins/rejoinbi/.codex-plugin/plugin.json` exists.
 - Manifest uses strict semantic versioning.
 - Manifest includes `homepage`, `repository`, `license`, `keywords`, and interface metadata aligned with Codex plugin conventions.
 - `defaultPrompt` contains three concise prompts.
@@ -36,7 +36,7 @@ plugins/rejoinbi-platform/.codex-plugin/plugin.json
 ## Local validation
 
 ```powershell
-python "$HOME\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py" .\plugins\rejoinbi-platform
-python -m py_compile .\plugins\rejoinbi-platform\scripts\rejoinbi.py
-python .\plugins\rejoinbi-platform\scripts\rejoinbi.py studio-inventory --help
+python "$HOME\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py" .\plugins\rejoinbi
+python -m py_compile .\plugins\rejoinbi\scripts\rejoinbi.py
+python .\plugins\rejoinbi\scripts\rejoinbi.py studio-inventory --help
 ```

@@ -38,7 +38,7 @@ except ImportError as exc:  # pragma: no cover - dependency guard
     raise SystemExit("The 'requests' package is required. Install it with: python -m pip install requests") from exc
 
 
-APP_HOME = Path(os.environ.get("REJOINBI_PLUGIN_HOME") or (Path.home() / ".rejoinbi-platform"))
+APP_HOME = Path(os.environ.get("REJOINBI_PLUGIN_HOME") or (Path.home() / ".rejoinbi"))
 SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
@@ -53,7 +53,7 @@ SENSITIVE_PATH_NAMES = {
     ".gcloud",
     ".gnupg",
     ".kube",
-    ".rejoinbi-platform",
+    ".rejoinbi",
     ".ssh",
     "id_dsa",
     "id_ecdsa",
@@ -228,26 +228,26 @@ DATA_ENGINE_PROJECT_ACTIONS = {
 }
 
 PT_BR_WORD_ACCENT_FIXES = {
-    "acao": "ação",
-    "acoes": "ações",
-    "analise": "análise",
-    "atencao": "atenção",
-    "automacao": "automação",
-    "avaliacao": "avaliação",
-    "composicao": "composição",
-    "configuracao": "configuração",
-    "configuracoes": "configurações",
-    "conversao": "conversão",
-    "evolucao": "evolução",
-    "gestao": "gestão",
-    "metricas": "métricas",
-    "operacao": "operação",
-    "operacoes": "operações",
-    "producao": "produção",
-    "satisfacao": "satisfação",
-    "usuarios": "usuários",
-    "visao": "visão",
-    "visoes": "visões",
+    "acao": "aÃ§Ã£o",
+    "acoes": "aÃ§Ãµes",
+    "analise": "anÃ¡lise",
+    "atencao": "atenÃ§Ã£o",
+    "automacao": "automaÃ§Ã£o",
+    "avaliacao": "avaliaÃ§Ã£o",
+    "composicao": "composiÃ§Ã£o",
+    "configuracao": "configuraÃ§Ã£o",
+    "configuracoes": "configuraÃ§Ãµes",
+    "conversao": "conversÃ£o",
+    "evolucao": "evoluÃ§Ã£o",
+    "gestao": "gestÃ£o",
+    "metricas": "mÃ©tricas",
+    "operacao": "operaÃ§Ã£o",
+    "operacoes": "operaÃ§Ãµes",
+    "producao": "produÃ§Ã£o",
+    "satisfacao": "satisfaÃ§Ã£o",
+    "usuarios": "usuÃ¡rios",
+    "visao": "visÃ£o",
+    "visoes": "visÃµes",
 }
 
 
@@ -473,7 +473,7 @@ def truthy_flag(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     raw = str(value).strip().lower()
-    if raw in {"", "0", "false", "no", "nao", "não", "off", "none", "null"}:
+    if raw in {"", "0", "false", "no", "nao", "nÃ£o", "off", "none", "null"}:
         return False
     return raw in {"1", "true", "yes", "sim", "s", "on", "locked", "protected", "password"}
 
@@ -486,7 +486,7 @@ def protected_secret_present(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     raw = str(value).strip()
-    if raw.lower() in {"", "0", "false", "no", "nao", "não", "off", "none", "null"}:
+    if raw.lower() in {"", "0", "false", "no", "nao", "nÃ£o", "off", "none", "null"}:
         return False
     return True
 
@@ -533,7 +533,7 @@ class RejoinBIClient:
     def __init__(self, base_url: str):
         self.base_url = clean_base_url(base_url)
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "rejoinbi-platform-plugin/0.1.0"})
+        self.session.headers.update({"User-Agent": "rejoinbi-plugin/0.1.0"})
         self.session_path = SESSION_DIR / f"{session_slug(self.base_url)}.json"
         self.load_session()
 
@@ -1522,7 +1522,7 @@ def slugify_page_id(value: Any) -> str:
     raw = str(value or "").strip().lower()
     ascii_text = unicodedata.normalize("NFKD", raw)
     ascii_text = "".join(ch for ch in ascii_text if not unicodedata.combining(ch))
-    ascii_text = ascii_text.replace("ç", "c").replace("ñ", "n")
+    ascii_text = ascii_text.replace("Ã§", "c").replace("Ã±", "n")
     ascii_text = re.sub(r"\s+", "-", ascii_text)
     ascii_text = re.sub(r"[^a-z0-9_-]+", "", ascii_text)
     ascii_text = re.sub(r"-{2,}", "-", ascii_text).strip("-_")
@@ -1590,7 +1590,7 @@ def looks_like_corrupted_text(value: Any) -> bool:
         return True
     # A literal question mark inside a word usually means a Windows code page
     # replaced an accent before the JSON reached the platform.
-    if re.search(r"[A-Za-zÀ-ÿ]\?+[A-Za-zÀ-ÿ]", text):
+    if re.search(r"[A-Za-zÃ€-Ã¿]\?+[A-Za-zÃ€-Ã¿]", text):
         return True
     return False
 
@@ -2237,7 +2237,7 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         form_data: list[tuple[str, str]] = [
             ("container_name", str(workspace.get("name") or "")),
             ("folder_path", args.folder or ""),
-            ("commit_message", args.message or "Uploaded by rejoinbi-platform plugin"),
+            ("commit_message", args.message or "Uploaded by rejoinbi plugin"),
             ("restart_container", "true" if args.restart else "false"),
         ]
         if file_paths_map:
@@ -2773,7 +2773,7 @@ POST_PUBLISH_FATAL_PATTERNS = (
     ("parquet_engine_missing", "unable to find a usable engine"),
     ("parquet_engine_missing", "pyarrow is required for parquet support"),
     ("parquet_engine_missing", "fastparquet is required for parquet support"),
-    ("materialized_dataframe_missing", "nenhum artefato legível"),
+    ("materialized_dataframe_missing", "nenhum artefato legÃ­vel"),
 )
 
 
@@ -6031,7 +6031,7 @@ def should_ignore_export(dir_path: str, names: list[str]) -> set[str]:
         ".codex",
         ".env",
         ".git",
-        ".rejoinbi-platform",
+        ".rejoinbi",
         ".pytest_cache",
         ".ruff_cache",
         ".mypy_cache",
@@ -6063,19 +6063,19 @@ This folder is a shareable Codex plugin package generated from:
 
 ## Install
 
-Copy the `rejoinbi-platform` folder into the recipient Codex plugins folder, or import/use the zip package if their Codex setup supports plugin zip import.
+Copy the `rejoinbi` folder into the recipient Codex plugins folder, or import/use the zip package if their Codex setup supports plugin zip import.
 
 Typical local path:
 
 ```powershell
-$HOME\\plugins\\rejoinbi-platform
+$HOME\\plugins\\rejoinbi
 ```
 
 ## Configure The Platform Address
 
 ```powershell
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py workspaceall
+python .\\rejoinbi\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
+python .\\rejoinbi\\scripts\\rejoinbi.py workspaceall
 ```
 
 The `ensure` command checks for a saved Rejoin BI session first. If needed, it opens a local browser login wizard. Passwords and PINs are never saved in the package and do not need to be pasted into chat.
@@ -6091,25 +6091,25 @@ Use `examples\\codex-advanced-suite\\rejoinbi-app.json` as the model: one HTML f
 Workspace and page deletion commands are dry-run by default and print the affected page tree before deleting:
 
 ```powershell
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
-python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
+python .\\rejoinbi\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
+python .\\rejoinbi\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
 ```
 
 Actual deletion requires exact confirmation flags such as `--confirm-name`, `--confirm-id`, or `--confirm-page-id`.
 
 ## Package Contents
 
-- Plugin manifest: `rejoinbi-platform\\.codex-plugin\\plugin.json`
-- Skill instructions: `rejoinbi-platform\\skills\\rejoinbi-platform\\SKILL.md`
-- CLI: `rejoinbi-platform\\scripts\\rejoinbi.py`
-- Example dashboards: `rejoinbi-platform\\examples`
+- Plugin manifest: `rejoinbi\\.codex-plugin\\plugin.json`
+- Skill instructions: `rejoinbi\\skills\\rejoinbi\\SKILL.md`
+- CLI: `rejoinbi\\scripts\\rejoinbi.py`
+- Example dashboards: `rejoinbi\\examples`
 {zip_line}"""
     (target / "INSTALL.md").write_text(notes, encoding="utf-8")
 
 
 def cmd_export_package(args: argparse.Namespace) -> int:
     destination = Path(args.destination or (Path.home() / "Downloads" / "plugin")).expanduser().resolve()
-    package_dir = destination / "rejoinbi-platform"
+    package_dir = destination / "rejoinbi"
     destination.mkdir(parents=True, exist_ok=True)
 
     if args.clean and package_dir.exists():
@@ -6123,7 +6123,7 @@ def cmd_export_package(args: argparse.Namespace) -> int:
 
     package_zip = None
     if not args.no_zip:
-        zip_path = destination / "rejoinbi-platform.zip"
+        zip_path = destination / "rejoinbi.zip"
         if zip_path.exists():
             zip_path.unlink()
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -6529,7 +6529,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("create-user", help="Create a user")
     p.add_argument("--email", required=True)
     p.add_argument("--name", required=True)
-    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "Usuário", "Gestor"], default="Usuario")
+    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "UsuÃ¡rio", "Gestor"], default="Usuario")
     p.add_argument("--setor", default="Codex")
     p.add_argument("--matricula", default="")
     p.add_argument("--contato", default="")
@@ -6538,7 +6538,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("update-user", help="Edit a user profile")
     p.add_argument("--user", required=True, help="User id or email")
     p.add_argument("--name")
-    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "Usuário", "Gestor"])
+    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "UsuÃ¡rio", "Gestor"])
     p.add_argument("--setor")
     p.add_argument("--matricula")
     p.add_argument("--contato")
@@ -7061,7 +7061,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-package", help="Copy this plugin to Downloads\\plugin for sharing and create a zip package")
     p.add_argument("--destination", help="Destination folder. Defaults to %%USERPROFILE%%\\Downloads\\plugin")
     p.add_argument("--clean", action="store_true", help="Remove the existing destination package folder before copying")
-    p.add_argument("--no-zip", action="store_true", help="Do not create rejoinbi-platform.zip")
+    p.add_argument("--no-zip", action="store_true", help="Do not create rejoinbi.zip")
     p.set_defaults(func=cmd_export_package)
 
     p = sub.add_parser("api-get", help="Run an authenticated GET against a platform API path")
@@ -7093,7 +7093,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             "401" in error
             or "sessao" in lower_error
-            or "sessão" in lower_error
+            or "sessÃ£o" in lower_error
             or "session expired" in lower_error
             or "no saved session" in lower_error
             or "login required" in lower_error

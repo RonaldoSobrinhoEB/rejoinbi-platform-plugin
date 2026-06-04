@@ -28,7 +28,7 @@ Correct pattern:
 - The manifest maps each page to its own `file` and `route`.
 - Visible page names may be localized with accents. Technical values (`id`, `route`, filenames) stay ASCII; for static dashboards, `route` should usually be the HTML filename without `.html`.
 
-See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For BI Studio canvas work, use `examples/codex-bi-studio-canvas`; it documents the professional canvas standard, Data Engine binding, Rejoin BI theme, export normalization, and Flask manifest shape for BI Studio exports. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`Visão RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
+See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For BI Studio canvas work, use `examples/codex-bi-studio-canvas`; it documents the professional canvas standard, Data Engine binding, Rejoin BI theme, export normalization, and Flask manifest shape for BI Studio exports. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`VisÃ£o RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
 
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
 
@@ -142,7 +142,7 @@ python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
 python .\scripts\rejoinbi.py data-engine db-connections --project-id 1
 python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file .\dados.xlsx
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file .\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file .\dados.xlsx --folder codex --selected-sheet "VisÃ£o Geral" --yes
 python .\scripts\rejoinbi.py data-engine repository-list --project-id 1
 python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
 python .\scripts\rejoinbi.py bi-normalize-export --path .\bi-export --remove-old
@@ -199,8 +199,8 @@ python .\scripts\rejoinbi.py export-package
 
 This creates:
 
-- `%USERPROFILE%\Downloads\plugin\rejoinbi-platform`
-- `%USERPROFILE%\Downloads\plugin\rejoinbi-platform.zip`
+- `%USERPROFILE%\Downloads\plugin\rejoinbi`
+- `%USERPROFILE%\Downloads\plugin\rejoinbi.zip`
 - `%USERPROFILE%\Downloads\plugin\INSTALL.md`
 
 Secrets are not included. Passwords and PINs are entered in the local browser auth wizard by default, or read from local prompts/environment variables only when `--terminal` is used.

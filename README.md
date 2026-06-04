@@ -13,11 +13,11 @@ Use the Codex "Adicionar marketplace" dialog with:
 The marketplace manifest is `marketplace.json`, and the plugin source is:
 
 ```text
-plugins/rejoinbi-platform
+plugins/rejoinbi
 ```
 
 The plugin itself keeps its Codex manifest at:
 
 ```text
-plugins/rejoinbi-platform/.codex-plugin/plugin.json
+plugins/rejoinbi/.codex-plugin/plugin.json
 ```

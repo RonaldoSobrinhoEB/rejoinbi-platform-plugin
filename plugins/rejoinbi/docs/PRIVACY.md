@@ -21,7 +21,7 @@ The plugin communicates with the Rejoin BI platform address selected by the user
 
 ## Local storage
 
-Saved sessions are stored locally under `.rejoinbi-platform` in the user's home directory. Generated reports, backups, and exported packages are written only to local paths selected by the user or documented plugin defaults.
+Saved sessions are stored locally under `.rejoinbi` in the user's home directory. Generated reports, backups, and exported packages are written only to local paths selected by the user or documented plugin defaults.
 
 ## Sensitive data redaction
 
