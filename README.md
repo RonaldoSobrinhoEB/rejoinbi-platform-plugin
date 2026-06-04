@@ -10,7 +10,13 @@ Use the Codex "Adicionar marketplace" dialog with:
 - Referencia do Git: `main`
 - Caminhos esparsos: leave empty
 
-The marketplace manifest is `marketplace.json`, and the plugin source is:
+The Codex marketplace manifest is:
+
+```text
+.agents/plugins/marketplace.json
+```
+
+A root `marketplace.json` mirror is also kept for readability. The plugin source is:
 
 ```text
 plugins/rejoinbi

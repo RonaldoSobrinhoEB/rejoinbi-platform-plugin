@@ -1,6 +1,6 @@
 # Codex Marketplace Submission
 
-This repository is structured as a Codex marketplace. The marketplace manifest lives at the repository root, and the Rejoin BI plugin lives under `plugins/rejoinbi`.
+This repository is structured as a Codex marketplace. The Codex marketplace manifest lives at `.agents/plugins/marketplace.json`, and the Rejoin BI plugin lives under `plugins/rejoinbi`.
 
 Use these settings when submitting:
 
@@ -12,8 +12,10 @@ Use these settings when submitting:
 The required marketplace manifest is available at:
 
 ```text
-marketplace.json
+.agents/plugins/marketplace.json
 ```
+
+A root `marketplace.json` mirror is kept for readability.
 
 The plugin manifest is available at:
 
@@ -23,8 +25,9 @@ plugins/rejoinbi/.codex-plugin/plugin.json
 
 ## Compatibility checklist
 
-- Root `marketplace.json` exists.
-- `marketplace.json` points to `./plugins/rejoinbi`.
+- `.agents/plugins/marketplace.json` exists.
+- `.agents/plugins/marketplace.json` points to `./plugins/rejoinbi`.
+- Root `marketplace.json` mirror exists.
 - `plugins/rejoinbi/.codex-plugin/plugin.json` exists.
 - Manifest uses strict semantic versioning.
 - Manifest includes `homepage`, `repository`, `license`, `keywords`, and interface metadata aligned with Codex plugin conventions.
