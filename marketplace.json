@@ -1,0 +1,20 @@
+{
+  "name": "rejoinbi",
+  "interface": {
+    "displayName": "Rejoin BI"
+  },
+  "plugins": [
+    {
+      "name": "rejoinbi-platform",
+      "source": {
+        "source": "local",
+        "path": "./plugins/rejoinbi-platform"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Engineering"
+    }
+  ]
+}
