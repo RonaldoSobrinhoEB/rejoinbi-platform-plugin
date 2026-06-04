@@ -3,8 +3,8 @@
   "version": "0.4.25",
   "description": "Operate Rejoin BI environments, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
-    "name": "Ronaldo Sobrinho",
-    "url": "https://github.com/RonaldoSobrinhoEB"
+    "name": "Rejoin BI",
+    "url": "https://rejoinbi.com.br"
   },
   "homepage": "https://rejoinbi.com.br",
   "repository": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
@@ -25,7 +25,7 @@
     "displayName": "Rejoin BI",
     "shortDescription": "Develop, publish, and administer Rejoin BI",
     "longDescription": "Helps Codex connect to a full Rejoin BI address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, automate admin configuration including users, pages, permissions, RLS, announcements, title/logos/favicon/colors, messaging, Codex keys, system tools, upload gateway, and safely preview workspace/page cleanup using the authenticated API. Includes a detailed agent operating playbook and RLS smoke workflow so users and Codex agents who do not know Rejoin BI can route natural language requests to the correct safe command. If a user asks to see or change the title, use platform-title for the current browser title or set-platform-branding for full branding. Before any other action, validate a full address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
-    "developerName": "Ronaldo Sobrinho",
+    "developerName": "Rejoin BI",
     "category": "Engineering",
     "capabilities": [
       "Interactive",
