@@ -38,6 +38,8 @@ Read `docs/admin-configuration-map.md` for the administrative configuration map.
 
 Read `docs/agent-operating-playbook.md` when another Codex agent, teammate, or new user needs to understand the platform from zero. It includes the full natural-language router, command families, safety rules, response patterns, and completion checklist.
 
+Read `docs/windows-install.md` when a new Windows PC fails before installing the marketplace with `failed to run git clone ...: program not found`. That error happens before this plugin runs and means Codex cannot find `git.exe` on that user's machine.
+
 ## Common Commands
 
 ```powershell

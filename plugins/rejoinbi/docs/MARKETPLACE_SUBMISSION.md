@@ -34,6 +34,7 @@ plugins/rejoinbi/.codex-plugin/plugin.json
 - `defaultPrompt` contains three concise prompts.
 - Icon and logo use the real Rejoin BI PNG icon under `assets/app-icon.png`.
 - No SVG fallback is shipped for the marketplace icon.
+- Windows installs require the local `git` executable when adding the marketplace directly from GitHub. See `docs/windows-install.md` if Codex reports `failed to run git clone ...: program not found`.
 - The plugin validates with `plugin-creator/scripts/validate_plugin.py`.
 
 ## Local validation
