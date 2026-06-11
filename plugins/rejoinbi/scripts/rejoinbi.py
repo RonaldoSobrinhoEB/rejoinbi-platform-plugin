@@ -255,6 +255,35 @@ class RejoinBIError(RuntimeError):
     pass
 
 
+def compact_response_message(value: Any, *, max_length: int = 260) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", text)
+    if title_match:
+        title = html.unescape(re.sub(r"(?is)<[^>]+>", " ", title_match.group(1)))
+        title = " ".join(title.split())
+        text = f"HTML error page: {title}" if title else "HTML error page returned by server."
+    elif re.search(r"(?is)<!doctype\s+html|<html\b|<head\b|<body\b", text):
+        text = "HTML error page returned by server."
+    else:
+        text = html.unescape(re.sub(r"(?is)<[^>]+>", " ", text))
+        text = " ".join(text.split())
+    if len(text) > max_length:
+        return text[: max_length - 1].rstrip() + "..."
+    return text
+
+
+def _http_status_from_error(value: str) -> int | None:
+    match = re.search(r"\bHTTP\s+(\d{3})\b", value or "", re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
 @lru_cache(maxsize=8)
 def plugin_asset_data_uri(name: str) -> str:
     path = PLUGIN_ROOT / "assets" / name
@@ -269,10 +298,40 @@ def plugin_asset_data_uri(name: str) -> str:
 
 
 def auth_error_messages(error: str) -> tuple[str, str]:
-    clean = " ".join(str(error or "").split())
+    raw = str(error or "")
+    clean = compact_response_message(raw, max_length=420)
     if not clean:
         return "", ""
+    status_code = _http_status_from_error(raw)
+    raw_lower = raw.lower()
     lower = clean.lower()
+    if status_code == 530 or "cloudflare tunnel error" in raw_lower:
+        return (
+            "Tenant validado, mas esta indisponivel.",
+            "A Cloudflare nao conseguiu chegar no servidor do tenant. Confira se o app/tunnel desse subdominio esta rodando e tente conectar novamente.",
+        )
+    if status_code in {502, 503, 504}:
+        return (
+            "Servidor do tenant indisponivel.",
+            "A URL respondeu erro temporario do servidor. Aguarde alguns instantes, confirme se o tenant esta online e tente novamente.",
+        )
+    if status_code and 500 <= status_code <= 599:
+        return (
+            "Erro no servidor do tenant.",
+            "O login chegou ate a plataforma, mas o servidor respondeu com falha interna. Tente novamente e, se persistir, verifique os logs do tenant.",
+        )
+    if status_code == 404:
+        return (
+            "Endpoint de login nao encontrado.",
+            "A URL conectada nao parece estar apontando para uma instalacao Rejoin BI valida. Confira o subdominio e tente novamente.",
+        )
+    if status_code in {401, 403} or "http 401" in lower or "http 403" in lower:
+        return "Acesso recusado pelo tenant.", "Confira email, senha, permissao do usuario e tente novamente."
+    if "html error page" in lower:
+        return (
+            "A URL retornou uma pagina de erro.",
+            "O plugin esperava uma resposta da API, mas recebeu uma pagina HTML. Confira se o subdominio abre a plataforma Rejoin BI corretamente.",
+        )
     if "http 401" in lower or "email ou senha" in lower or "invalid" in lower:
         return "Email ou senha invalidos.", "Confira as credenciais da plataforma e tente novamente."
     if "pin" in lower:
@@ -281,6 +340,11 @@ def auth_error_messages(error: str) -> tuple[str, str]:
         return "Perfil sem permissao para este plugin.", clean
     if "timed out" in lower or "timeout" in lower:
         return "Tempo de conexao esgotado.", "Abra esta janela novamente pelo Codex e conclua o login."
+    if "failed before response" in lower or "connection" in lower or "name resolution" in lower:
+        return (
+            "Nao foi possivel acessar o tenant.",
+            "Verifique se a URL esta correta, se ha internet e se o servidor do subdominio esta respondendo.",
+        )
     return "Nao foi possivel concluir a conexao.", clean
 
 
@@ -604,7 +668,8 @@ class RejoinBIClient:
             message = ""
             if isinstance(payload, dict):
                 message = str(payload.get("error") or payload.get("message") or payload.get("raw") or "")
-            raise RejoinBIError(f"{method} {path} failed with HTTP {response.status_code}: {message[:600]}")
+            message = compact_response_message(message)
+            raise RejoinBIError(f"{method} {path} failed with HTTP {response.status_code}: {message}")
         return payload, response
 
     def download(self, path: str, output: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
@@ -618,7 +683,8 @@ class RejoinBIClient:
                 message = payload.get("error") or payload.get("message") or response.text
             except Exception:
                 message = response.text
-            raise RejoinBIError(f"Download failed with HTTP {response.status_code}: {str(message)[:600]}")
+            message = compact_response_message(message)
+            raise RejoinBIError(f"Download failed with HTTP {response.status_code}: {message}")
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("wb") as handle:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -693,9 +759,10 @@ def auth_html(
     error_title, error_detail = auth_error_messages(error)
     safe_error_title = html.escape(error_title)
     safe_error_detail = html.escape(error_detail)
-    safe_error_raw = html.escape(str(error or ""))
+    technical_error = compact_response_message(error, max_length=1200)
+    safe_error_raw = html.escape(technical_error)
     error_details = ""
-    if error and safe_error_raw and safe_error_raw != safe_error_detail:
+    if error and safe_error_raw and technical_error != error_detail:
         error_details = f"""
           <details>
             <summary>Detalhes tecnicos</summary>
@@ -970,6 +1037,7 @@ def auth_html(
     }}
     code {{
       display: block;
+      max-height: 180px;
       margin-top: 8px;
       padding: 10px;
       border-radius: 8px;
@@ -978,6 +1046,7 @@ def auth_html(
       font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
       font-size: 11px;
       line-height: 1.45;
+      overflow: auto;
       overflow-wrap: anywhere;
     }}
     .auth-form {{
