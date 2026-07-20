@@ -32,7 +32,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
 - "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with the explicit platform address in `--tenant`.
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
-- "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
+- "criar pagina", "rota", "pai/filho/neto": the Rejoin BI sidebar is recursive; it is not limited to two levels. Any child page can be the parent of a grandchild, and the same rule continues for deeper descendants. Create/resolve parents before descendants, pass the immediate parent with `--parent`, refresh/verify the menu, and never replace a requested grandchild with a sibling. Use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
 - "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
 - "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`. For dashboard creation, use the professional canvas standard in `examples/codex-bi-studio-canvas`: build/complete the dataset first, save a polished desktop/mobile layout, export, normalize, deploy, and smoke test. For BI exports with accented tab slugs or parquet data, use `bi-normalize-export` before uploading the workspace package.
 - "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
@@ -258,6 +258,18 @@ python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-page --workspace codex-test-dashboard --name "Painel Codex" --file painel-codex.html --route painel-codex
 ```
 
+Create a recursive sidebar hierarchy. The grandchild uses the child id as its immediate parent; do not attach both to the root:
+
+```powershell
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-page --workspace codex-test-dashboard --name "Pai" --file pai.html --route pai
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-page --workspace codex-test-dashboard --name "Filho" --file filho.html --route filho --parent pai
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-page --workspace codex-test-dashboard --name "Neto" --file neto.html --route neto --parent filho
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" page-maintenance verify-hierarchy
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" accessible-pages
+```
+
+Treat the hierarchy as complete only when `accessible-pages` returns `Pai > Filho > Neto`. The CLI resolves parent selectors to exact ids, blocks cycles, refreshes menu caches after parent changes, and accepts deeper levels by repeating the same immediate-parent rule.
+
 Update, delete, or resolve pages:
 
 ```powershell
@@ -340,6 +352,8 @@ Minimal manifest:
 
 Keep page names clean and localized for the menu. In pt-BR, use accents in `name` (`VisÃ£o Geral`, `OperaÃ§Ãµes`, `ConfiguraÃ§Ã£o`, `MÃ©tricas`) while keeping `id`, `route`, and `file` ASCII. Put workspace/client prefixes in `id`; for static dashboards, make `route` equal to the HTML file path without `.html` unless there is a deliberate custom route. The deploy helper creates the technical page id first and then restores the clean display name, because the platform generates new page ids from the creation name.
 
+For hierarchy, manifests may be flat with `parent`, or nested with `children`. `deploy-manifest` flattens nested trees, orders dependencies parent-first, rejects duplicate ids and cycles, and verifies every immediate parent in `accessible-pages`. A nested `children` chain can represent parent, child, grandchild, and deeper levels without a two-level cap. See `examples/codex-page-hierarchy/rejoinbi-app.json`.
+
 When generating manifests on Windows, write `rejoinbi-app.json` as a UTF-8 file (or let Python/JSON escape accents) instead of passing accented labels through a PowerShell command string. Run `validate-app` before any deploy; it must fail if visible text contains corrupted markers such as `Vis?o`, `Opera??es`, or mojibake byte sequences such as `Vis\u00c3\u00a3o`.
 
 Deploy, replace existing page definitions if needed, then smoke test every route:
@@ -357,6 +371,7 @@ The plugin includes two examples:
 
 - `examples/codex-echarts-dashboard`: simple single-page ECharts dashboard.
 - `examples/codex-advanced-suite`: platform-managed multi-page package with one HTML file per Rejoin BI page, shared assets, filters, forms, local draft storage, JSON export, and a deploy manifest.
+- `examples/codex-page-hierarchy`: recursive parent-child-grandchild sidebar manifest using nested `children` and post-deploy hierarchy verification.
 - `examples/codex-bi-studio-canvas`: professional BI Studio/Data Engine canvas standard with Rejoin BI theme, layout intent, manifest shape for normalized Flask exports, and production validation checklist.
 - `examples/codex-rls-suite`: single-page RLS smoke dashboard with accented visible page name, ASCII `id/route/file`, platform-managed route, and client-side filtering from `/plataforma/api/rls/config` over fictitious data only. Do not use static JSON plus client-side filtering for sensitive production rows; real sensitive data must be filtered by the server/API before it reaches the browser.
 

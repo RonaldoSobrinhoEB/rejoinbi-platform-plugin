@@ -92,6 +92,18 @@ python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
 python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
 ```
 
+The sidebar accepts recursive hierarchy. A page that is already a child may be selected as the immediate parent of another page, producing `Pai > Filho > Neto` and deeper trees. Create or resolve every ancestor first, use the immediate parent id at each step, and verify the final recursive structure instead of treating grandchildren as root siblings:
+
+```powershell
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Pai" --file pai.html --route pai
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Filho" --file filho.html --route filho --parent pai
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Neto" --file neto.html --route neto --parent filho
+python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
+python .\scripts\rejoinbi.py accessible-pages
+```
+
+For manifest deployment, nested `children` arrays are flattened and topologically ordered before writes. Validation rejects duplicate ids, self-parenting, and cycles, while readiness checks confirm each expected parent in `accessible-pages`.
+
 Use JSON payloads for high-variation screens:
 
 ```powershell

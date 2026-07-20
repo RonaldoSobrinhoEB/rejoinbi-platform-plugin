@@ -19,6 +19,8 @@ Submit it as artifact type `PLUGIN`, branch `main`, with sparse path empty or `.
 
 Build dashboards as standalone platform pages. Do not create an internal menu, sidebar, SPA router, or page switcher inside the dashboard app. Rejoin BI already manages page hierarchy, icon, permission, route, and menu placement in Gerenciar Paginas.
 
+The platform sidebar hierarchy is recursive, not limited to parent and child. Any child can become the immediate parent of a grandchild, and the same rule applies to deeper descendants. The CLI resolves parent ids/routes/names, blocks cycles, refreshes menu caches after hierarchy writes, and verifies nested manifest relationships through `accessible-pages`.
+
 Correct pattern:
 
 - `overview.html` registered as one page.
@@ -61,6 +63,7 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform
 python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
 python .\scripts\rejoinbi.py audit dashboard
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
+python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-page-hierarchy\rejoinbi-app.json
 python .\scripts\rejoinbi.py rls pages
 python .\scripts\rejoinbi.py codex-keys stats
 python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
@@ -79,6 +82,7 @@ These are the expected interpretations for Codex agents using this plugin:
 - "mudar logo", "favicon", "cores", "identidade visual": use `backup-platform-branding` and `set-platform-branding`.
 - "subir arquivo em uma pasta": use `upload-files --folder`.
 - "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
+- "criar pai, filho e neto": create the parent first, create the child with `--parent <parent-id>`, then create the grandchild with `--parent <child-id>`. Never attach both descendants to the root. For repeatable deploys, use nested `children` in `examples/codex-page-hierarchy/rejoinbi-app.json`.
 - "criar dashboard no BI Studio", "canvas profissional", "Data Engine + canvas": use `examples/codex-bi-studio-canvas` as the quality bar. Build the dataset first, save a professional desktop/mobile layout, export, normalize, deploy, and smoke test.
 - "o que tem no BI Studio/Data Engine": run `studio-inventory` first. For BI exports with accents/parquet, run `bi-normalize-export` before uploading.
 - "remover workspace": run `delete-workspace` dry-run first; password-protected workspaces require validated workspace password before deletion.
@@ -113,6 +117,9 @@ python .\scripts\rejoinbi.py page-files --workspace codex-suite
 python .\scripts\rejoinbi.py page-maintenance verify-orphan-permissions
 python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
 python .\scripts\rejoinbi.py set-page-order --page-id pagina-id --parent pagina-pai --position 20
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace codex-suite --name "Pai" --file pai.html --route pai
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace codex-suite --name "Filho" --file filho.html --route filho --parent pai
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace codex-suite --name "Neto" --file neto.html --route neto --parent filho
 
 python .\scripts\rejoinbi.py rls pages
 python .\scripts\rejoinbi.py rls page-config --page-id pagina-id --container-id 12

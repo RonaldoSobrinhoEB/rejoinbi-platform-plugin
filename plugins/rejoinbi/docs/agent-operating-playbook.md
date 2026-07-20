@@ -49,7 +49,7 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit platform address; if password requested, pass workspace password locally |
 | "remover workspace", "excluir workspace" | Safe workspace deletion | `delete-workspace --workspace ...` dry-run | `delete-workspace --yes --confirm-name ... --confirm-id ...` | Block if password-protected until `--workspace-password` validates; check page tree |
 | "senha do workspace" | Validate/unlock protected workspace | `workspaceall` | `validate-workspace --workspace ...` or deletion with `--workspace-password` | Never delete protected workspace without platform password validation |
-| "criar pagina", "rota", "menu", "pai/filho/neto" | Gerenciar Paginas | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | `create-page`, `update-page`, `set-page-order`, `delete-page` | Use clean names with accents; technical ids/routes/files ASCII |
+| "criar pagina", "rota", "menu", "pai/filho/neto" | Recursive Gerenciar Paginas tree; grandchildren and deeper descendants are supported | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | Create ancestors first; `create-page --parent <immediate-parent-id>`, `update-page`, `set-page-order`, `delete-page` | Never turn a requested grandchild into a root sibling; verify the full recursive tree in `accessible-pages` |
 | "dashboard", "painel", "ECharts", "criar 3 paginas" | Generate and publish dashboard package | Inspect local files/data; `validate-app` | `deploy-manifest` | One standalone HTML per Rejoin BI page; `smoke-pages` must pass |
 | "publicar BI", "BI Studio" | BI Studio project work | `studio-inventory`, `bi-projects` | `publish-bi` or `bi-create-project` | Project id/uid and workspace target explicit |
 | "dashboard BI Studio", "canvas profissional", "Data Engine + canvas" | Professional canvas dashboard | `studio-inventory`, inspect datasets | `bi-save-theme`, `bi-save-layout`, export/normalize/deploy | Use `examples/codex-bi-studio-canvas`; dataset completed, desktop/mobile layouts saved, smoke test passes |
@@ -113,6 +113,9 @@ After upload, list files or smoke pages. Do not assume production is ready just 
 ```powershell
 python .\scripts\rejoinbi.py pages --all-containers
 python .\scripts\rejoinbi.py accessible-pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Pai" --file pai.html --route pai
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Filho" --file filho.html --route filho --parent pai
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Neto" --file neto.html --route neto --parent filho
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Visão Geral" --file visao-geral.html --route visao-geral
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-page --page-id page-id --name "Operações" --route operacoes
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-page-order --page-id child-id --parent parent-id --position 20
@@ -122,6 +125,10 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance
 ```
 
 Visible page names should match the user's language and may include accents. Technical page ids, routes, and filenames should stay ASCII and stable.
+
+The sidebar is recursive. There is no parent/child-only restriction: a child page can be the immediate parent of a grandchild, and that grandchild can parent another descendant. Resolve/create each ancestor before its descendants. For `Pai > Filho > Neto`, set `Filho.pai = Pai.id` and `Neto.pai = Filho.id`; setting both to `Pai.id` creates siblings and does not satisfy the request. After any hierarchy write, require cache refresh plus `page-maintenance verify-hierarchy` and inspect the recursive `accessible-pages` result.
+
+For repeatable deployments, prefer the nested manifest shape in `examples/codex-page-hierarchy/rejoinbi-app.json`. Nested `children` are flattened and created parent-first; cycles and duplicate ids are rejected before deployment, and readiness fails when the returned immediate parent differs from the manifest.
 
 If a page update unexpectedly moves a child page out of its parent, immediately run `update-page --parent <parent-id>` or `set-page-order --parent <parent-id>` and re-run `page-maintenance verify-hierarchy`. Treat duplicate order or `pai null` warnings as not ready for production.
 If page names or descriptions show `?` in place of accents, run `page-maintenance audit-encoding`, then fix the exact page ids with `update-page` using UTF-8 visible text and ASCII `route/file`.

@@ -1,0 +1,34 @@
+{
+  "language": "pt-BR",
+  "workspace": {
+    "name": "codex-hierarchy-example"
+  },
+  "upload": {
+    "startup_mode": "static",
+    "auto_start": true
+  },
+  "pages": [
+    {
+      "id": "hierarquia-pai",
+      "name": "Visão Geral",
+      "route": "visao-geral",
+      "file": "visao-geral.html",
+      "children": [
+        {
+          "id": "hierarquia-filho",
+          "name": "Operações",
+          "route": "operacoes",
+          "file": "operacoes.html",
+          "children": [
+            {
+              "id": "hierarquia-neto",
+              "name": "Detalhamento",
+              "route": "detalhamento",
+              "file": "detalhamento.html"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

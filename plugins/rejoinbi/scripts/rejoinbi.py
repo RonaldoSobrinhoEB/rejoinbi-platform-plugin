@@ -228,26 +228,26 @@ DATA_ENGINE_PROJECT_ACTIONS = {
 }
 
 PT_BR_WORD_ACCENT_FIXES = {
-    "acao": "aÃ§Ã£o",
-    "acoes": "aÃ§Ãµes",
-    "analise": "anÃ¡lise",
-    "atencao": "atenÃ§Ã£o",
-    "automacao": "automaÃ§Ã£o",
-    "avaliacao": "avaliaÃ§Ã£o",
-    "composicao": "composiÃ§Ã£o",
-    "configuracao": "configuraÃ§Ã£o",
-    "configuracoes": "configuraÃ§Ãµes",
-    "conversao": "conversÃ£o",
-    "evolucao": "evoluÃ§Ã£o",
-    "gestao": "gestÃ£o",
-    "metricas": "mÃ©tricas",
-    "operacao": "operaÃ§Ã£o",
-    "operacoes": "operaÃ§Ãµes",
-    "producao": "produÃ§Ã£o",
-    "satisfacao": "satisfaÃ§Ã£o",
-    "usuarios": "usuÃ¡rios",
-    "visao": "visÃ£o",
-    "visoes": "visÃµes",
+    "acao": "a\u00e7\u00e3o",
+    "acoes": "a\u00e7\u00f5es",
+    "analise": "an\u00e1lise",
+    "atencao": "aten\u00e7\u00e3o",
+    "automacao": "automa\u00e7\u00e3o",
+    "avaliacao": "avalia\u00e7\u00e3o",
+    "composicao": "composi\u00e7\u00e3o",
+    "configuracao": "configura\u00e7\u00e3o",
+    "configuracoes": "configura\u00e7\u00f5es",
+    "conversao": "convers\u00e3o",
+    "evolucao": "evolu\u00e7\u00e3o",
+    "gestao": "gest\u00e3o",
+    "metricas": "m\u00e9tricas",
+    "operacao": "opera\u00e7\u00e3o",
+    "operacoes": "opera\u00e7\u00f5es",
+    "producao": "produ\u00e7\u00e3o",
+    "satisfacao": "satisfa\u00e7\u00e3o",
+    "usuarios": "usu\u00e1rios",
+    "visao": "vis\u00e3o",
+    "visoes": "vis\u00f5es",
 }
 
 
@@ -1603,10 +1603,17 @@ def detect_manifest_language(manifest: dict[str, Any]) -> str:
     if explicit:
         return explicit
     text_parts: list[str] = []
-    for page in manifest.get("pages") or []:
-        if isinstance(page, dict):
+    def collect_page_text(items: Any) -> None:
+        if not isinstance(items, list):
+            return
+        for page in items:
+            if not isinstance(page, dict):
+                continue
             text_parts.append(str(page.get("name") or page.get("nome") or ""))
             text_parts.append(str(page.get("description") or page.get("descricao") or ""))
+            collect_page_text(page.get("children") or page.get("subpages") or page.get("subpaginas") or [])
+
+    collect_page_text(manifest.get("pages") or [])
     normalized = normalize_text(" ".join(text_parts))
     pt_markers = {
         "analise", "atendimento", "clientes", "comercial", "configuracao", "faturamento",
@@ -1659,7 +1666,7 @@ def looks_like_corrupted_text(value: Any) -> bool:
         return True
     # A literal question mark inside a word usually means a Windows code page
     # replaced an accent before the JSON reached the platform.
-    if re.search(r"[A-Za-zÃ€-Ã¿]\?+[A-Za-zÃ€-Ã¿]", text):
+    if re.search(r"[A-Za-z\u00C0-\u00FF]\?+[A-Za-z\u00C0-\u00FF]", text):
         return True
     return False
 
@@ -1675,13 +1682,20 @@ def manifest_text_integrity_errors(manifest: dict[str, Any]) -> list[str]:
     for field in ("description", "display_name"):
         if isinstance(workspace_cfg, dict) and field in workspace_cfg:
             visible_fields.append((f"workspace.{field}", workspace_cfg.get(field)))
-    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
-    for index, page in enumerate(pages):
-        if not isinstance(page, dict):
-            continue
-        for field in ("name", "nome", "description", "descricao", "expect_text"):
-            if field in page:
-                visible_fields.append((f"pages[{index}].{field}", page.get(field)))
+    def collect_page_fields(items: Any, path: str = "pages") -> None:
+        if not isinstance(items, list):
+            return
+        for index, page in enumerate(items):
+            if not isinstance(page, dict):
+                continue
+            page_path = f"{path}[{index}]"
+            for field in ("name", "nome", "description", "descricao", "expect_text"):
+                if field in page:
+                    visible_fields.append((f"{page_path}.{field}", page.get(field)))
+            children = page.get("children") or page.get("subpages") or page.get("subpaginas") or []
+            collect_page_fields(children, f"{page_path}.children")
+
+    collect_page_fields(manifest.get("pages") or [])
     for path, value in visible_fields:
         text = str(value or "")
         if looks_like_corrupted_text(text):
@@ -2116,6 +2130,47 @@ def resolve_page_from_pages(pages: list[dict[str, Any]], selector: str) -> dict[
     if len(route_matches) > 1 or len(name_matches) > 1:
         raise RejoinBIError(f"Page selector is ambiguous: {selector}. Use the exact page id.")
     return None
+
+
+def resolve_page_parent_id(
+    pages: list[dict[str, Any]],
+    selector: Any,
+    *,
+    child_id: str = "",
+) -> str:
+    """Resolve a parent page at any depth and reject hierarchy cycles."""
+    raw_selector = safe_str(selector)
+    if not raw_selector:
+        return ""
+    parent_page = resolve_page_from_pages(pages, raw_selector)
+    if parent_page is None:
+        raise RejoinBIError(
+            f"Parent page not found: {raw_selector}. "
+            "Use the exact page id, a unique route, or a unique page name."
+        )
+    parent_id = page_id(parent_page)
+    normalized_child_id = safe_str(child_id)
+    if not normalized_child_id:
+        return parent_id
+    if parent_id == normalized_child_id:
+        raise RejoinBIError("A page cannot be its own parent.")
+
+    by_id = {page_id(page): page for page in pages if page_id(page)}
+    visited: set[str] = set()
+    current_id = parent_id
+    while current_id and current_id not in visited:
+        if current_id == normalized_child_id:
+            raise RejoinBIError(
+                f"Hierarchy cycle blocked: {parent_id} is already inside the descendants of {normalized_child_id}."
+            )
+        visited.add(current_id)
+        current_page = by_id.get(current_id) or {}
+        current_id = safe_str(
+            current_page.get("pai")
+            or current_page.get("pai_real")
+            or current_page.get("pai_ficticio")
+        )
+    return parent_id
 
 
 def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> dict[str, Any]:
@@ -4288,18 +4343,33 @@ def cmd_set_page_order(args: argparse.Namespace) -> int:
     payload = parse_json_payload(args)
     if not isinstance(payload, dict):
         raise RejoinBIError("Page order payload must be a JSON object.")
+    current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
+    current_page = resolve_page_from_pages(current_pages, args.page_id)
+    if current_page is None:
+        raise RejoinBIError(f"Page not found: {args.page_id}")
+    current_page_id = page_id(current_page)
     if args.position is not None:
         payload["ordem"] = args.position
     if args.parent is not None:
-        payload["pai"] = args.parent
+        payload["pai"] = resolve_page_parent_id(current_pages, args.parent, child_id=current_page_id)
+    elif "pai" in payload:
+        payload["pai"] = resolve_page_parent_id(current_pages, payload.get("pai"), child_id=current_page_id)
     if args.before is not None:
         payload["before"] = args.before
     if args.after is not None:
         payload["after"] = args.after
     if not payload:
         raise RejoinBIError("Provide --data-file, --data-json, --position, --parent, --before, or --after.")
-    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(args.page_id)}/ordem", json=payload, timeout=120)
-    print_payload(data, as_json=args.json)
+    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(current_page_id)}/ordem", json=payload, timeout=120)
+    result = data if isinstance(data, dict) else {"raw": data}
+    if "pai" in payload:
+        result["hierarchy"] = {
+            "page_id": current_page_id,
+            "parent_id": payload.get("pai") or "",
+            "recursive_depth_supported": True,
+        }
+        result["menu_refresh"] = refresh_menu_caches(client)
+    print_payload(result, as_json=args.json)
     return 0
 
 
@@ -5050,6 +5120,10 @@ def cmd_workspace_action(args: argparse.Namespace) -> int:
 def cmd_create_page(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
+    parent_id = ""
+    if args.parent:
+        current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
+        parent_id = resolve_page_parent_id(current_pages, args.parent)
     payload = {
         "nome": args.name,
         "container_id": workspace.get("id"),
@@ -5057,7 +5131,7 @@ def cmd_create_page(args: argparse.Namespace) -> int:
         "rota": args.route or "",
         "icone": args.icon or "fas fa-chart-line",
         "descricao": args.description or "",
-        "pai": args.parent or "",
+        "pai": parent_id,
         "ativo": not args.inactive,
         "rls": bool(args.rls),
     }
@@ -5065,7 +5139,14 @@ def cmd_create_page(args: argparse.Namespace) -> int:
         payload["container_password"] = args.workspace_password
     validate_page_payload(payload, context="create-page payload")
     data, _ = client.request("POST", "/plataforma/api/paginas", json=payload, timeout=60)
-    print_payload(data, as_json=args.json)
+    result = data if isinstance(data, dict) else {"raw": data}
+    result["hierarchy"] = {
+        "page_id": safe_str(result.get("page_id")),
+        "parent_id": parent_id,
+        "recursive_depth_supported": True,
+    }
+    result["menu_refresh"] = refresh_menu_caches(client)
+    print_payload(result, as_json=args.json)
     return 0
 
 
@@ -5136,6 +5217,7 @@ def cmd_update_page(args: argparse.Namespace) -> int:
     current_page = resolve_page_from_pages(current_pages, args.page_id)
     if current_page is None:
         raise RejoinBIError(f"Page not found: {args.page_id}")
+    current_page_id = page_id(current_page)
     payload: dict[str, Any] = {}
     if args.name:
         payload["nome"] = args.name
@@ -5148,7 +5230,7 @@ def cmd_update_page(args: argparse.Namespace) -> int:
     if args.description is not None:
         payload["descricao"] = args.description
     if args.parent is not None:
-        payload["pai"] = args.parent
+        payload["pai"] = resolve_page_parent_id(current_pages, args.parent, child_id=current_page_id)
     if args.workspace:
         workspace = resolve_workspace(client, args.workspace)
         payload["container_id"] = workspace.get("id")
@@ -5171,8 +5253,16 @@ def cmd_update_page(args: argparse.Namespace) -> int:
     if not payload:
         raise RejoinBIError("No page changes provided.")
     validate_page_payload(payload, context="update-page payload")
-    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(args.page_id, safe='')}", json=payload, timeout=60)
-    print_payload(data, as_json=args.json)
+    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(current_page_id, safe='')}", json=payload, timeout=60)
+    result = data if isinstance(data, dict) else {"raw": data}
+    if args.parent is not None:
+        result["hierarchy"] = {
+            "page_id": current_page_id,
+            "parent_id": payload.get("pai") or "",
+            "recursive_depth_supported": True,
+        }
+        result["menu_refresh"] = refresh_menu_caches(client)
+    print_payload(result, as_json=args.json)
     return 0
 
 
@@ -5350,6 +5440,129 @@ def manifest_page_id(page: dict[str, Any]) -> str:
     return str(page.get("id") or page.get("page_id") or "").strip()
 
 
+MANIFEST_PAGE_CHILD_KEYS = ("children", "subpages", "subpaginas")
+
+
+def manifest_page_children(page: dict[str, Any]) -> list[Any]:
+    populated = [key for key in MANIFEST_PAGE_CHILD_KEYS if page.get(key) not in (None, [])]
+    if len(populated) > 1:
+        raise RejoinBIError(
+            f"Manifest page {manifest_page_id(page) or page.get('name')!r} uses more than one child field: "
+            f"{', '.join(populated)}. Use only 'children'."
+        )
+    if not populated:
+        return []
+    children = page.get(populated[0])
+    if not isinstance(children, list):
+        raise RejoinBIError(
+            f"Manifest page {manifest_page_id(page) or page.get('name')!r} child field must be an array."
+        )
+    return children
+
+
+def prepare_manifest_pages(raw_pages: Any) -> list[dict[str, Any]]:
+    """Flatten nested page trees and order internal dependencies parent-first."""
+    if not isinstance(raw_pages, list):
+        raise RejoinBIError("Manifest pages must be an array.")
+    expanded: list[dict[str, Any]] = []
+
+    def walk(raw_page: Any, inherited_parent: str = "", path: str = "pages") -> None:
+        if not isinstance(raw_page, dict):
+            raise RejoinBIError(f"Invalid manifest page entry at {path}: {raw_page}")
+        page = dict(raw_page)
+        children = manifest_page_children(page)
+        for key in MANIFEST_PAGE_CHILD_KEYS:
+            page.pop(key, None)
+        page_ref = manifest_page_id(page)
+        explicit_parent = safe_str(page.get("parent") or page.get("pai"))
+        if inherited_parent:
+            if explicit_parent and explicit_parent != inherited_parent:
+                raise RejoinBIError(
+                    f"Conflicting parent for {page_ref or page.get('name')!r}: "
+                    f"nested under {inherited_parent!r} but declares {explicit_parent!r}."
+                )
+            page["parent"] = inherited_parent
+            page.pop("pai", None)
+        expanded.append(page)
+        if children and not page_ref:
+            raise RejoinBIError(
+                f"Manifest page {page.get('name')!r} has children and must define an ASCII id/page_id."
+            )
+        for index, child in enumerate(children):
+            walk(child, page_ref, f"{path}.{page_ref or 'page'}.children[{index}]")
+
+    for index, raw_page in enumerate(raw_pages):
+        walk(raw_page, path=f"pages[{index}]")
+
+    by_id: dict[str, dict[str, Any]] = {}
+    for page in expanded:
+        current_id = manifest_page_id(page)
+        if current_id and current_id in by_id:
+            raise RejoinBIError(f"Duplicate page id in manifest hierarchy: {current_id}")
+        if current_id:
+            by_id[current_id] = page
+
+    ordered: list[dict[str, Any]] = []
+    state: dict[str, int] = {}
+
+    def visit(page: dict[str, Any], ancestry: list[str]) -> None:
+        current_id = manifest_page_id(page)
+        if not current_id:
+            if page not in ordered:
+                ordered.append(page)
+            return
+        marker = state.get(current_id, 0)
+        if marker == 2:
+            return
+        if marker == 1:
+            cycle = " -> ".join(ancestry + [current_id])
+            raise RejoinBIError(f"Manifest page hierarchy contains a cycle: {cycle}")
+        state[current_id] = 1
+        parent_id = safe_str(page.get("parent") or page.get("pai"))
+        if parent_id == current_id:
+            raise RejoinBIError(f"Manifest page {current_id} cannot be its own parent.")
+        if parent_id in by_id:
+            visit(by_id[parent_id], ancestry + [current_id])
+        state[current_id] = 2
+        ordered.append(page)
+
+    for page in expanded:
+        visit(page, [])
+    return ordered
+
+
+def manifest_hierarchy_summary(pages: list[dict[str, Any]]) -> dict[str, Any]:
+    by_id = {manifest_page_id(page): page for page in pages if manifest_page_id(page)}
+    depths: dict[str, int] = {}
+
+    def depth_for(page_id_value: str) -> int:
+        if page_id_value in depths:
+            return depths[page_id_value]
+        page = by_id.get(page_id_value) or {}
+        parent_id = safe_str(page.get("parent") or page.get("pai"))
+        depth = depth_for(parent_id) + 1 if parent_id in by_id else 0
+        depths[page_id_value] = depth
+        return depth
+
+    edges = []
+    external_parents = []
+    for current_id, page in by_id.items():
+        parent_id = safe_str(page.get("parent") or page.get("pai"))
+        if parent_id:
+            edges.append({"page_id": current_id, "parent_id": parent_id})
+            if parent_id not in by_id and parent_id not in external_parents:
+                external_parents.append(parent_id)
+        depth_for(current_id)
+    return {
+        "page_count": len(pages),
+        "edge_count": len(edges),
+        "max_depth": max(depths.values(), default=0),
+        "recursive_depth_supported": True,
+        "edges": edges,
+        "external_parent_ids": external_parents,
+    }
+
+
 def page_create_name(page: dict[str, Any], display_name: str, desired_id: str) -> str:
     explicit = str(page.get("create_name") or page.get("technical_name") or "").strip()
     if explicit:
@@ -5384,14 +5597,19 @@ def flatten_page_tree(payload: Any) -> list[dict[str, Any]]:
         roots = []
     flat: list[dict[str, Any]] = []
 
-    def walk(items: Any) -> None:
+    def walk(items: Any, parent_id: str = "", depth: int = 0) -> None:
         if not isinstance(items, list):
             return
         for item in items:
             if not isinstance(item, dict):
                 continue
-            flat.append(item)
-            walk(item.get("subpaginas") or item.get("children") or [])
+            normalized_item = dict(item)
+            if parent_id and not safe_str(normalized_item.get("pai")):
+                normalized_item["_tree_parent_id"] = parent_id
+            normalized_item["_tree_depth"] = depth
+            flat.append(normalized_item)
+            current_id = safe_str(normalized_item.get("id"))
+            walk(item.get("subpaginas") or item.get("children") or [], current_id, depth + 1)
 
     walk(roots)
     return flat
@@ -5462,10 +5680,15 @@ def wait_manifest_pages_ready(
                 ).strip() if isinstance(accessible_page, dict) else ""
                 accessible_container_name = str(accessible_page.get("container_name") or "").strip() if isinstance(accessible_page, dict) else ""
                 accessible_container_id = str(accessible_page.get("container_id") or "").strip() if isinstance(accessible_page, dict) else ""
+                expected_parent_id = safe_str(page.get("parent") or page.get("pai"))
+                accessible_parent_id = safe_str(
+                    accessible_page.get("pai") or accessible_page.get("_tree_parent_id")
+                ) if isinstance(accessible_page, dict) else ""
+                parent_ok = not expected_parent_id or expected_parent_id == accessible_parent_id
                 name_ok = not expected_name or not accessible_name or expected_name == accessible_name
                 menu_safe = (not requires_container_name) or bool(accessible_container_name)
                 found = bool(accessible_page)
-                ready = found and name_ok and menu_safe and not resolve_error
+                ready = found and name_ok and parent_ok and menu_safe and not resolve_error
                 if not ready:
                     all_ready = False
                 last_results.append({
@@ -5475,6 +5698,10 @@ def wait_manifest_pages_ready(
                     "expected_name": expected_name,
                     "accessible_name": accessible_name,
                     "name_ok": name_ok,
+                    "expected_parent_id": expected_parent_id,
+                    "accessible_parent_id": accessible_parent_id,
+                    "parent_ok": parent_ok,
+                    "tree_depth": accessible_page.get("_tree_depth") if isinstance(accessible_page, dict) else None,
                     "requires_container_name": requires_container_name,
                     "container_id": accessible_container_id,
                     "container_name": accessible_container_name,
@@ -5574,9 +5801,10 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     app_root = Path(args.path).expanduser().resolve() if args.path else (manifest_path.parent / str(manifest.get("app_root") or ".")).resolve()
     workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
-    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
-    if not pages:
+    raw_pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    if not raw_pages:
         raise RejoinBIError("Manifest must include a non-empty pages array.")
+    pages = prepare_manifest_pages(raw_pages)
 
     workspace_name = args.workspace or workspace_cfg.get("name") or manifest.get("workspace_name")
     if not workspace_name:
@@ -5643,6 +5871,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
         "workspace": {"id": workspace.get("id"), "name": workspace.get("name"), "status": workspace.get("deploy_status")},
         "workspace_validation": validation,
         "upload": upload_result,
+        "page_hierarchy": manifest_hierarchy_summary(pages),
         "pages": page_results,
         "menu_refresh": menu_refresh,
         "page_readiness": page_readiness,
@@ -5655,7 +5884,8 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
     manifest, manifest_path = load_manifest(args.manifest)
     bind_manifest_tenant(args, manifest)
     client = make_client(args)
-    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    raw_pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    pages = prepare_manifest_pages(raw_pages)
     readiness = wait_manifest_pages_ready(
         client,
         pages,
@@ -5907,11 +6137,18 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
     errors: list[str] = []
     warnings: list[str] = []
     checks: list[dict[str, Any]] = []
-    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    raw_pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
     startup_mode = str(args.startup_mode or upload_cfg.get("startup_mode") or "static").strip().lower()
     manifest_language = detect_manifest_language(manifest)
     errors.extend(manifest_text_integrity_errors(manifest))
+    hierarchy_valid = True
+    try:
+        pages = prepare_manifest_pages(raw_pages) if raw_pages else []
+    except RejoinBIError as exc:
+        hierarchy_valid = False
+        pages = [page for page in raw_pages if isinstance(page, dict)]
+        errors.append(str(exc))
 
     if pages:
         files_by_page = []
@@ -5920,6 +6157,18 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
         workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
         workspace_name_for_pages = str(workspace_cfg.get("name") or manifest.get("workspace_name") or "").strip()
         workspace_name_key = normalize_text(workspace_name_for_pages)
+        hierarchy = manifest_hierarchy_summary(pages) if hierarchy_valid else {
+            "page_count": len(pages),
+            "recursive_depth_supported": True,
+            "valid": False,
+            "external_parent_ids": [],
+        }
+        checks.append({"name": "page_hierarchy", **hierarchy})
+        for external_parent_id in hierarchy.get("external_parent_ids") or []:
+            warnings.append(
+                f"Parent page '{external_parent_id}' is not declared in this manifest. "
+                "deploy-manifest will treat it as an existing platform page."
+            )
         for page in pages:
             if not isinstance(page, dict):
                 errors.append(f"Invalid manifest page entry: {page}")
@@ -7003,10 +7252,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_payload_args(p)
     p.set_defaults(func=cmd_page_maintenance)
 
-    p = sub.add_parser("set-page-order", help="Update page order/parent placement")
-    p.add_argument("--page-id", required=True)
+    p = sub.add_parser("set-page-order", help="Update page order or move it under any parent depth")
+    p.add_argument("--page-id", required=True, help="Exact id, unique route, or unique page name")
     p.add_argument("--position", type=int)
-    p.add_argument("--parent")
+    p.add_argument("--parent", help="Parent id/route/name; a child can be the parent of a grandchild")
     p.add_argument("--before")
     p.add_argument("--after")
     add_payload_args(p)
@@ -7015,14 +7264,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("accessible-pages", help="List pages visible to the current session")
     p.set_defaults(func=cmd_accessible_pages)
 
-    p = sub.add_parser("create-page", help="Create a page linked to a workspace")
+    p = sub.add_parser("create-page", help="Create a root page or a child at any recursive sidebar depth")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--name", required=True)
     p.add_argument("--file", default="")
     p.add_argument("--route", default="")
     p.add_argument("--icon", default="fas fa-chart-line")
     p.add_argument("--description", default="")
-    p.add_argument("--parent", default="")
+    p.add_argument("--parent", default="", help="Parent id/route/name; use the child id to create a grandchild")
     p.add_argument("--inactive", action="store_true")
     p.add_argument("--rls", action="store_true")
     p.add_argument("--workspace-password")
@@ -7036,7 +7285,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--route")
     p.add_argument("--icon")
     p.add_argument("--description")
-    p.add_argument("--parent")
+    p.add_argument("--parent", help="Parent id/route/name; empty removes the parent and cycles are blocked")
     p.add_argument("--active", action="store_true")
     p.add_argument("--inactive", action="store_true")
     p.add_argument("--rls", action="store_true")
