@@ -93,7 +93,7 @@ When a user provides a full platform address/URL, use it immediately and run the
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br ensure
 ```
 
-This first checks whether the platform address already has a saved session and validates that the profile is `Administrador Principal`, `Master`, or `Administrador`. If the session is missing, expired, or not allowed, it opens a local browser page, prefilled with the resolved platform URL, where the user enters email, password, and PIN if required. The helper posts to the Rejoin BI login API, validates the profile, then saves only the session cookies in `%USERPROFILE%\.rejoinbi`.
+This first checks whether the platform address already has a saved session and validates that the profile is `Administrador Principal`, `Master`, or `Administrador`. If the session is missing, expired, inactive for 24 hours, or not allowed, it opens a local browser page, prefilled with the resolved platform URL, where the user enters email, password, and PIN if required. The helper posts to the Rejoin BI login API, validates the profile, then saves only the session cookies in `%USERPROFILE%\.rejoinbi`. Authenticated use renews a sliding 24-hour inactivity window, so normal use during the day does not repeatedly require login.
 
 Continue only after `success: true`, `connected: true`, and `profile_allowed: true` are confirmed. Only after that may you mention listing workspaces, publishing dashboards, uploading files, creating pages, or other plugin actions.
 
@@ -132,7 +132,7 @@ $env:REJOINBI_PIN = "123456"
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
 
-The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi`. It does not save the password or PIN.
+The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi`. It does not save the password or PIN. The metadata includes the last authenticated use solely to enforce the 24-hour inactivity window; updates are throttled to avoid unnecessary disk writes.
 
 Administrative configuration shortcuts:
 

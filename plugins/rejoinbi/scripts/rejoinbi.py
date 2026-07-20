@@ -43,6 +43,8 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 DEFAULT_TIMEOUT = 120
+SESSION_IDLE_TIMEOUT_SECONDS = 24 * 60 * 60
+SESSION_TOUCH_INTERVAL_SECONDS = 5 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -352,6 +354,39 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def utc_timestamp(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except Exception:
+        return 0.0
+
+
+def session_last_used_timestamp(data: Any) -> float:
+    if not isinstance(data, dict):
+        return 0.0
+    return (
+        utc_timestamp(data.get("last_used_ts"))
+        or utc_timestamp(data.get("last_used_at"))
+        or utc_timestamp(data.get("saved_at"))
+    )
+
+
+def session_inactivity_expired(data: Any, *, now_ts: float | None = None) -> bool:
+    last_used_ts = session_last_used_timestamp(data)
+    if last_used_ts <= 0:
+        return False
+    current_ts = float(now_ts if now_ts is not None else time.time())
+    return (current_ts - last_used_ts) >= SESSION_IDLE_TIMEOUT_SECONDS
+
+
 def read_json(path: Path, default: Any) -> Any:
     try:
         if path.exists():
@@ -599,10 +634,16 @@ class RejoinBIClient:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "rejoinbi-plugin/0.1.0"})
         self.session_path = SESSION_DIR / f"{session_slug(self.base_url)}.json"
+        self._last_session_touch_ts = 0.0
         self.load_session()
 
     def load_session(self) -> None:
         data = read_json(self.session_path, {})
+        if session_inactivity_expired(data):
+            if self.session_path.exists():
+                self.session_path.unlink()
+            return
+        self._last_session_touch_ts = session_last_used_timestamp(data)
         cookies = data.get("cookies") if isinstance(data, dict) else None
         if isinstance(cookies, dict):
             jar = requests.cookies.RequestsCookieJar()
@@ -615,10 +656,14 @@ class RejoinBIClient:
 
     def save_session(self, identity: dict[str, Any] | None = None, auth_context: dict[str, Any] | None = None) -> None:
         existing = read_json(self.session_path, {})
+        now_ts = time.time()
         payload = {
             "base_url": self.base_url,
             "cookies": requests.utils.dict_from_cookiejar(self.session.cookies),
             "saved_at": utc_now(),
+            "last_used_at": utc_now(),
+            "last_used_ts": now_ts,
+            "idle_timeout_seconds": SESSION_IDLE_TIMEOUT_SECONDS,
         }
         if identity:
             payload["identity"] = identity
@@ -629,12 +674,30 @@ class RejoinBIClient:
         elif isinstance(existing, dict) and isinstance(existing.get("auth_context"), dict):
             payload["auth_context"] = existing.get("auth_context")
         write_json(self.session_path, payload)
+        self._last_session_touch_ts = now_ts
         config = read_json(CONFIG_PATH, {})
         if not isinstance(config, dict):
             config = {}
         config["active_base_url"] = self.base_url
         config["updated_at"] = utc_now()
         write_json(CONFIG_PATH, config)
+
+    def touch_session_usage(self, *, force: bool = False) -> None:
+        if not self.session_path.exists():
+            return
+        now_ts = time.time()
+        if not force and self._last_session_touch_ts > 0:
+            if (now_ts - self._last_session_touch_ts) < SESSION_TOUCH_INTERVAL_SECONDS:
+                return
+        data = read_json(self.session_path, {})
+        cookies = data.get("cookies") if isinstance(data, dict) else None
+        if not isinstance(cookies, dict) or not cookies:
+            return
+        data["last_used_at"] = utc_now()
+        data["last_used_ts"] = now_ts
+        data["idle_timeout_seconds"] = SESSION_IDLE_TIMEOUT_SECONDS
+        write_json(self.session_path, data)
+        self._last_session_touch_ts = now_ts
 
     def clear_session(self) -> None:
         if self.session_path.exists():
@@ -670,6 +733,7 @@ class RejoinBIClient:
                 message = str(payload.get("error") or payload.get("message") or payload.get("raw") or "")
             message = compact_response_message(message)
             raise RejoinBIError(f"{method} {path} failed with HTTP {response.status_code}: {message}")
+        self.touch_session_usage()
         return payload, response
 
     def download(self, path: str, output: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
@@ -690,6 +754,7 @@ class RejoinBIClient:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     handle.write(chunk)
+        self.touch_session_usage()
 
 
 def make_client(args: argparse.Namespace) -> RejoinBIClient:
