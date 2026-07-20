@@ -60,11 +60,18 @@ class SessionInactivityTests(unittest.TestCase):
 
             with patch.object(rejoinbi, "SESSION_DIR", session_dir):
                 client = rejoinbi.RejoinBIClient(self.base_url)
+                client.session.cookies.set(
+                    "plataforma_session",
+                    "renewed-cookie",
+                    domain="tenant.rejoinbi.com.br",
+                    path="/",
+                )
                 client._last_session_touch_ts = payload["last_used_ts"]
                 client.touch_session_usage(force=True)
 
             refreshed = rejoinbi.read_json(session_path, {})
             self.assertGreater(refreshed["last_used_ts"], payload["last_used_ts"])
+            self.assertEqual(refreshed["cookies"]["plataforma_session"], "renewed-cookie")
             self.assertEqual(
                 refreshed["idle_timeout_seconds"],
                 rejoinbi.SESSION_IDLE_TIMEOUT_SECONDS,

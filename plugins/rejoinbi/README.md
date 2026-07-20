@@ -70,7 +70,7 @@ python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py data-engine status
 ```
 
-`ensure` first checks whether the Rejoin BI platform address already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting session cookies. Session inactivity uses a sliding 24-hour window: authenticated use renews the local timestamp (with throttled disk writes), and a full 24 hours without use discards the saved session and requires login again.
+`ensure` first checks whether the Rejoin BI platform address already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting session cookies. Session inactivity uses a sliding 24-hour window: authenticated use persists the server-renewed cookie and renews the local timestamp (with throttled disk writes), and a full 24 hours without use discards the saved session and requires login again.
 
 The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
 

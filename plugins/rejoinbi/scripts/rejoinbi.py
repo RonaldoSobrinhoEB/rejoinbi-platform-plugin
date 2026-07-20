@@ -690,9 +690,12 @@ class RejoinBIClient:
             if (now_ts - self._last_session_touch_ts) < SESSION_TOUCH_INTERVAL_SECONDS:
                 return
         data = read_json(self.session_path, {})
-        cookies = data.get("cookies") if isinstance(data, dict) else None
-        if not isinstance(cookies, dict) or not cookies:
+        stored_cookies = data.get("cookies") if isinstance(data, dict) else None
+        current_cookies = requests.utils.dict_from_cookiejar(self.session.cookies)
+        if not current_cookies and (not isinstance(stored_cookies, dict) or not stored_cookies):
             return
+        if current_cookies:
+            data["cookies"] = current_cookies
         data["last_used_at"] = utc_now()
         data["last_used_ts"] = now_ts
         data["idle_timeout_seconds"] = SESSION_IDLE_TIMEOUT_SECONDS
