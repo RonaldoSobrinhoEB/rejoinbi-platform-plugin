@@ -1,6 +1,8 @@
 import importlib.util
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1] / "plugins" / "rejoinbi"
@@ -12,6 +14,50 @@ SPEC.loader.exec_module(rejoinbi)
 
 
 class PageHierarchyTests(unittest.TestCase):
+    def test_set_page_order_uses_backend_canonical_fields(self):
+        class FakeClient:
+            def __init__(self):
+                self.request_payload = None
+
+            def request(self, method, path, **kwargs):
+                self.request_payload = {
+                    "method": method,
+                    "path": path,
+                    "json": kwargs.get("json"),
+                }
+                return {"success": True}, None
+
+        client = FakeClient()
+        args = SimpleNamespace(
+            data_file=None,
+            data_json=None,
+            page_id="neto",
+            position=2,
+            parent="filho",
+            before=None,
+            after=None,
+            json=True,
+        )
+        pages = [
+            {"id": "pai", "nome": "Pai", "pai": ""},
+            {"id": "filho", "nome": "Filho", "pai": "pai"},
+            {"id": "neto", "nome": "Neto", "pai": "pai"},
+        ]
+        with (
+            patch.object(rejoinbi, "make_client", return_value=client),
+            patch.object(rejoinbi, "list_pages", return_value=pages),
+            patch.object(rejoinbi, "refresh_menu_caches", return_value=[]),
+            patch.object(rejoinbi, "print_payload"),
+        ):
+            self.assertEqual(rejoinbi.cmd_set_page_order(args), 0)
+
+        self.assertEqual(client.request_payload["method"], "PUT")
+        self.assertEqual(client.request_payload["path"], "/plataforma/api/paginas/neto/ordem")
+        self.assertEqual(
+            client.request_payload["json"],
+            {"ordem_menu": 2, "pai": "filho"},
+        )
+
     def test_nested_manifest_flattens_parent_first_through_grandchild(self):
         pages = rejoinbi.prepare_manifest_pages([
             {

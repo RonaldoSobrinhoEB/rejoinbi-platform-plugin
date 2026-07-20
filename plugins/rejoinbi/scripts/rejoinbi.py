@@ -4349,7 +4349,7 @@ def cmd_set_page_order(args: argparse.Namespace) -> int:
         raise RejoinBIError(f"Page not found: {args.page_id}")
     current_page_id = page_id(current_page)
     if args.position is not None:
-        payload["ordem"] = args.position
+        payload["ordem_menu"] = args.position
     if args.parent is not None:
         payload["pai"] = resolve_page_parent_id(current_pages, args.parent, child_id=current_page_id)
     elif "pai" in payload:
