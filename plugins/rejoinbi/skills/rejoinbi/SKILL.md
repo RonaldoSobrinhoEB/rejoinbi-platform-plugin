@@ -1,6 +1,6 @@
 ---
 name: rejoinbi
-description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload dashboard/app files, publish BI/ECharts projects, operate BI Studio/Data Engine, and create production-grade data dashboards with specialist data modeling and UI/UX quality rules.
+description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload and publish dashboards, operate BI Studio/Data Engine, manage persistent databases, and inspect or migrate project SQLite databases with complete schema/data validation. Use for Rejoin BI administration, dashboard deployment, managed database creation/query/backup/token work, and migration of a project's existing SQLite database into platform-managed storage.
 ---
 
 # Rejoin BI
@@ -30,11 +30,15 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "mudar logo", "favicon", "icone", "imagem do menu", "cores", "identidade visual": use `backup-platform-branding` first, then `set-platform-branding` with the relevant image/color files. Mention the restore command from the tool output.
 - "restaurar padrao", "voltar como estava", "desfazer visual": use `restore-platform-branding --backup <backup> --yes` when a backup exists. Use `restore-platform-config-defaults --yes` only when the user specifically wants platform defaults.
 - "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
-- "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with the explicit platform address in `--tenant`.
+- "subir/substituir UM arquivo na pasta Y" ou "fazer upload de UM arquivo": use `upload-file --workspace <workspace> --file <caminho> --folder <pasta>` com o endere?o expl?cito em `--tenant`. Se quiser sobrescrever sem backup, omita `--replace`. Use `--map` para escolher o caminho exato de destino.
+- "subir VARIOS arquivos" ou "subir arquivos espec?ficos": use `upload-files --workspace <workspace> --files <arquivo1> <arquivo2> --folder <pasta>` com `--tenant`. Adicione `--replace` para fazer backup local antes de sobrescrever. Use `--map filename=pasta/destino/` para direcionar cada arquivo.
+- "subir pasta inteira" ou "subir projeto": use `upload-folder-select --workspace <workspace> --path <pasta>` ou `deploy-manifest --manifest <manifest.json>` para dashboards completos com multiplas paginas.
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
 - "criar pagina", "rota", "pai/filho/neto": the Rejoin BI sidebar is recursive; it is not limited to two levels. Any child page can be the parent of a grandchild, and the same rule continues for deeper descendants. Create/resolve parents before descendants, pass the immediate parent with `--parent`, refresh/verify the menu, and never replace a requested grandchild with a sibling. Use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
 - "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
 - "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`. For dashboard creation, use the professional canvas standard in `examples/codex-bi-studio-canvas`: build/complete the dataset first, save a polished desktop/mobile layout, export, normalize, deploy, and smoke test. For BI exports with accented tab slugs or parquet data, use `bi-normalize-export` before uploading the workspace package.
+- "criar banco", "gerenciar banco", "banco persistente", "SQLite gerenciado", "API de banco": act on the request with `managed-databases`; do not only explain the page. Resolve existing databases by list/name/id, then create, inspect schema, query, back up, check integrity, or manage tokens as requested.
+- "migrar o banco deste projeto", "copiar o SQLite atual", "levar os dados para o banco gerenciado": inspect the current project and follow the Managed Database Workflow below. Preserve the source, migrate structure and data, validate every table count and integrity, and rewire the project only when requested.
 - "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
 - "usuarios", "permissoes", "grupos", "anuncios", "RLS", "IA", "auditoria", "sistema", "gateway", "codex keys": route through `docs/agent-operating-playbook.md` and `docs/admin-configuration-map.md`; do the read command first, then the safest write command with explicit platform address and confirmation.
 - "testar RLS", "usuario padrao com RLS", "validar PIN", "filtro por email": use `examples/codex-rls-suite`, create/read the mailbox through `https://pt.emailfake.com/channel1/`, grant only the target page, configure RLS by `container_id`, and connect the standard user only with `--allow-standard` for validation.
@@ -49,6 +53,16 @@ Do not give generic capability lists when the user already stated an actionable 
 - Separate plugin failures from platform/backend optional issues.
 - After any write, provide the changed fields, target platform address, backup path if any, and verification performed.
 - If a user asks for "tudo", "100%", "testa geral", or "evolucao extrema", run or propose the full checklist in `docs/agent-operating-playbook.md` instead of improvising.
+
+## Managed Database Workflow
+
+- Connect with `ensure`, then run `managed-databases list` before managing an existing database. If one exact name/id matches, act without asking the user to repeat it.
+- In a project migration, inspect source code, configuration, and local `*.sqlite`, `*.sqlite3`, and `*.db` files. Identify which file the running application actually uses; ask only when multiple live sources remain materially ambiguous.
+- Run `managed-databases inspect-sqlite --source <file>` first. It creates a consistent local snapshot and inventories integrity, tables, rows, foreign keys, indexes, views, triggers, generated columns, and BLOB limits without changing the source.
+- Run `managed-databases migrate-sqlite --source <file> --name <name> --yes` for a new destination, or pass `--database-id` only for an existing empty destination. The command recreates schema and data, migrates in batches, validates per-table row counts and destination integrity, and trashes a newly-created partial destination on failure.
+- Never delete, overwrite, rename, or empty the source database as part of migration. Keep the old project operational until destination validation and any application reconfiguration are complete.
+- When the user asks to connect the project to the new database, create a scoped token after migration, store it in a non-committed secret/environment setting, replace direct SQLite file access with the HTTPS query API adapter, and run the project's relevant tests. Never commit or print the token again after the one-time handoff.
+- Report migration success only when source integrity is healthy, every source/target table count matches, and destination integrity returns `ok`. Report unsupported SQLite extensions or oversized BLOBs as blockers instead of silently omitting them.
 
 ## What the platform exposes
 
@@ -77,6 +91,7 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Runtime/system diagnostics and cache controls: `/plataforma/api/*` status/cache/runtime endpoints are available through `system-admin` and `route-map`.
 - Upload gateway and capability endpoints: `/plataforma/api/gateway/*`, `/upload-capabilities`, `/python-versions`, and `/upload-status/<id>` are available through `upload-admin`.
 - Data Engine DB/repository/dataset/session endpoints: `/plataforma/data-engine/api/*` are available through `data-engine`.
+- Persistent managed SQLite databases: `/plataforma/api/managed-databases/*` is available through `managed-databases`. Access is restricted by the platform to Master and Administrador Principal.
 - BI Studio + Data Engine inventory: `studio-inventory` joins BI projects with Data Engine status, sessions, DB connections, repository, datasets, and files.
 
 The plugin client enforces the operational rule for this platform: persisted sessions and privileged commands are allowed only for `Administrador Principal`, `Master`, or `Administrador`. A standard `Usuario` login is rejected by default. Use `--allow-standard` only for an intentional negative test.
@@ -172,6 +187,13 @@ python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" bi-load-layout --project-id 1 --tab "VisÃ£o 360"
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br bi-save-theme --project-id 1 --data-file C:\path\theme.json --yes
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" data-engine db-connections --project-id 1
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" managed-databases list
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" managed-databases inspect-sqlite --source C:\path\projeto.sqlite3
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br managed-databases migrate-sqlite --source C:\path\projeto.sqlite3 --name "Banco do projeto" --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br managed-databases create --name "Operacao" --description "Dados persistentes" --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" managed-databases schema --database-id 00000000-0000-0000-0000-000000000000
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br managed-databases query --database-id 00000000-0000-0000-0000-000000000000 --sql "CREATE TABLE exemplo (id INTEGER PRIMARY KEY, nome TEXT)" --yes
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br managed-databases create-token --database-id 00000000-0000-0000-0000-000000000000 --token-name "Aplicacao externa" --scope read_write --yes
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" data-engine repository-inspect-sheets --file C:\path\dados.xlsx
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file C:\path\dados.xlsx --folder codex --selected-sheet "VisÃ£o Geral" --yes
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" bi-normalize-export --path C:\path\bi-export --remove-old
@@ -298,6 +320,33 @@ Upload a folder like the UI and choose startup options:
 
 ```powershell
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start
+```
+
+
+Upload or replace a single file (new `upload-file` command):
+
+```powershell
+# Upload a single file to workspace root
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-file --workspace 12 --file C:\path\script.py
+
+# Upload to a specific folder inside the workspace (e.g. static/css)
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-file --workspace 12 --file C:\path\style.css --folder static/css
+
+# Upload with an exact target path (overrides --folder)
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-file --workspace 12 --file C:\path\logo.png --map static/images/logo.png
+
+# Upload with local backup before overwriting
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-file --workspace 12 --file C:\path\app.py --folder templates --replace
+
+# Upload single file with container restart after upload
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-file --workspace 12 --file C:\path\app.py --folder templates --restart
+```
+
+Upload multiple specific files (with optional `--replace` backup):
+
+```powershell
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-files --workspace 12 --files C:\path\file1.py C:\path\file2.html --folder templates
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-files --workspace 12 --files C:\path\app.py --folder templates --replace
 ```
 
 Upload a ZIP like the UI:

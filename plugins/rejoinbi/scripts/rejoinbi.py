@@ -11,6 +11,7 @@ import argparse
 import base64
 import fnmatch
 import getpass
+import hashlib
 import html
 import json
 import mimetypes
@@ -18,7 +19,9 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -491,7 +494,7 @@ def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
         return True
     if command == "platform-title":
         return bool(str(getattr(args, "title", "") or "").strip())
-    if command in {"codex-keys", "data-engine", "email", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
+    if command in {"codex-keys", "data-engine", "email", "managed-databases", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
         action = str(getattr(args, "action", "") or "").strip()
         read_only_actions = {
             "capabilities",
@@ -504,6 +507,12 @@ def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
             "inventory",
             "list",
             "list-files",
+            "get",
+            "schema",
+            "tokens",
+            "download",
+            "integrity",
+            "inspect-sqlite",
             "repository-global-context",
             "repository-list",
             "route",
@@ -632,9 +641,13 @@ class RejoinBIClient:
     def __init__(self, base_url: str):
         self.base_url = clean_base_url(base_url)
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "rejoinbi-plugin/0.1.0"})
+        self.session.headers.update({
+            "User-Agent": "rejoinbi-platform-plugin/0.1.0",
+            "X-RejoinBI-Client": "rejoinbi-platform-plugin",
+        })
         self.session_path = SESSION_DIR / f"{session_slug(self.base_url)}.json"
         self._last_session_touch_ts = 0.0
+        self._last_heartbeat_monotonic = 0.0
         self.load_session()
 
     def load_session(self) -> None:
@@ -707,6 +720,15 @@ class RejoinBIClient:
             self.session_path.unlink()
         self.session.cookies.clear()
 
+    def keep_session_alive(self, *, interval_seconds: int = 300, force: bool = False) -> None:
+        """Refresh long-running plugin work without heartbeating every API request."""
+        now = time.monotonic()
+        if not force and (now - self._last_heartbeat_monotonic) < max(15, interval_seconds):
+            return
+        self.request("POST", "/plataforma/api/session/heartbeat", json={}, timeout=60)
+        self._last_heartbeat_monotonic = now
+        self.save_session()
+
     def url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
             target = clean_base_url(path)
@@ -757,6 +779,43 @@ class RejoinBIClient:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     handle.write(chunk)
+
+    def download_workspace_export(
+        self,
+        workspace_id: Any,
+        sha: str,
+        output: Path,
+        *,
+        timeout: int = DEFAULT_TIMEOUT,
+    ) -> dict[str, Any]:
+        """Prepare, poll, and stream a workspace ZIP using the asynchronous exporter."""
+        encoded_sha = quote(str(sha), safe="")
+        base_path = f"/plataforma/api/containers/{workspace_id}/versions/{encoded_sha}/export"
+        prepared, _ = self.request("POST", f"{base_path}/prepare", json={}, timeout=timeout)
+        if not isinstance(prepared, dict) or not prepared.get("job_id"):
+            raise RejoinBIError("Workspace export did not return a job id.")
+
+        job_id = quote(str(prepared["job_id"]), safe="")
+        status_path = f"/plataforma/api/containers/exports/{job_id}"
+        deadline = time.monotonic() + max(1, timeout)
+        status: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            payload, _ = self.request("GET", status_path, timeout=timeout)
+            if not isinstance(payload, dict):
+                raise RejoinBIError("Workspace export returned an invalid status payload.")
+            status = payload
+            state = str(status.get("status") or "").lower()
+            if state == "error":
+                raise RejoinBIError(str(status.get("error") or "Workspace export failed."))
+            if state == "ready" and status.get("download_url"):
+                self.download(str(status["download_url"]), output, timeout=timeout)
+                return status
+            time.sleep(1)
+
+        raise RejoinBIError(
+            f"Workspace export was not ready after {timeout} seconds "
+            f"(last status: {status.get('status') or 'unknown'})."
+        )
         self.touch_session_usage()
 
 
@@ -2409,6 +2468,16 @@ def open_upload_files(paths: list[str], stack: ExitStack, *, allow_sensitive: bo
 def cmd_upload_files(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
+    if getattr(args, "replace", False):
+        print("[UPLOAD] --replace mode enabled - backing up files before upload")
+        import tempfile, time
+        for f in args.files:
+            fp = Path(f).expanduser().resolve()
+            if fp.is_file():
+                bdir = Path(tempfile.mkdtemp(prefix="rejoinbi_replace_backup_"))
+                bp = bdir / f"{fp.stem}.{int(time.time())}.bak"
+                shutil.copy2(str(fp), str(bp))
+                print(f"  [BACKUP] {fp.name} -> {bp}")
     if args.workspace_password:
         client.request(
             "POST",
@@ -2437,6 +2506,48 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         data, _ = client.request("POST", "/plataforma/api/upload-multiple-files", data=form_data, files=files, timeout=args.timeout)
     print_payload(data, as_json=args.json)
     return 0
+
+
+def cmd_upload_file(args: argparse.Namespace) -> int:
+    """Upload a single file to a workspace. Wraps cmd_upload_files."""
+    import tempfile, shutil, time
+    from pathlib import Path
+
+    file_path = Path(args.file).expanduser().resolve()
+    if not file_path.is_file():
+        raise RejoinBIError(f"File not found: {file_path}")
+
+    map_list = []
+    if args.map:
+        map_list.append(f"{file_path.name}={args.map}")
+
+    if args.replace:
+        try:
+            target_path = (args.folder + "/" + file_path.name) if args.folder else file_path.name
+            if args.map:
+                target_path = args.map.rstrip("/") + "/" + file_path.name if "/" in args.map else args.map
+            backup_dir = Path(tempfile.mkdtemp(prefix="rejoinbi_backup_"))
+            backup_path = backup_dir / f"{file_path.stem}.{int(time.time())}.bak"
+            shutil.copy2(str(file_path), str(backup_path))
+            print(f"[BACKUP] Local backup saved: {backup_path}")
+        except Exception as e:
+            print(f"[WARN] Backup failed (continuing): {e}")
+
+    from types import SimpleNamespace
+    fake = SimpleNamespace(
+        workspace=args.workspace,
+        files=[str(file_path)],
+        folder=args.folder or "",
+        message=args.message,
+        map=map_list if map_list else None,
+        restart=args.restart,
+        workspace_password=args.workspace_password,
+        allow_sensitive_files=args.allow_sensitive_files,
+        timeout=args.timeout,
+        json=getattr(args, "json", False),
+        replace=getattr(args, "replace", False),
+    )
+    return cmd_upload_files(fake)
 
 
 def iter_folder_files(root: Path, exclude_names: set[str], *, allow_sensitive: bool = False) -> list[Path]:
@@ -2543,6 +2654,16 @@ def select_app_file(
 def cmd_upload_zip_select(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
+    if getattr(args, "replace", False):
+        print("[UPLOAD] --replace mode enabled - backing up files before upload")
+        import tempfile, time
+        for f in args.files:
+            fp = Path(f).expanduser().resolve()
+            if fp.is_file():
+                bdir = Path(tempfile.mkdtemp(prefix="rejoinbi_replace_backup_"))
+                bp = bdir / f"{fp.stem}.{int(time.time())}.bak"
+                shutil.copy2(str(fp), str(bp))
+                print(f"  [BACKUP] {fp.name} -> {bp}")
     if args.workspace_password:
         client.request("POST", "/plataforma/api/validate-container-password", json={"container_id": workspace.get("id"), "password": args.workspace_password})
     zip_path = Path(args.zip).expanduser().resolve()
@@ -2561,6 +2682,16 @@ def cmd_upload_zip_select(args: argparse.Namespace) -> int:
 def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
+    if getattr(args, "replace", False):
+        print("[UPLOAD] --replace mode enabled - backing up files before upload")
+        import tempfile, time
+        for f in args.files:
+            fp = Path(f).expanduser().resolve()
+            if fp.is_file():
+                bdir = Path(tempfile.mkdtemp(prefix="rejoinbi_replace_backup_"))
+                bp = bdir / f"{fp.stem}.{int(time.time())}.bak"
+                shutil.copy2(str(fp), str(bp))
+                print(f"  [BACKUP] {fp.name} -> {bp}")
     if args.workspace_password:
         client.request("POST", "/plataforma/api/validate-container-password", json={"container_id": workspace.get("id"), "password": args.workspace_password})
     root = Path(args.path).expanduser().resolve()
@@ -4765,6 +4896,502 @@ def cmd_upload_admin(args: argparse.Namespace) -> int:
     return 0
 
 
+SQLITE_MIGRATION_MAX_BLOB_BYTES = 45_000
+# Production SQLite reports MAX_VARIABLE_NUMBER=32766. Keep a conservative
+# margin while avoiding thousands of tiny HTTPS requests for large datasets.
+SQLITE_MIGRATION_MAX_VARIABLES = 8000
+
+
+def _sqlite_identifier(value: str) -> str:
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _sqlite_source_path(raw_path: str | None) -> Path:
+    if not raw_path:
+        raise RejoinBIError("--source is required for SQLite inspection or migration.")
+    source = Path(raw_path).expanduser().resolve()
+    if not source.is_file():
+        raise RejoinBIError(f"SQLite source file was not found: {source}")
+    if source.stat().st_size:
+        with source.open("rb") as handle:
+            if handle.read(16) != b"SQLite format 3\x00":
+                raise RejoinBIError(f"Source is not an unencrypted SQLite database: {source}")
+    return source
+
+
+def _sqlite_snapshot(source: Path, destination: Path) -> None:
+    source_conn = sqlite3.connect(f"{source.as_uri()}?mode=ro", uri=True, timeout=30)
+    target_conn = sqlite3.connect(str(destination), timeout=30)
+    try:
+        source_conn.backup(target_conn)
+        target_conn.commit()
+    except sqlite3.DatabaseError as exc:
+        raise RejoinBIError(f"Could not create a consistent SQLite snapshot: {exc}") from exc
+    finally:
+        target_conn.close()
+        source_conn.close()
+
+
+def _sqlite_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sqlite_objects(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT type, name, tbl_name, sql
+        FROM sqlite_master
+        WHERE type IN ('table', 'index', 'view', 'trigger')
+          AND name NOT LIKE 'sqlite_%'
+          AND sql IS NOT NULL
+        ORDER BY rowid
+        """
+    ).fetchall()
+    shadow_tables: set[str] = set()
+    try:
+        shadow_tables = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_list").fetchall()
+            if str(row[2]).lower() == "shadow"
+        }
+    except sqlite3.DatabaseError:
+        pass
+    return [
+        dict(row)
+        for row in rows
+        if str(row["name"]) not in shadow_tables and str(row["tbl_name"]) not in shadow_tables
+    ]
+
+
+def _sqlite_insertable_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
+    rows = conn.execute(f"PRAGMA table_xinfo({_sqlite_identifier(table_name)})").fetchall()
+    return [str(row["name"]) for row in rows if int(row["hidden"] or 0) == 0]
+
+
+def _sqlite_table_order(conn: sqlite3.Connection, table_names: list[str]) -> tuple[list[str], list[str]]:
+    known = set(table_names)
+    dependencies: dict[str, set[str]] = {}
+    for table_name in table_names:
+        rows = conn.execute(f"PRAGMA foreign_key_list({_sqlite_identifier(table_name)})").fetchall()
+        dependencies[table_name] = {
+            str(row["table"])
+            for row in rows
+            if str(row["table"]) in known and str(row["table"]) != table_name
+        }
+    ordered: list[str] = []
+    pending = list(table_names)
+    while pending:
+        ready = [name for name in pending if dependencies[name].issubset(set(ordered))]
+        if not ready:
+            return ordered + pending, pending
+        for name in ready:
+            ordered.append(name)
+            pending.remove(name)
+    return ordered, []
+
+
+def _inspect_sqlite_snapshot(snapshot: Path, source: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    conn = sqlite3.connect(str(snapshot), timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        integrity = [str(row[0]) for row in conn.execute("PRAGMA integrity_check").fetchall()]
+        objects = _sqlite_objects(conn)
+        table_names = [item["name"] for item in objects if item["type"] == "table"]
+        ordered_tables, cycle_tables = _sqlite_table_order(conn, table_names)
+        tables: list[dict[str, Any]] = []
+        for table_name in ordered_tables:
+            columns = _sqlite_insertable_columns(conn, table_name)
+            row_count = int(conn.execute(f"SELECT COUNT(*) FROM {_sqlite_identifier(table_name)}").fetchone()[0])
+            max_blob_bytes = 0
+            for column_name in columns:
+                value = conn.execute(
+                    f"SELECT COALESCE(MAX(length({_sqlite_identifier(column_name)})), 0) "
+                    f"FROM {_sqlite_identifier(table_name)} WHERE typeof({_sqlite_identifier(column_name)}) = 'blob'"
+                ).fetchone()[0]
+                max_blob_bytes = max(max_blob_bytes, int(value or 0))
+            tables.append(
+                {
+                    "name": table_name,
+                    "columns": columns,
+                    "row_count": row_count,
+                    "max_blob_bytes": max_blob_bytes,
+                }
+            )
+        object_counts = {
+            object_type: sum(1 for item in objects if item["type"] == object_type)
+            for object_type in ("table", "index", "view", "trigger")
+        }
+        manifest = {
+            "source": str(source),
+            "snapshot_size_bytes": snapshot.stat().st_size,
+            "snapshot_sha256": _sqlite_sha256(snapshot),
+            "integrity": integrity,
+            "healthy": integrity == ["ok"],
+            "object_counts": object_counts,
+            "table_count": len(tables),
+            "row_count": sum(item["row_count"] for item in tables),
+            "tables": tables,
+            "foreign_key_cycle_tables": cycle_tables,
+        }
+        return manifest, objects, ordered_tables
+    finally:
+        conn.close()
+
+
+def _managed_database_query(
+    client: RejoinBIClient,
+    base: str,
+    database_id: str,
+    sql: str,
+    params: list[Any] | None,
+    timeout: int,
+) -> dict[str, Any]:
+    client.keep_session_alive()
+    data, _ = client.request(
+        "POST",
+        f"{base}/{quote(database_id)}/query",
+        json={"sql": sql, "params": params or [], "max_rows": 5000},
+        timeout=timeout,
+    )
+    return data
+
+
+def _sqlite_insert_statement(table_name: str, columns: list[str], rows: list[sqlite3.Row]) -> tuple[str, list[Any]]:
+    if not columns:
+        return f"INSERT INTO {_sqlite_identifier(table_name)} DEFAULT VALUES", []
+    value_groups: list[str] = []
+    params: list[Any] = []
+    for row in rows:
+        fragments: list[str] = []
+        for column_name in columns:
+            value = row[column_name]
+            if isinstance(value, memoryview):
+                value = value.tobytes()
+            if isinstance(value, (bytes, bytearray)):
+                fragments.append(f"X'{bytes(value).hex()}'")
+            else:
+                fragments.append("?")
+                params.append(value)
+        value_groups.append("(" + ", ".join(fragments) + ")")
+    column_sql = ", ".join(_sqlite_identifier(column) for column in columns)
+    statement = (
+        f"INSERT INTO {_sqlite_identifier(table_name)} ({column_sql}) VALUES "
+        + ", ".join(value_groups)
+    )
+    return statement, params
+
+
+def _sqlite_rows_digest(rows: list[Any] | sqlite3.Cursor, digest: Any | None = None) -> str:
+    result = digest or hashlib.sha256()
+    for row in rows:
+        values: list[Any] = []
+        for value in list(row):
+            if isinstance(value, memoryview):
+                value = value.tobytes()
+            if isinstance(value, (bytes, bytearray)):
+                value = {"type": "base64", "value": base64.b64encode(bytes(value)).decode("ascii")}
+            values.append(value)
+        encoded = json.dumps(
+            values, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+        result.update(len(encoded).to_bytes(8, "big"))
+        result.update(encoded)
+    return result.hexdigest()
+
+
+def _migrate_sqlite_snapshot(
+    client: RejoinBIClient,
+    args: argparse.Namespace,
+    base: str,
+    snapshot: Path,
+    source: Path,
+    manifest: dict[str, Any],
+    objects: list[dict[str, str]],
+    ordered_tables: list[str],
+) -> dict[str, Any]:
+    if not manifest["healthy"]:
+        raise RejoinBIError(f"Source SQLite integrity check failed: {manifest['integrity'][:5]}")
+    oversized = [item for item in manifest["tables"] if item["max_blob_bytes"] > SQLITE_MIGRATION_MAX_BLOB_BYTES]
+    if oversized:
+        details = ", ".join(f"{item['name']} ({item['max_blob_bytes']} bytes)" for item in oversized)
+        raise RejoinBIError(
+            "The source contains BLOB values larger than the safe SQL API migration limit: " + details
+        )
+
+    created_target = False
+    database_id = str(getattr(args, "database_id", "") or "").strip()
+    target_name = str(getattr(args, "name", "") or "").strip()
+    if database_id:
+        detail, _ = client.request("GET", f"{base}/{quote(database_id)}", timeout=args.timeout)
+        target = detail.get("database") or detail
+        target_name = str(target.get("name") or database_id)
+    else:
+        if not target_name:
+            raise RejoinBIError("Pass --name to create the managed destination, or --database-id for an empty destination.")
+        created, _ = client.request(
+            "POST",
+            base,
+            json={"name": target_name, "description": str(getattr(args, "description", "") or "")},
+            timeout=args.timeout,
+        )
+        target = created.get("database") or created
+        database_id = str(target.get("id") or "")
+        if not database_id:
+            raise RejoinBIError("The platform created a database but did not return its id.")
+        created_target = True
+
+    schema, _ = client.request("GET", f"{base}/{quote(database_id)}/schema", timeout=args.timeout)
+    if schema.get("objects"):
+        raise RejoinBIError("The managed destination must be empty before migration.")
+
+    source_conn = sqlite3.connect(str(snapshot), timeout=30)
+    source_conn.row_factory = sqlite3.Row
+    migrated_counts: dict[str, int] = {}
+    try:
+        table_objects = {item["name"]: item for item in objects if item["type"] == "table"}
+        for table_name in ordered_tables:
+            _managed_database_query(client, base, database_id, table_objects[table_name]["sql"], [], args.timeout)
+
+        requested_batch = max(1, min(int(getattr(args, "batch_size", 100) or 100), 1000))
+        for table in manifest["tables"]:
+            table_name = table["name"]
+            columns = table["columns"]
+            if not table["row_count"]:
+                migrated_counts[table_name] = 0
+                continue
+            if not columns:
+                for _ in range(table["row_count"]):
+                    _managed_database_query(
+                        client, base, database_id,
+                        f"INSERT INTO {_sqlite_identifier(table_name)} DEFAULT VALUES", [], args.timeout,
+                    )
+                migrated_counts[table_name] = table["row_count"]
+                continue
+            batch_size = min(requested_batch, max(1, SQLITE_MIGRATION_MAX_VARIABLES // len(columns)))
+            select_columns = ", ".join(_sqlite_identifier(column) for column in columns)
+            cursor = source_conn.execute(
+                f"SELECT {select_columns} FROM {_sqlite_identifier(table_name)}"
+            )
+            migrated = 0
+            while True:
+                rows = cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+                statement, params = _sqlite_insert_statement(table_name, columns, rows)
+                _managed_database_query(client, base, database_id, statement, params, args.timeout)
+                migrated += len(rows)
+            migrated_counts[table_name] = migrated
+
+        for object_type in ("index", "view", "trigger"):
+            for item in objects:
+                if item["type"] == object_type:
+                    _managed_database_query(client, base, database_id, item["sql"], [], args.timeout)
+
+        validation_counts: dict[str, dict[str, Any]] = {}
+        for table in manifest["tables"]:
+            result = _managed_database_query(
+                client,
+                base,
+                database_id,
+                f"SELECT COUNT(*) AS total FROM {_sqlite_identifier(table['name'])}",
+                [],
+                args.timeout,
+            )
+            target_count = int((result.get("rows") or [[-1]])[0][0])
+            validation_counts[table["name"]] = {"source": table["row_count"], "target": target_count}
+            if target_count != table["row_count"]:
+                raise RejoinBIError(
+                    f"Row count mismatch for {table['name']}: source={table['row_count']} target={target_count}"
+                )
+            if table["columns"]:
+                table_info = source_conn.execute(
+                    f"PRAGMA table_info({_sqlite_identifier(table['name'])})"
+                ).fetchall()
+                primary_key = [
+                    str(item["name"])
+                    for item in sorted(table_info, key=lambda item: int(item["pk"] or 0))
+                    if int(item["pk"] or 0) > 0
+                ]
+                order_columns = primary_key or table["columns"]
+                column_sql = ", ".join(_sqlite_identifier(name) for name in table["columns"])
+                order_sql = ", ".join(_sqlite_identifier(name) for name in order_columns)
+                source_rows = source_conn.execute(
+                    f"SELECT {column_sql} FROM {_sqlite_identifier(table['name'])} ORDER BY {order_sql}"
+                )
+                source_digest = _sqlite_rows_digest(source_rows)
+                target_hasher = hashlib.sha256()
+                offset = 0
+                while offset < target_count:
+                    page = _managed_database_query(
+                        client,
+                        base,
+                        database_id,
+                        f"SELECT {column_sql} FROM {_sqlite_identifier(table['name'])} "
+                        f"ORDER BY {order_sql} LIMIT 1000 OFFSET {offset}",
+                        [],
+                        args.timeout,
+                    )
+                    page_rows = page.get("rows") or []
+                    if not page_rows:
+                        break
+                    _sqlite_rows_digest(page_rows, target_hasher)
+                    offset += len(page_rows)
+                target_digest = target_hasher.hexdigest()
+                validation_counts[table["name"]]["source_sha256"] = source_digest
+                validation_counts[table["name"]]["target_sha256"] = target_digest
+                if source_digest != target_digest:
+                    raise RejoinBIError(f"Content checksum mismatch for table {table['name']}.")
+
+        object_result = _managed_database_query(
+            client,
+            base,
+            database_id,
+            "SELECT type, name FROM sqlite_master "
+            "WHERE type IN ('table', 'index', 'view', 'trigger') "
+            "AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL ORDER BY type, name",
+            [],
+            args.timeout,
+        )
+        source_object_keys = {(item["type"], item["name"]) for item in objects}
+        target_object_keys = {(str(row[0]), str(row[1])) for row in (object_result.get("rows") or [])}
+        missing_objects = sorted(source_object_keys - target_object_keys)
+        if missing_objects:
+            raise RejoinBIError(f"Destination schema is missing objects: {missing_objects[:10]}")
+
+        integrity, _ = client.request(
+            "POST", f"{base}/{quote(database_id)}/integrity", json={}, timeout=args.timeout
+        )
+        if not integrity.get("healthy"):
+            raise RejoinBIError(f"Destination integrity check failed: {integrity.get('results')}")
+
+        return {
+            "success": True,
+            "database_id": database_id,
+            "database_name": target_name,
+            "created_target": created_target,
+            "source": manifest,
+            "migrated_rows": sum(migrated_counts.values()),
+            "table_counts": validation_counts,
+            "validated_objects": len(source_object_keys),
+            "destination_integrity": integrity.get("results") or ["ok"],
+        }
+    except Exception as exc:
+        cleanup = "The partial destination was preserved for inspection."
+        if created_target and database_id:
+            try:
+                client.request(
+                    "DELETE",
+                    f"{base}/{quote(database_id)}",
+                    json={"confirm_name": target_name},
+                    timeout=args.timeout,
+                )
+                cleanup = "The newly created partial destination was moved to the platform data trash."
+            except Exception as cleanup_exc:
+                cleanup = f"Could not move the partial destination to trash: {cleanup_exc}"
+        if isinstance(exc, RejoinBIError):
+            raise RejoinBIError(f"SQLite migration failed. {exc} {cleanup}") from exc
+        raise RejoinBIError(f"SQLite migration failed. {exc} {cleanup}") from exc
+    finally:
+        source_conn.close()
+
+
+def cmd_managed_databases(args: argparse.Namespace) -> int:
+    """Manage persistent SQLite databases hosted by the Rejoin BI platform."""
+    base = "/plataforma/api/managed-databases"
+    action = str(args.action or "").strip()
+    if action in {"inspect-sqlite", "migrate-sqlite"}:
+        source = _sqlite_source_path(getattr(args, "source", None))
+        with tempfile.TemporaryDirectory(
+            prefix="rejoinbi-sqlite-migration-", ignore_cleanup_errors=True
+        ) as temp_dir:
+            snapshot = Path(temp_dir) / "source-snapshot.sqlite3"
+            _sqlite_snapshot(source, snapshot)
+            manifest, objects, ordered_tables = _inspect_sqlite_snapshot(snapshot, source)
+            if action == "inspect-sqlite":
+                print_payload({"success": True, "source": manifest}, as_json=args.json)
+                return 0
+            require_yes(args, "Migrating a SQLite database creates and writes managed data and requires --yes.")
+            client = make_client(args)
+            data = _migrate_sqlite_snapshot(
+                client, args, base, snapshot, source, manifest, objects, ordered_tables
+            )
+            print_payload(data, as_json=args.json)
+            return 0
+
+    client = make_client(args)
+    database_id = str(getattr(args, "database_id", "") or "").strip()
+    payload = parse_json_payload(args)
+    if not isinstance(payload, dict):
+        raise RejoinBIError("Managed database payload must be a JSON object.")
+
+    if getattr(args, "name", None):
+        payload["name"] = args.name
+    if getattr(args, "description", None) is not None:
+        payload["description"] = args.description
+    if getattr(args, "sql", None):
+        payload["sql"] = args.sql
+    if getattr(args, "params_json", None):
+        try:
+            payload["params"] = json.loads(args.params_json)
+        except json.JSONDecodeError as exc:
+            raise RejoinBIError(f"--params-json is not valid JSON: {exc}") from exc
+
+    if action == "list":
+        data, _ = client.request("GET", base, timeout=args.timeout)
+    elif action in {"get", "schema", "tokens", "integrity", "download"}:
+        database_id = required_arg(args, "database_id", "--database-id")
+        if action == "download":
+            output = Path(args.output or f"managed-database-{database_id}.sqlite3").expanduser().resolve()
+            client.download(f"{base}/{quote(database_id)}/download", output, timeout=args.timeout)
+            data = {"success": True, "database_id": database_id, "output": str(output)}
+        else:
+            suffix = "" if action == "get" else f"/{action}"
+            method = "POST" if action == "integrity" else "GET"
+            request_kwargs = {"json": {}} if method == "POST" else {}
+            data, _ = client.request(method, f"{base}/{quote(database_id)}{suffix}", timeout=args.timeout, **request_kwargs)
+    elif action == "create":
+        require_yes(args, "Creating a persistent database requires --yes.")
+        required_arg(args, "name", "--name")
+        data, _ = client.request("POST", base, json=payload, timeout=args.timeout)
+    elif action == "update":
+        require_yes(args, "Updating a persistent database requires --yes.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        if not payload:
+            raise RejoinBIError("Pass --name, --description, --data-json, or --data-file to update the database.")
+        data, _ = client.request("PUT", f"{base}/{quote(database_id)}", json=payload, timeout=args.timeout)
+    elif action == "delete":
+        require_yes(args, "Deleting a database moves it to the platform data trash and requires --yes.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        payload["confirm_name"] = required_arg(args, "confirm_name", "--confirm-name")
+        data, _ = client.request("DELETE", f"{base}/{quote(database_id)}", json=payload, timeout=args.timeout)
+    elif action == "query":
+        require_yes(args, "SQL can change database content and requires --yes after reviewing the statement.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        if not str(payload.get("sql") or "").strip():
+            raise RejoinBIError("--sql or a payload containing sql is required.")
+        data, _ = client.request("POST", f"{base}/{quote(database_id)}/query", json=payload, timeout=args.timeout)
+    elif action == "create-token":
+        require_yes(args, "Creating an external database token requires --yes.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        payload["name"] = required_arg(args, "token_name", "--token-name")
+        payload["scope"] = str(args.scope or "read_write")
+        data, _ = client.request("POST", f"{base}/{quote(database_id)}/tokens", json=payload, timeout=args.timeout)
+    elif action == "revoke-token":
+        require_yes(args, "Revoking an external database token requires --yes.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        token_id = required_arg(args, "token_id", "--token-id")
+        data, _ = client.request("DELETE", f"{base}/{quote(database_id)}/tokens/{quote(token_id)}", timeout=args.timeout)
+    else:
+        raise RejoinBIError(f"Unsupported managed database action: {action}")
+
+    print_payload(data, as_json=args.json)
+    return 0
+
+
 def cmd_data_engine(args: argparse.Namespace) -> int:
     client = make_client(args)
     payload = parse_json_payload(args)
@@ -4940,7 +5567,7 @@ def cmd_workspace_version_action(args: argparse.Namespace) -> int:
     sha = quote(args.sha)
     if args.action == "export":
         output = Path(args.output).expanduser().resolve()
-        client.download(f"/plataforma/api/containers/{workspace_id}/versions/{sha}/export", output, timeout=args.timeout)
+        client.download_workspace_export(workspace_id, args.sha, output, timeout=args.timeout)
         return print_download_result(output, "workspace_version_export", args)
     require_yes(args, f"workspace-version-{args.action} requires --yes.")
     if args.action == "restore":
@@ -6703,8 +7330,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--restart", action="store_true")
     p.add_argument("--workspace-password")
     p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--replace", action="store_true", help="Back up existing files in the workspace before overwriting")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_upload_files)
+
+    p = sub.add_parser("upload-file", help="Upload a single file to a workspace. Simpler alternative to upload-files.")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--file", required=True, help="Path to the local file to upload")
+    p.add_argument("--folder", default="", help="Target folder inside the workspace (e.g. static/css or templates)")
+    p.add_argument("--map", help="Exact target path inside the workspace (overrides --folder)")
+    p.add_argument("--replace", action="store_true", help="Back up existing file before overwriting")
+    p.add_argument("--restart", action="store_true", help="Restart container after upload")
+    p.add_argument("--workspace-password")
+    p.add_argument("--allow-sensitive-files", action="store_true")
+    p.add_argument("--message", default="File uploaded by rejoinbi plugin")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.set_defaults(func=cmd_upload_file)
 
     for name, help_text, func in (
         ("upload-zip-select", "Upload a ZIP then choose startup options like the UI", cmd_upload_zip_select),
@@ -7252,6 +7893,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_payload_args(p)
     p.set_defaults(func=cmd_upload_admin)
+
+    p = sub.add_parser("managed-databases", help="Manage persistent SQLite databases outside project workspaces")
+    p.add_argument("action", choices=[
+        "list", "get", "create", "update", "delete", "schema", "query", "integrity",
+        "download", "tokens", "create-token", "revoke-token", "inspect-sqlite", "migrate-sqlite",
+    ])
+    p.add_argument("--database-id", help="Managed database UUID")
+    p.add_argument("--name", help="Database display name")
+    p.add_argument("--description", help="Database description")
+    p.add_argument("--sql", help="Single SQL statement to execute")
+    p.add_argument("--params-json", help="JSON list/object with bound SQL parameters")
+    p.add_argument("--token-name", help="Name for a new external access token")
+    p.add_argument("--token-id", help="Token UUID to revoke")
+    p.add_argument("--scope", choices=["read", "read_write"], default="read_write")
+    p.add_argument("--confirm-name", help="Exact database name required for deletion")
+    p.add_argument("--output", help="Destination for a consistent SQLite backup")
+    p.add_argument("--source", help="Local SQLite file to inspect or migrate")
+    p.add_argument("--batch-size", type=int, default=100, help="Rows per migration request (default: 100)")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_payload_args(p)
+    p.set_defaults(func=cmd_managed_databases)
 
     p = sub.add_parser("data-engine", help="Manage Data Engine DB connections, repository, datasets, notebook, and terminal")
     p.add_argument("action", choices=[
