@@ -23,27 +23,89 @@ For agents or users who do not know Rejoin BI, consult `docs/agent-operating-pla
 
 ## Natural Language Intent Map
 
-Use this map before asking clarifying questions. When the request is broad, unclear, or from a user who does not know Rejoin BI, also read `docs/agent-operating-playbook.md`. When a platform address is not connected yet, run `ensure` first; if no address was provided, ask only for the full address in the format `subdomain.rejoinbi.com.br`.
+Use this map AS A TABLE (LLMs scan tables faster than prose). When the request is broad, unclear, or from a user who does not know Rejoin BI, also read `docs/agent-operating-playbook.md`. When a platform address is not connected yet, run `ensure` first; if no address was provided, ask only for the full address in the format `subdomain.rejoinbi.com.br`.
 
-- "o que faz", "entenda o plugin", "quais recursos tem": summarize this plugin as connection to the Rejoin BI platform address, workspaces, uploads, dashboard/page publishing, platform admin configuration, BI Studio/Data Engine inventory, and safe cleanup.
-- "mudar o titulo", "qual titulo atual", "trocar nome da aba", "titulo da plataforma": this means the platform browser title in Configuracao Plataforma. Use `platform-title` to read the current title. Use `platform-title --title "Novo titulo"` to change only the title with automatic backup. Do not ask whether it is a workspace/dashboard title unless the user explicitly says workspace, pagina, dashboard, or projeto.
-- "mudar logo", "favicon", "icone", "imagem do menu", "cores", "identidade visual": use `backup-platform-branding` first, then `set-platform-branding` with the relevant image/color files. Mention the restore command from the tool output.
-- "restaurar padrao", "voltar como estava", "desfazer visual": use `restore-platform-branding --backup <backup> --yes` when a backup exists. Use `restore-platform-config-defaults --yes` only when the user specifically wants platform defaults.
-- "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
-- "subir/substituir UM arquivo na pasta Y" ou "fazer upload de UM arquivo": use `upload-file --workspace <workspace> --file <caminho> --folder <pasta>` com o endere?o expl?cito em `--tenant`. Se quiser sobrescrever sem backup, omita `--replace`. Use `--map` para escolher o caminho exato de destino.
-- "subir VARIOS arquivos" ou "subir arquivos espec?ficos": use `upload-files --workspace <workspace> --files <arquivo1> <arquivo2> --folder <pasta>` com `--tenant`. Adicione `--replace` para fazer backup local antes de sobrescrever. Use `--map filename=pasta/destino/` para direcionar cada arquivo.
-- "subir pasta inteira" ou "subir projeto": use `upload-folder-select --workspace <workspace> --path <pasta>` ou `deploy-manifest --manifest <manifest.json>` para dashboards completos com multiplas paginas.
-- "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
-- "criar pagina", "rota", "pai/filho/neto": the Rejoin BI sidebar is recursive; it is not limited to two levels. Any child page can be the parent of a grandchild, and the same rule continues for deeper descendants. Create/resolve parents before descendants, pass the immediate parent with `--parent`, refresh/verify the menu, and never replace a requested grandchild with a sibling. Use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
-- "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
-- "BI Studio", "Data Engine", "datasets", "repositorio de dados": run `studio-inventory` first, then use project-scoped `data-engine` commands with `--project-id` or `--project-uid`. For dashboard creation, use the professional canvas standard in `examples/codex-bi-studio-canvas`: build/complete the dataset first, save a polished desktop/mobile layout, export, normalize, deploy, and smoke test. For BI exports with accented tab slugs or parquet data, use `bi-normalize-export` before uploading the workspace package.
-- "criar banco", "gerenciar banco", "banco persistente", "SQLite gerenciado", "API de banco": act on the request with `managed-databases`; do not only explain the page. Resolve existing databases by list/name/id, then create, inspect schema, query, back up, check integrity, or manage tokens as requested.
-- "migrar o banco deste projeto", "copiar o SQLite atual", "levar os dados para o banco gerenciado": inspect the current project and follow the Managed Database Workflow below. Preserve the source, migrate structure and data, validate every table count and integrity, and rewire the project only when requested.
-- "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
-- "usuarios", "permissoes", "grupos", "anuncios", "RLS", "IA", "auditoria", "sistema", "gateway", "codex keys": route through `docs/agent-operating-playbook.md` and `docs/admin-configuration-map.md`; do the read command first, then the safest write command with explicit platform address and confirmation.
-- "testar RLS", "usuario padrao com RLS", "validar PIN", "filtro por email": use `examples/codex-rls-suite`, create/read the mailbox through `https://pt.emailfake.com/channel1/`, grant only the target page, configure RLS by `container_id`, and connect the standard user only with `--allow-standard` for validation.
+### Intent Table
+
+| Palavras-chave do usuario | Intencao | Comando principal | Parametros essenciais | Observacoes |
+|---|---|---|---|---|
+| "o que faz", "entenda o plugin", "quais recursos tem" | Resumo do plugin | (apenas explique) | ? | Liste workspaces, uploads, BI Studio, Data Engine, admin, backup |
+| "mudar o titulo", "qual titulo atual", "trocar nome da aba", "titulo da plataforma" | Alterar titulo navegador | `platform-title` (leitura) / `platform-title --title "Novo titulo"` (escrita) | `--title` | Nao confundir com workspace/dashboard title. Backup automatico |
+| "mudar logo", "favicon", "icone", "imagem do menu", "cores" | Branding visual | `backup-platform-branding` + `set-platform-branding` | `--logo-image-file`, `--favicon-image-file`, `--colors-file` | Backup em Downloads/plugin/branding-backups |
+| "restaurar padrao", "voltar como estava", "desfazer visual" | Rollback visual | `restore-platform-branding --backup <backup> --yes` | `--backup` | Backup criado automaticamente pelo set-platform-branding |
+| "listar workspaces", "quais pastas/workspaces tem" | Inventario workspaces | `workspaceall` | ? | Para arquivos dentro: `workspace-content` ou `page-files` |
+| "subir UM arquivo", "substituir UM arquivo" | Upload unico | `upload-file` | `--workspace`, `--file`, `--folder`/`--map` | `--replace` para backup. `--map` para path mapping |
+| "subir VARIOS arquivos", "subir arquivos especificos" | Upload multiplos | `upload-files` | `--workspace`, `--files`, `--folder` | `--replace` para backup. `--map filename=pasta/` |
+| "subir pasta inteira", "subir projeto", "subir diretorio" | Upload projeto completo | `upload-folder-select` ou `deploy-manifest` | `--workspace`, `--path`, `--selected-file` | Prefira deploy-manifest se tiver JSON de manifesto |
+| "subir ZIP", "subir pacote" | Upload via ZIP | `upload-zip-select` | `--workspace`, `--zip`, `--selected-file` | Extraido automaticamente no servidor |
+| "criar dashboard", "publicar painel", "criar N paginas" | Dashboard completo | `validate-app` + `deploy-manifest` + `smoke-pages` | Manifesto JSON | Um HTML por pagina, sem menu interno. ASCII rotas/files |
+| "criar pagina", "rota", "pai/filho/neto" | Hierarquia paginas | `create-page` com `--parent` | `--workspace`, `--name`, `--file`, `--route` | Recursivo: neto usa filho como parent. Acentos nos nomes visiveis, ASCII rotas |
+| "remover workspace", "deletar pasta", "excluir workspace" | Exclusao segura | `delete-workspace` (dry-run primeiro) | `--workspace`, `--yes`, `--confirm-name`, `--confirm-id` | Bloqueado se workspace tem senha. Mostrar plan antes |
+| "BI Studio", "Data Engine", "datasets", "repositorio de dados" | BI / Data Engine | `studio-inventory` primeiro, depois `data-engine` ou `bi-*` | `--project-id`/`--project-uid` | Sempre inventariar antes de escrever |
+| "criar banco", "gerenciar banco", "banco persistente", "SQLite" | Banco gerenciado | `managed-databases list` -> `managed-databases create` | `--name`, `--description` | Resolver por id/nome antes de criar. Listar primeiro |
+| "migrar o banco", "copiar o SQLite", "levar os dados" | Migracao SQLite | `managed-databases inspect-sqlite` + `migrate-sqlite` | `--source`, `--name`/`--database-id` | Preserva fonte original. Valida linhas e integridade |
+| "email", "whatsapp", "agendar envio", "fila", "broadcast" | Mensagens | `email sessions` ou `whatsapp sessions` primeiro | Alvo, payload, confirmacao | Nao enviar sem destinatario explicito |
+| "usuarios", "permissoes", "grupos", "anuncios", "RLS" | Admin acesso | Ler (`users`/`groups`/`announcements`/`rls`) primeiro | ? | Escrever so com `--tenant` explicito |
+| "IA", "auditoria", "sistema", "gateway", "codex keys" | Admin sistema | `smoke-admin` ou `system-admin database-status` | ? | Leitura antes de escrita |
+| "testar RLS", "usuario padrao", "validar PIN" | Validacao RLS | Usar `examples/codex-rls-suite` | ? | emailfake.com para mailbox. `--allow-standard` so em teste |
+| "comparar arquivos", "diff workspace", "o que mudou" | Diff local vs servidor | `workspace-diff` | `--workspace`, `--path` | Mostra arquivos novos, modificados, deletados |
+| "desfazer upload", "voltar upload", "rollback" | Rollback upload | `upload-rollback` | `--workspace` | Restaura backup do ultimo upload |
+| "testar plugin", "diagnosticar", "saude", "healthcheck" | Auto-teste | `self-test` | ? | Verifica conexao, sessao, versao, dependencias |
+
+### Decision Tree: Upload
+
+```
+Usuario quer subir/substituir arquivo(s)
+??? Eh UM unico arquivo? ? upload-file
+?   ??? Quer sobrescrever com backup? ? --replace
+?   ??? Quer path exato? ? --map
+?   ??? Quer reiniciar container apos? ? --restart
+??? SAO VARIOS arquivos especificos? ? upload-files
+?   ??? Quer mapear destinos? ? --map filename=pasta/
+?   ??? Quer backup antes? ? --replace
+??? Eh UMA PASTA/PROJETO COMPLETO?
+?   ??? Tem manifesto JSON? ? deploy-manifest
+?   ??? Sem manifesto? ? upload-folder-select
+?       ??? Quer dry-run? ? --dry-run
+?       ??? Quer substituir arquivos? ? --replace
+??? Eh UM ZIP/PACOTE? ? upload-zip-select
+    ??? Quer dry-run? ? --dry-run
+    ??? Quer substituir arquivos? ? --replace
+```
+
+### Decision Tree: Erro
+
+```
+Upload / comando falhou
+??? HTTP 401 / "Sessao expirada" ? execute `ensure` imediatamente
+??? HTTP 403 / "Permissao negada" ? verifique workspace-password e perfil
+??? "Container nao encontrado" ? verifique --workspace (id ou nome exato)
+??? "Arquivo nao encontrado" ? verifique path local (Test-Path)
+??? Timeout / lentidao ? aumente `--timeout` (default 120s)
+??? Erro 500 / generico ? workspace-logs para diagnosticar
+??? Precisando voltar estado anterior ? upload-rollback ou restore-platform-branding
+```
+
+### Error Recovery
+
+Se QUALQUER comando falhar:
+
+1. **NAO repita o mesmo comando imediatamente** ? leia a mensagem de erro
+2. **Identifique o tipo**:
+   - Autenticacao (401) ? `ensure` novamente
+   - Permissao (403) ? verifique perfil do usuario
+   - Validacao (400) ? corrija parametros
+   - Servidor (500) ? aguarde 30s e tente novamente
+   - Timeout ? aumente `--timeout`
+3. **Use `--json` nas chamadas de leitura** para saida estruturada
+4. **Se o comando escreveu algo antes de falhar**:
+   - Upload: `upload-rollback` se disponivel
+   - Pagina: `delete-page` com dry-run
+   - Branding: `restore-platform-branding`
+5. **Se nada funcionar**: rode `self-test` e reporte o erro exato ao usuario
 
 Do not give generic capability lists when the user already stated an actionable admin intent. Map the phrase to the command above, fetch current state when needed, and then ask only for the missing value required to make the change safely.
+
 
 ## Agent Operating Rules
 

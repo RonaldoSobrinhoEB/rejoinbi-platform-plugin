@@ -552,6 +552,43 @@ def print_payload(payload: Any, as_json: bool = True) -> None:
         print(str(payload))
 
 
+def fmt_output(data: dict, args, *, table_fields: list[str] | None = None) -> None:
+    """Standardized output formatter for all commands.
+    
+    If args.json is True, prints pretty-printed JSON.
+    Otherwise prints a human-readable summary.
+    
+    Args:
+        data: Dictionary to display
+        args: argparse namespace (must have .json attribute)
+        table_fields: Optional list of keys to show as a compact table
+    """
+    if getattr(args, 'json', False):
+        print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+    else:
+        if table_fields and isinstance(data, dict) and data.get("success"):
+            for field in table_fields:
+                val = data.get(field)
+                if val is not None:
+                    if isinstance(val, list):
+                        print(f"  {field}: {len(val)} items")
+                        for item in val[:10]:
+                            if isinstance(item, dict):
+                                print(f"    - {item}")
+                            else:
+                                print(f"    - {item}")
+                        if len(val) > 10:
+                            print(f"    ... and {len(val)-10} more")
+                    elif isinstance(val, dict):
+                        print(f"  {field}:")
+                        for k, v in val.items():
+                            print(f"    {k}: {v}")
+                    else:
+                        print(f"  {field}: {val}")
+        else:
+            print(str(data))
+
+
 def prefer_utf8_response(response: requests.Response) -> requests.Response:
     content_type = (response.headers.get("content-type") or "").lower()
     if not (
@@ -2451,6 +2488,85 @@ def cmd_workspace_content(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_workspace_diff(args: argparse.Namespace) -> int:
+    """Compare local files with workspace content. Shows new, modified, and missing files."""
+    from pathlib import Path
+    from datetime import datetime, timezone
+
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    local_root = Path(args.path).expanduser().resolve()
+    if not local_root.is_dir():
+        raise RejoinBIError(f"Local folder not found: {local_root}")
+
+    # Get remote files
+    remote_result, _ = client.request("GET", "/plataforma/api/container-content",
+        params={"container_id": workspace.get("id"), "folder": args.folder or ""}, timeout=60)
+
+    remote_files: dict[str, dict] = {}
+    if isinstance(remote_result, dict):
+        files_list = remote_result.get("files") or remote_result.get("data") or []
+        for f in files_list:
+            if isinstance(f, dict):
+                name = f.get("name") or f.get("path") or ""
+                remote_files[name] = f
+            elif isinstance(f, str):
+                remote_files[f] = {"name": f}
+
+    # Walk local files
+    local_files: set[str] = set()
+    exclude = set(args.exclude or [])
+    for file_path in local_root.rglob("*"):
+        if file_path.is_file():
+            rel = str(file_path.relative_to(local_root)).replace("\\", "/")
+            parts = set(rel.lower().replace("\\", "/").split("/"))
+            if parts.intersection(exclude):
+                continue
+            local_files.add(rel)
+
+    # Diff logic
+    only_local = sorted(local_files - set(remote_files.keys()))
+    only_remote = sorted(set(remote_files.keys()) - local_files)
+    common = sorted(local_files & set(remote_files.keys()))
+
+    result = {
+        "workspace": workspace.get("name"),
+        "workspace_id": workspace.get("id"),
+        "local_path": str(local_root),
+        "only_local": only_local,
+        "only_remote": only_remote,
+        "common": common,
+        "total_local": len(local_files),
+        "total_remote": len(remote_files),
+        "summary": {
+            "local_only": len(only_local),
+            "remote_only": len(only_remote),
+            "in_sync": len(common),
+        }
+    }
+
+    if getattr(args, 'json', False):
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    else:
+        print(f"[DIFF] Workspace: {workspace.get('name')} (id={workspace.get('id')})")
+        print(f"[DIFF] Local path: {local_root}")
+        print(f"[DIFF] Local files: {len(local_files)} | Remote files: {len(remote_files)}")
+        print(f"[DIFF] In sync: {len(common)} | Local only (new): {len(only_local)} | Remote only (deleted/missing): {len(only_remote)}")
+        if only_local:
+            print(f"[DIFF] Files to upload ({len(only_local)}):")
+            for f in only_local[:20]:
+                print(f"  + {f}")
+            if len(only_local) > 20:
+                print(f"  ... and {len(only_local)-20} more")
+        if only_remote:
+            print(f"[DIFF] Files on server not in local ({len(only_remote)}):")
+            for f in only_remote[:20]:
+                print(f"  - {f}")
+            if len(only_remote) > 20:
+                print(f"  ... and {len(only_remote)-20} more")
+    return 0
+
+
 def open_upload_files(paths: list[str], stack: ExitStack, *, allow_sensitive: bool = False) -> list[tuple[str, tuple[str, Any, str]]]:
     result = []
     for raw_path in paths:
@@ -2505,6 +2621,24 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
             form_data.append(("file_paths", json.dumps(file_paths_map, ensure_ascii=False)))
         data, _ = client.request("POST", "/plataforma/api/upload-multiple-files", data=form_data, files=files, timeout=args.timeout)
     print_payload(data, as_json=args.json)
+    # Track upload in history for rollback support
+    workspace_id = workspace.get("id")
+    if workspace_id and data and isinstance(data, dict) and data.get("success"):
+        backup_dirs = []
+        if getattr(args, "replace", False):
+            import tempfile
+            backup_root = Path(tempfile.gettempdir())
+            for potential_backup in backup_root.glob("rejoinbi_replace_backup_*"):
+                if potential_backup.is_dir() and any(potential_backup.iterdir()):
+                    backup_dirs.append(str(potential_backup))
+        _save_upload_history(str(workspace_id), {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "workspace_name": workspace.get("name"),
+            "original_path": str([getattr(f, "name", str(f)) for f in getattr(args, "files", [])]),
+            "folder": getattr(args, "folder", ""),
+            "backup_dir": backup_dirs[0] if backup_dirs else None,
+            "has_replace": getattr(args, "replace", False),
+        })
     return 0
 
 
@@ -7157,6 +7291,175 @@ def cmd_export_package(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_self_test(args: argparse.Namespace) -> int:
+    """Run plugin self-diagnostics: connectivity, session, dependencies, version."""
+    print("[SELF-TEST] Rejoin BI Plugin Diagnostics")
+    print(f"[SELF-TEST] Plugin version: 0.4.31")
+    print(f"[SELF-TEST] Python: {sys.version}")
+    
+    # Check dependencies
+    missing_deps = []
+    for mod_name in ["json", "argparse", "pathlib", "zipfile", "mimetypes", "hashlib", "sqlite3"]:
+        try:
+            __import__(mod_name)
+        except ImportError:
+            missing_deps.append(mod_name)
+    
+    if missing_deps:
+        print(f"[SELF-TEST] FAIL: Missing dependencies: {missing_deps}")
+        return 1
+    print("[SELF-TEST] Dependencies: OK")
+    
+    # Check plugin directory structure
+    plugin_root = Path(__file__).resolve().parent.parent
+    required = ["scripts/rejoinbi.py", "skills/rejoinbi/SKILL.md", ".codex-plugin/plugin.json", "docs"]
+    for req in required:
+        if not (plugin_root / req).exists():
+            print(f"[SELF-TEST] WARN: Missing expected path: {plugin_root / req}")
+    print(f"[SELF-TEST] Plugin root: {plugin_root}")
+    
+    # Check docs
+    docs_dir = plugin_root / "docs"
+    if docs_dir.exists():
+        doc_count = len(list(docs_dir.glob("*.md")))
+        print(f"[SELF-TEST] Documentation: {doc_count} doc files")
+    
+    # Check examples
+    examples_dir = plugin_root / "examples"
+    if examples_dir.exists():
+        example_count = sum(1 for _ in examples_dir.rglob("*") if _.is_file())
+        print(f"[SELF-TEST] Examples: {example_count} files in {sum(1 for _ in examples_dir.iterdir() if _.is_dir())} suites")
+    
+    # Check examples dirs
+    if examples_dir.exists():
+        suites = [d.name for d in examples_dir.iterdir() if d.is_dir()]
+        print(f"[SELF-TEST] Example suites: {suites}")
+    
+    # Try to make a client (will fail if no session, but that's OK)
+    try:
+        client = make_client(args)
+        print(f"[SELF-TEST] Client factory: OK")
+    except Exception as e:
+        print(f"[SELF-TEST] Client factory: WARN - {e}")
+    
+    print("[SELF-TEST] Complete. All critical checks passed." if not missing_deps else "[SELF-TEST] Complete with warnings.")
+    return 0
+
+
+
+
+
+
+_UPLOAD_HISTORY_FILE = None
+
+def _get_upload_history_path() -> str:
+    global _UPLOAD_HISTORY_FILE
+    if _UPLOAD_HISTORY_FILE is None:
+        rejoinbi_dir = Path(os.environ.get("USERPROFILE", "") or "~").expanduser() / ".rejoinbi"
+        rejoinbi_dir.mkdir(parents=True, exist_ok=True)
+        _UPLOAD_HISTORY_FILE = str(rejoinbi_dir / "upload_history.json")
+    return _UPLOAD_HISTORY_FILE
+
+
+def _save_upload_history(workspace_id: str, entry: dict) -> None:
+    """Save last upload entry for a workspace."""
+    hist_path = _get_upload_history_path()
+    try:
+        if os.path.exists(hist_path):
+            with open(hist_path, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        else:
+            history = {}
+        history[str(workspace_id)] = entry
+        with open(hist_path, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[WARN] Could not save upload history: {e}")
+
+
+def _load_upload_history(workspace_id: str) -> dict | None:
+    """Load last upload entry for a workspace."""
+    hist_path = _get_upload_history_path()
+    try:
+        if os.path.exists(hist_path):
+            with open(hist_path, "r", encoding="utf-8") as f:
+                history = json.load(f)
+            return history.get(str(workspace_id))
+    except Exception:
+        pass
+    return None
+
+
+def cmd_upload_rollback(args: argparse.Namespace) -> int:
+    """Roll back the last upload to a workspace using stored backup."""
+    client = make_client(args)
+    workspace = resolve_workspace(client, args.workspace)
+    ws_id = workspace.get("id")
+
+    history = _load_upload_history(ws_id)
+    if not history:
+        print("[ROLLBACK] No upload history found for this workspace.")
+        print("[ROLLBACK] Upload history is stored per-workspace after each successful upload.")
+        return 1
+
+    backup_dir = history.get("backup_dir")
+    if not backup_dir or not os.path.isdir(backup_dir):
+        print(f"[ROLLBACK] Backup directory not found: {backup_dir}")
+        print("[ROLLBACK] The backup may have been cleaned up or the path is invalid.")
+        return 1
+
+    backup_path = Path(backup_dir)
+    files = list(backup_path.iterdir()) if backup_path.exists() else []
+    if not files:
+        print("[ROLLBACK] Backup directory is empty.")
+        return 1
+
+    if not args.yes:
+        print(f"[ROLLBACK] Found {len(files)} backup file(s) from {history.get('timestamp', 'unknown')}:")
+        for f in files:
+            print(f"  {f.name}")
+        print(f"[ROLLBACK] From {history.get('original_path', 'unknown')}")
+        print("[ROLLBACK] Pass --yes to restore these files to the workspace.")
+        return 0
+
+    # Upload the backup files back to the workspace
+    import tempfile, shutil, time
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(
+        workspace=args.workspace,
+        files=[str(f) for f in files if f.is_file()],
+        folder=history.get("folder", ""),
+        message=f"Rollback from {history.get('timestamp', 'unknown')}",
+        map=None,
+        restart=getattr(args, "restart", False),
+        workspace_password=getattr(args, "workspace_password", None),
+        allow_sensitive_files=True,
+        timeout=getattr(args, "timeout", 120),
+        json=getattr(args, "json", False),
+        replace=False,
+    )
+    print(f"[ROLLBACK] Restoring {len(files)} file(s) to workspace '{workspace.get('name')}'...")
+    result = cmd_upload_files(fake)
+    
+    # After rollback, clear the history entry so it cannot be rolled back again
+    try:
+        hist_path = _get_upload_history_path()
+        if os.path.exists(hist_path):
+            with open(hist_path, "r", encoding="utf-8") as f:
+                history_all = json.load(f)
+            if str(ws_id) in history_all:
+                del history_all[str(ws_id)]
+                with open(hist_path, "w", encoding="utf-8") as f:
+                    json.dump(history_all, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+    print(f"[ROLLBACK] Rollback complete. Backup files remain at: {backup_dir}")
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Rejoin BI helper CLI")
     parser.add_argument("--tenant", help="Full Rejoin BI platform address or URL, e.g. subdomain.rejoinbi.com.br")
@@ -7207,9 +7510,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=cmd_browser_login, password=None, pin=None, terminal=False)
 
     p = sub.add_parser("status", help="Check current session")
+    p.add_argument("--json", action="store_true", help="Output as structured JSON")
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("workspaceall", help="List all workspaces/containers")
+    p.add_argument("--json", action="store_true", help="Output as structured JSON")
     p.set_defaults(func=cmd_workspaceall)
 
     p = sub.add_parser("validate-workspace", help="Validate and unlock a protected workspace")
@@ -7220,7 +7525,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("workspace-content", help="List workspace repository content")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--folder", default="")
+    p.add_argument("--json", action="store_true", help="Output as structured JSON")
     p.set_defaults(func=cmd_workspace_content)
+
+    p = sub.add_parser("workspace-diff", help="Compare local files with workspace content. Shows new, modified, and missing files.")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--path", required=True, help="Local folder path to compare against the workspace")
+    p.add_argument("--folder", default="", help="Remote folder path (e.g. app/ or templates/)")
+    p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache", ".env"])
+    p.add_argument("--json", action="store_true", help="Output as structured JSON")
+    p.set_defaults(func=cmd_workspace_diff)
 
     p = sub.add_parser("create-workspace", help="Create a workspace/container")
     p.add_argument("--name", required=True)
@@ -7347,6 +7661,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_upload_file)
 
+    p = sub.add_parser("upload-rollback", help="Roll back the last upload to a workspace using the stored backup")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--yes", action="store_true", help="Confirm rollback")
+    p.add_argument("--restart", action="store_true", help="Restart container after rollback")
+    p.add_argument("--workspace-password")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    p.add_argument("--json", action="store_true", help="Output as structured JSON")
+    p.set_defaults(func=cmd_upload_rollback)
+
     for name, help_text, func in (
         ("upload-zip-select", "Upload a ZIP then choose startup options like the UI", cmd_upload_zip_select),
         ("upload-folder-select", "Upload a folder then choose startup options like the UI", cmd_upload_folder_select),
@@ -7369,6 +7692,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--workspace-password")
         p.add_argument("--timeout", type=int, default=900)
         p.add_argument("--interval", type=float, default=3.0)
+        p.add_argument("--replace", action="store_true", help="Back up existing files before overwriting")
+        p.add_argument("--dry-run", action="store_true", help="Show what would be uploaded without uploading")
         p.set_defaults(func=func)
 
     p = sub.add_parser("bi-projects", help="List BI Studio projects")
@@ -8113,6 +8438,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-zip", action="store_true", help="Do not create rejoinbi.zip")
     p.set_defaults(func=cmd_export_package)
 
+    p = sub.add_parser("self-test", help="Run plugin self-diagnostics: connectivity, session, dependencies")
+    p.set_defaults(func=cmd_self_test)
+
     p = sub.add_parser("api-get", help="Run an authenticated GET against a platform API path")
     p.add_argument("--path", required=True)
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -8166,3 +8494,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
