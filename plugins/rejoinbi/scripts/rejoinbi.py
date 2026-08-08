@@ -13,6 +13,7 @@ import fnmatch
 import getpass
 import hashlib
 import html
+import io
 import json
 import mimetypes
 import os
@@ -137,7 +138,6 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "update-workspace",
     "upload-files",
     "upload-folder-select",
-    "upload-zip-select",
     "workspace-build",
     "workspace-delete",
     "workspace-input",
@@ -2698,27 +2698,171 @@ def iter_folder_files(root: Path, exclude_names: set[str], *, allow_sensitive: b
     return files
 
 
-def validate_zip_for_upload(zip_path: Path, *, allow_sensitive: bool = False) -> None:
-    try:
-        archive = zipfile.ZipFile(zip_path)
-    except zipfile.BadZipFile as exc:
-        raise RejoinBIError(f"Invalid ZIP file: {zip_path}") from exc
-    with archive:
-        for info in archive.infolist():
-            raw_name = (info.filename or "").replace("\\", "/")
-            if not raw_name or raw_name.endswith("/"):
-                continue
-            rel = PurePosixPath(raw_name)
-            if rel.is_absolute() or any(part in ("", ".", "..") or part.endswith(":") for part in rel.parts):
-                raise RejoinBIError(f"Refusing ZIP with unsafe entry path: {info.filename}")
-            if (info.external_attr >> 16) & 0o170000 == 0o120000:
-                raise RejoinBIError(f"Refusing ZIP with symlink entry: {info.filename}")
-            reason = sensitive_path_reason(Path(*rel.parts))
-            if reason and not allow_sensitive:
-                raise RejoinBIError(
-                    f"Refusing ZIP with sensitive-looking entry {info.filename}: {reason}. "
-                    "Use --allow-sensitive-files only after manual review."
+def upload_folder_chunked(
+    client: RejoinBIClient,
+    workspace: dict[str, Any],
+    root: Path,
+    *,
+    timeout: int = 900,
+    exclude: list[str] | None = None,
+    allow_sensitive: bool = False,
+) -> list[dict[str, Any]]:
+    """Upload a project folder in bounded, retryable parts; never as one multipart body."""
+    if not root.is_dir():
+        raise RejoinBIError(f"Folder not found: {root}")
+    exclude_names = {item.lower() for item in (exclude or [
+        ".git", ".hg", ".svn", "venv", ".venv", "env", "__pycache__",
+        "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
+    ])}
+    paths = iter_folder_files(root, exclude_names, allow_sensitive=allow_sensitive)
+    if not paths:
+        raise RejoinBIError("No files found to upload.")
+    manifest = []
+    for path in paths:
+        stat = path.stat()
+        manifest.append({
+            "path": str(path.relative_to(root)).replace("\\", "/"),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        })
+    manifest_token = hashlib.sha256(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    workspace_key = str(workspace.get("id") or workspace.get("name") or "")
+    state_token = hashlib.sha256(
+        f"{client.base_url}|{workspace_key}|{root}|{manifest_token}".encode("utf-8")
+    ).hexdigest()[:32]
+    state_path = Path(tempfile.gettempdir()) / "rejoinbi-upload-sessions" / f"{state_token}.json"
+    state = read_json(state_path, {})
+    session_id = ""
+    completed_by_file: dict[str, set[int]] = {}
+    state_is_current = (
+        isinstance(state, dict)
+        and state.get("base_url") == client.base_url
+        and str(state.get("workspace_key") or "") == workspace_key
+        and state.get("manifest_token") == manifest_token
+        and (time.time() - utc_timestamp(state.get("updated_at"))) < SESSION_IDLE_TIMEOUT_SECONDS
+    )
+    if state_is_current:
+        session_id = str(state.get("session_id") or "")
+        stored_completed = state.get("completed_chunks")
+        if isinstance(stored_completed, dict):
+            for rel_path, indexes in stored_completed.items():
+                if isinstance(indexes, list):
+                    completed_by_file[str(rel_path)] = {int(index) for index in indexes if str(index).isdigit()}
+        if session_id:
+            try:
+                status_data, _ = client.request(
+                    "GET",
+                    "/plataforma/api/upload-session-status?" + urlencode({"session_id": session_id}),
+                    timeout=120,
                 )
+                if isinstance(status_data, dict) and status_data.get("success"):
+                    completed_by_file = {}
+                    for item in status_data.get("files") or []:
+                        if isinstance(item, dict) and isinstance(item.get("completed_chunks"), list):
+                            rel_path = str(item.get("rel_path") or "")
+                            completed_by_file[rel_path] = {
+                                int(index) for index in item["completed_chunks"] if str(index).isdigit()
+                            }
+                else:
+                    session_id = ""
+            except RejoinBIError:
+                # Older tenants may not expose the status route; a fresh session remains safe.
+                session_id = ""
+    chunk_size = 8 * 1024 * 1024
+    if not session_id:
+        total_size = sum(item["size"] for item in manifest)
+        init_data, _ = client.request(
+            "POST",
+            "/plataforma/api/upload-init",
+            json={
+                "container_id": workspace.get("id"),
+                "total_files": len(paths),
+                "total_size": total_size,
+                "force_clean": False,
+            },
+            timeout=120,
+        )
+        if not isinstance(init_data, dict) or not init_data.get("session_id"):
+            raise RejoinBIError("Chunked upload did not return a session id.")
+        session_id = str(init_data["session_id"])
+        completed_by_file = {}
+        chunk_size = max(1024 * 1024, min(int(init_data.get("chunk_size") or chunk_size), 64 * 1024 * 1024))
+        state = {
+            "version": 1,
+            "base_url": client.base_url,
+            "workspace_key": workspace_key,
+            "root": str(root),
+            "manifest_token": manifest_token,
+            "session_id": session_id,
+            "chunk_size": chunk_size,
+            "completed_chunks": {},
+            "updated_at": utc_now(),
+        }
+        write_json(state_path, state)
+    if session_id and isinstance(state, dict):
+        chunk_size = max(1024 * 1024, min(int(state.get("chunk_size") or chunk_size), 64 * 1024 * 1024))
+    max_attempts = 5
+    uploaded_files = []
+    for file_number, path in enumerate(paths, 1):
+        relative = str(path.relative_to(root)).replace("\\", "/")
+        file_size = path.stat().st_size
+        total_chunks = max(1, (file_size + chunk_size - 1) // chunk_size)
+        completed_chunks = completed_by_file.setdefault(relative, set())
+        for chunk_index in range(total_chunks):
+            if chunk_index in completed_chunks:
+                continue
+            offset = chunk_index * chunk_size
+            length = min(chunk_size, file_size - offset)
+            last_error = None
+            for attempt in range(max_attempts):
+                try:
+                    with path.open("rb") as handle:
+                        handle.seek(offset)
+                        chunk_bytes = handle.read(length)
+                    mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+                    client.request(
+                        "POST",
+                        "/plataforma/api/upload-chunk",
+                        data={
+                            "session_id": session_id,
+                            "rel_path": relative,
+                            "chunk_index": str(chunk_index),
+                            "total_chunks": str(total_chunks),
+                        },
+                        files={"file": (path.name, io.BytesIO(chunk_bytes), mime)},
+                        timeout=timeout,
+                    )
+                    last_error = None
+                    completed_chunks.add(chunk_index)
+                    state["completed_chunks"] = {
+                        item_path: sorted(item_indexes)
+                        for item_path, item_indexes in completed_by_file.items()
+                    }
+                    state["updated_at"] = utc_now()
+                    write_json(state_path, state)
+                    break
+                except RejoinBIError as exc:
+                    last_error = exc
+                    if attempt + 1 < max_attempts:
+                        time.sleep(min(15, 2 ** attempt))
+            if last_error is not None:
+                raise last_error
+        uploaded_files.append({"path": relative, "size": file_size, "is_binary": False})
+        if file_number % 25 == 0:
+            client.keep_session_alive(force=True)
+    finish_data, _ = client.request(
+        "POST",
+        "/plataforma/api/upload-finish",
+        json={"session_id": session_id, "container_id": workspace.get("id")},
+        timeout=timeout,
+    )
+    try:
+        state_path.unlink()
+    except FileNotFoundError:
+        pass
+    return list((finish_data or {}).get("files") or uploaded_files) if isinstance(finish_data, dict) else uploaded_files
 
 
 def choose_entry_file(files_payload: list[dict[str, Any]], startup_mode: str, selected_file: str = "") -> str | None:
@@ -2785,34 +2929,6 @@ def select_app_file(
     }
 
 
-def cmd_upload_zip_select(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    workspace = resolve_workspace(client, args.workspace)
-    if getattr(args, "replace", False):
-        print("[UPLOAD] --replace mode enabled - backing up files before upload")
-        import tempfile, time
-        for f in args.files:
-            fp = Path(f).expanduser().resolve()
-            if fp.is_file():
-                bdir = Path(tempfile.mkdtemp(prefix="rejoinbi_replace_backup_"))
-                bp = bdir / f"{fp.stem}.{int(time.time())}.bak"
-                shutil.copy2(str(fp), str(bp))
-                print(f"  [BACKUP] {fp.name} -> {bp}")
-    if args.workspace_password:
-        client.request("POST", "/plataforma/api/validate-container-password", json={"container_id": workspace.get("id"), "password": args.workspace_password})
-    zip_path = Path(args.zip).expanduser().resolve()
-    if not zip_path.is_file():
-        raise RejoinBIError(f"ZIP not found: {zip_path}")
-    validate_zip_for_upload(zip_path, allow_sensitive=bool(args.allow_sensitive_files))
-    with zip_path.open("rb") as handle:
-        files = {"file": (zip_path.name, handle, "application/zip")}
-        data, _ = client.request("POST", "/plataforma/api/extract-files", data={"container_id": str(workspace.get("id"))}, files=files, timeout=args.timeout)
-    files_payload = list((data or {}).get("files") or []) if isinstance(data, dict) else []
-    result = select_app_file(client, workspace, files_payload, args)
-    print_payload(result, as_json=args.json)
-    return 0
-
-
 def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
@@ -2831,19 +2947,14 @@ def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     root = Path(args.path).expanduser().resolve()
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    exclude = set(args.exclude or [])
-    with ExitStack() as stack:
-        data_items: list[tuple[str, str]] = [("container_id", str(workspace.get("id")))]
-        files = []
-        for path in iter_folder_files(root, {item.lower() for item in exclude}, allow_sensitive=bool(args.allow_sensitive_files)):
-            rel = str(path.relative_to(root)).replace("\\", "/")
-            mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-            data_items.append(("paths", rel))
-            files.append(("files", (path.name, stack.enter_context(path.open("rb")), mime)))
-        if not files:
-            raise RejoinBIError("No files found to upload.")
-        data, _ = client.request("POST", "/plataforma/api/upload-folder", data=data_items, files=files, timeout=args.timeout)
-    files_payload = list((data or {}).get("files") or []) if isinstance(data, dict) else []
+    files_payload = upload_folder_chunked(
+        client,
+        workspace,
+        root,
+        timeout=args.timeout,
+        exclude=args.exclude,
+        allow_sensitive=bool(args.allow_sensitive_files),
+    )
     result = select_app_file(client, workspace, files_payload, args)
     print_payload(result, as_json=args.json)
     return 0
@@ -6219,19 +6330,13 @@ def upload_folder_with_options(
 ) -> dict[str, Any]:
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    exclude_names = set(exclude or [".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
-    with ExitStack() as stack:
-        data_items: list[tuple[str, str]] = [("container_id", str(workspace.get("id")))]
-        files = []
-        for path in iter_folder_files(root, exclude_names):
-            rel = str(path.relative_to(root)).replace("\\", "/")
-            mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-            data_items.append(("paths", rel))
-            files.append(("files", (path.name, stack.enter_context(path.open("rb")), mime)))
-        if not files:
-            raise RejoinBIError("No files found to upload.")
-        data, _ = client.request("POST", "/plataforma/api/upload-folder", data=data_items, files=files, timeout=timeout)
-    files_payload = list((data or {}).get("files") or []) if isinstance(data, dict) else []
+    files_payload = upload_folder_chunked(
+        client,
+        workspace,
+        root,
+        timeout=timeout,
+        exclude=exclude,
+    )
     options = argparse.Namespace(
         startup_mode=startup_mode,
         selected_file=selected_file,
@@ -7670,31 +7775,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="Output as structured JSON")
     p.set_defaults(func=cmd_upload_rollback)
 
-    for name, help_text, func in (
-        ("upload-zip-select", "Upload a ZIP then choose startup options like the UI", cmd_upload_zip_select),
-        ("upload-folder-select", "Upload a folder then choose startup options like the UI", cmd_upload_folder_select),
-    ):
-        p = sub.add_parser(name, help=help_text)
-        p.add_argument("--workspace", required=True, help="Workspace id or name")
-        if name == "upload-zip-select":
-            p.add_argument("--zip", required=True)
-        else:
-            p.add_argument("--path", required=True)
-            p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
-        p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
-        p.add_argument("--selected-file", default="")
-        p.add_argument("--startup-mode", choices=["file", "command", "static"], default="file")
-        p.add_argument("--startup-command", default="")
-        p.add_argument("--python-path", default="auto")
-        p.add_argument("--auto-start", action="store_true", default=True)
-        p.add_argument("--no-auto-start", dest="auto_start", action="store_false")
-        p.add_argument("--rpa-support", action="store_true")
-        p.add_argument("--workspace-password")
-        p.add_argument("--timeout", type=int, default=900)
-        p.add_argument("--interval", type=float, default=3.0)
-        p.add_argument("--replace", action="store_true", help="Back up existing files before overwriting")
-        p.add_argument("--dry-run", action="store_true", help="Show what would be uploaded without uploading")
-        p.set_defaults(func=func)
+    p = sub.add_parser("upload-folder-select", help="Upload a project folder in resumable chunks, then choose startup options like the UI")
+    p.add_argument("--workspace", required=True, help="Workspace id or name")
+    p.add_argument("--path", required=True)
+    p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
+    p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--selected-file", default="")
+    p.add_argument("--startup-mode", choices=["file", "command", "static"], default="file")
+    p.add_argument("--startup-command", default="")
+    p.add_argument("--python-path", default="auto")
+    p.add_argument("--auto-start", action="store_true", default=True)
+    p.add_argument("--no-auto-start", dest="auto_start", action="store_false")
+    p.add_argument("--rpa-support", action="store_true")
+    p.add_argument("--workspace-password")
+    p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--interval", type=float, default=3.0)
+    p.add_argument("--replace", action="store_true", help="Back up existing files before overwriting")
+    p.add_argument("--dry-run", action="store_true", help="Show what would be uploaded without uploading")
+    p.set_defaults(func=cmd_upload_folder_select)
 
     p = sub.add_parser("bi-projects", help="List BI Studio projects")
     p.set_defaults(func=cmd_bi_projects)

@@ -45,7 +45,7 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "listar workspaces", "quais workspaces tem" | Workspace inventory | `workspaceall` | none | Summarize id, name, status, password flag, last upload |
 | "o que tem nesse workspace", "listar arquivos", "pastas" | Workspace file tree | `workspace-content --workspace ...` | none | If asking page files, use `page-files` |
 | "subir arquivo X na pasta Y" | Direct file upload to workspace folder | `workspaceall`, maybe `workspace-content` | `upload-files --workspace ... --files ... --folder ...` | Explicit platform address; list folder after upload |
-| "subir zip", "subir pasta", "igual usuario subindo" | UI-like upload flow | `workspaceall` | `upload-zip-select` or `upload-folder-select` | Select startup file/mode; poll upload status |
+| "subir pasta", "igual usuario subindo" | UI-like resumable folder upload | `workspaceall` | `upload-folder-select` | Send bounded chunks; select startup file/mode; poll upload status. ZIP project upload is disabled. |
 | "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit platform address; if password requested, pass workspace password locally |
 | "remover workspace", "excluir workspace" | Safe workspace deletion | `delete-workspace --workspace ...` dry-run | `delete-workspace --yes --confirm-name ... --confirm-id ...` | Block if password-protected until `--workspace-password` validates; check page tree |
 | "senha do workspace" | Validate/unlock protected workspace | `workspaceall` | `validate-workspace --workspace ...` or deletion with `--workspace-password` | Never delete protected workspace without platform password validation |
@@ -103,7 +103,7 @@ python .\scripts\rejoinbi.py workspace-versions --workspace workspace-name
 ```powershell
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-files --workspace workspace-name --files C:\path\file.html --folder relatorios
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file app.py --startup-mode file --auto-start
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-zip-select --workspace workspace-name --zip C:\path\app.zip --selected-file index.html --startup-mode static --auto-start
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file index.html --startup-mode static --auto-start
 ```
 
 After upload, list files or smoke pages. Do not assume production is ready just because upload returned success.

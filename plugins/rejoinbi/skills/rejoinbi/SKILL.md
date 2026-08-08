@@ -37,7 +37,7 @@ Use this map AS A TABLE (LLMs scan tables faster than prose). When the request i
 | "subir UM arquivo", "substituir UM arquivo" | Upload unico | `upload-file` | `--workspace`, `--file`, `--folder`/`--map` | `--replace` para backup. `--map` para path mapping |
 | "subir VARIOS arquivos", "subir arquivos especificos" | Upload multiplos | `upload-files` | `--workspace`, `--files`, `--folder` | `--replace` para backup. `--map filename=pasta/` |
 | "subir pasta inteira", "subir projeto", "subir diretorio" | Upload projeto completo | `upload-folder-select` ou `deploy-manifest` | `--workspace`, `--path`, `--selected-file` | Prefira deploy-manifest se tiver JSON de manifesto |
-| "subir ZIP", "subir pacote" | Upload via ZIP | `upload-zip-select` | `--workspace`, `--zip`, `--selected-file` | Extraido automaticamente no servidor |
+| "subir ZIP", "subir pacote" | ZIP project upload disabled | nenhum | use `upload-folder-select` com `--path` | Projetos devem ser selecionados como pasta e enviados em partes |
 | "criar dashboard", "publicar painel", "criar N paginas" | Dashboard completo | `validate-app` + `deploy-manifest` + `smoke-pages` | Manifesto JSON | Um HTML por pagina, sem menu interno. ASCII rotas/files |
 | "criar pagina", "rota", "pai/filho/neto" | Hierarquia paginas | `create-page` com `--parent` | `--workspace`, `--name`, `--file`, `--route` | Recursivo: neto usa filho como parent. Acentos nos nomes visiveis, ASCII rotas |
 | "remover workspace", "deletar pasta", "excluir workspace" | Exclusao segura | `delete-workspace` (dry-run primeiro) | `--workspace`, `--yes`, `--confirm-name`, `--confirm-id` | Bloqueado se workspace tem senha. Mostrar plan antes |
@@ -68,9 +68,6 @@ Usuario quer subir/substituir arquivo(s)
 ?   ??? Sem manifesto? ? upload-folder-select
 ?       ??? Quer dry-run? ? --dry-run
 ?       ??? Quer substituir arquivos? ? --replace
-??? Eh UM ZIP/PACOTE? ? upload-zip-select
-    ??? Quer dry-run? ? --dry-run
-    ??? Quer substituir arquivos? ? --replace
 ```
 
 ### Decision Tree: Erro
@@ -139,7 +136,7 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Workspace deletion: `DELETE /plataforma/api/containers/<id>`. The platform deletes the workspace only after cleaning linked pages. The plugin must preview the full deletion plan first and require explicit confirmation.
 - Protected workspace validation: `POST /plataforma/api/validate-container-password` with `{container_id, password}`. This also marks the workspace as validated in the server session.
 - Direct file updates: `POST /plataforma/api/upload-multiple-files`.
-- User-like ZIP/folder upload flow: first `POST /plataforma/api/extract-files` or `/upload-folder`, then `POST /plataforma/api/select-app-file`, then poll `/plataforma/api/upload-status/<process_id>`.
+- User-like folder upload flow: start `POST /plataforma/api/upload-init`, send bounded parts through `POST /plataforma/api/upload-chunk`, finish with `POST /plataforma/api/upload-finish`, then call `POST /plataforma/api/select-app-file` and poll `/plataforma/api/upload-status/<process_id>`. ZIP project uploads are disabled.
 - BI projects: `GET/POST /plataforma/api/bi/projects`, `GET /plataforma/api/bi/projects/<project_id>/export`.
 - BI publish: `POST /plataforma/api/bi/projects/<project_id>/internal-publish/start`, then poll `/status/<job_id>`.
 - ECharts template lookup: `GET /plataforma/api/bi/echarts/template?id=<template_id>`.
@@ -411,10 +408,10 @@ python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.
 python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-files --workspace 12 --files C:\path\app.py --folder templates --replace
 ```
 
-Upload a ZIP like the UI:
+Project upload is folder-only and resumable; ZIP project uploads are disabled:
 
 ```powershell
-python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-zip-select --workspace 12 --zip C:\path\dashboard.zip --selected-file app.py --startup-mode file --auto-start
+python "$HOME\plugins\rejoinbi\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start
 ```
 
 Publish a BI Studio project to a workspace:
