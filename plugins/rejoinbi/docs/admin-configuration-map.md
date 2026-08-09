@@ -21,8 +21,8 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Gerenciar Grupos | `GET /plataforma/api/groups`, `POST /plataforma/api/create-group`, `POST /plataforma/api/update-group`, `POST /plataforma/api/delete-group`, `POST /plataforma/api/assign-user-to-group` | `groups`, `create-group`, `update-group`, `delete-group`, `assign-user-group` |
 | Upload de Arquivos | `POST /plataforma/api/upload-init`, `POST /plataforma/api/upload-chunk`, `POST /plataforma/api/upload-finish`, `POST /plataforma/api/select-app-file`, `POST /plataforma/api/upload-multiple-files` | `upload-folder-select`, `upload-files` |
 | Anuncios Internos | `GET /plataforma/api/anuncios/historico`, `GET /plataforma/api/anuncios/ativos`, `POST /plataforma/api/anuncios`, `DELETE /plataforma/api/anuncios/<id>` | `announcements`, `create-announcement`, `delete-announcement`, `announcement-groups` |
-| Configuracao WhatsApp | `/plataforma/api/whatsapp/*` | `whatsapp sessions`, `whatsapp groups`, `whatsapp create-group`, `whatsapp schedule-manifests`, `whatsapp refresh-complete`, `whatsapp broadcast`, `whatsapp schedules`, `whatsapp pause-schedule`, `whatsapp resume-schedule`, `whatsapp diagnostics`, `whatsapp restart-service` |
-| Gestao de E-mails | `/plataforma/api/email/*` | `email sessions`, `email create-session`, `email groups`, `email create-group`, `email schedule-manifests`, `email refresh-complete`, `email broadcast`, `email schedules`, `email pause-schedule`, `email resume-schedule`, `email external-contacts` |
+| Configuracao WhatsApp | `/plataforma/api/whatsapp/*` | `whatsapp sessions`, `whatsapp groups`, `whatsapp create-group`, `whatsapp broadcast`, `whatsapp schedules`, `whatsapp pause-schedule`, `whatsapp resume-schedule`, `whatsapp diagnostics`, `whatsapp restart-service` |
+| Gestao de E-mails | `/plataforma/api/email/*` | `email sessions`, `email create-session`, `email groups`, `email create-group`, `email broadcast`, `email schedules`, `email pause-schedule`, `email resume-schedule`, `email external-contacts` |
 | Configuracao Plataforma | `GET/POST /plataforma/api/platform-config`, `GET /plataforma/api/cores-config`, `POST /plataforma/api/platform-config/restore-defaults` | `platform-title`, `platform-config`, `colors-config`, `backup-platform-branding`, `set-platform-branding`, `restore-platform-branding`, `set-platform-config`, `export-platform-config`, `restore-platform-config-defaults` |
 | Workspace | `GET/POST/PUT /plataforma/api/containers`, workspace actions, logs, schedules, notifications, versions, upload endpoints | `workspaceall`, `create-workspace`, `update-workspace`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-schedule`, `workspace-notification`, `workspace-build`, `deploy-manifest` |
 | Gerenciar Paginas | `GET/POST/PUT/DELETE /plataforma/api/paginas*`, hierarchy/order/repair endpoints | `pages`, `page-files`, `create-page`, `update-page`, `delete-page`, `set-page-order`, `page-maintenance`, `resolve-page`, `smoke-pages` |
@@ -99,9 +99,9 @@ Use JSON payloads for high-variation screens:
 python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
 python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
 python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
-python .\scripts\rejoinbi.py email schedule-manifests --page-id producao-geral
-python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --schedule-file C:\path\projeto\rejoinbi-schedule.json --yes
-python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --schedule-file C:\path\projeto\rejoinbi-schedule.json --yes
+python .\scripts\rejoinbi.py email pause-schedule --schedule-id 12 --yes
+python .\scripts\rejoinbi.py email resume-schedule --schedule-id 12 --yes
+python .\scripts\rejoinbi.py whatsapp pause-schedule --schedule-id 27 --yes
 python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config.json --yes
 python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
 python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes

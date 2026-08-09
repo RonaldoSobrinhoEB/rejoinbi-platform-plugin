@@ -4636,8 +4636,6 @@ def cmd_email_manager(args: argparse.Namespace) -> int:
         "external-contacts": lambda: ("GET", "/plataforma/api/email/external_contacts", False),
         "create-external-contact": lambda: ("POST", "/plataforma/api/email/external_contacts", True),
         "delete-external-contact": lambda: ("DELETE", f"/plataforma/api/email/external_contacts/{required_int(args, 'contact_id', '--contact-id')}", True),
-        "schedule-manifests": lambda: ("GET", path_with_query("/plataforma/api/email/schedule-manifests", compact_params(page_id=args.page_id)), False),
-        "refresh-complete": lambda: ("POST", "/plataforma/api/email/project-refresh/complete", True),
         "schedules": lambda: ("GET", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}/schedules", False),
         "create-schedule": lambda: ("POST", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}/schedules", True),
         "delete-schedule": lambda: ("DELETE", f"/plataforma/api/email/schedules/{required_int(args, 'schedule_id', '--schedule-id')}", True),
@@ -4650,11 +4648,6 @@ def cmd_email_manager(args: argparse.Namespace) -> int:
     if destructive:
         require_yes(args, f"{args.action} changes e-mail configuration or sends/cancels messages and requires --yes.")
     payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    if args.action == "create-group" and getattr(args, "schedule_file", None):
-        payload = payload if isinstance(payload, dict) else {}
-        payload["schedule_manifest"] = load_json_file(args.schedule_file)
-    if args.action == "refresh-complete" and not payload:
-        payload = {"page_id": args.page_id, "refresh_id": args.refresh_id}
     if args.action in {"pause-schedule", "resume-schedule"} and not getattr(args, "data_json", None) and not getattr(args, "data_file", None):
         payload = {"is_paused": args.action == "pause-schedule"}
     data, _ = client.request(method, path, json=payload, timeout=args.timeout)
@@ -4682,8 +4675,6 @@ def cmd_whatsapp_manager(args: argparse.Namespace) -> int:
         "external-contacts": lambda: ("GET", "/plataforma/api/whatsapp/external_contacts", False),
         "create-external-contact": lambda: ("POST", "/plataforma/api/whatsapp/external_contacts", True),
         "delete-external-contact": lambda: ("DELETE", f"/plataforma/api/whatsapp/external_contacts/{required_int(args, 'contact_id', '--contact-id')}", True),
-        "schedule-manifests": lambda: ("GET", path_with_query("/plataforma/api/whatsapp/schedule-manifests", compact_params(page_id=args.page_id)), False),
-        "refresh-complete": lambda: ("POST", "/plataforma/api/whatsapp/project-refresh/complete", True),
         "schedules": lambda: ("GET", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}/schedules", False),
         "create-schedule": lambda: ("POST", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}/schedules", True),
         "delete-schedule": lambda: ("DELETE", f"/plataforma/api/whatsapp/schedules/{required_int(args, 'schedule_id', '--schedule-id')}", True),
@@ -4697,11 +4688,6 @@ def cmd_whatsapp_manager(args: argparse.Namespace) -> int:
     if destructive:
         require_yes(args, f"{args.action} changes WhatsApp configuration or sends/cancels messages and requires --yes.")
     payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    if args.action == "create-group" and getattr(args, "schedule_file", None):
-        payload = payload if isinstance(payload, dict) else {}
-        payload["schedule_manifest"] = load_json_file(args.schedule_file)
-    if args.action == "refresh-complete" and not payload:
-        payload = {"page_id": args.page_id, "refresh_id": args.refresh_id}
     if args.action in {"pause-schedule", "resume-schedule"} and not getattr(args, "data_json", None) and not getattr(args, "data_file", None):
         payload = {"is_paused": args.action == "pause-schedule"}
     data, _ = client.request(method, path, json=payload, timeout=args.timeout)
@@ -7560,7 +7546,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=[
         "history", "queue-status", "sessions", "create-session", "test-session", "update-session", "delete-session",
         "groups", "create-group", "update-group", "delete-group", "recipients", "add-recipient", "delete-recipient",
-        "external-contacts", "create-external-contact", "delete-external-contact", "schedule-manifests", "refresh-complete",
+        "external-contacts", "create-external-contact", "delete-external-contact",
         "schedules", "create-schedule", "delete-schedule", "pause-schedule", "resume-schedule", "broadcast", "cancel-history",
     ])
     p.add_argument("--session-id")
@@ -7570,8 +7556,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--schedule-id")
     p.add_argument("--history-id")
     p.add_argument("--page-id")
-    p.add_argument("--refresh-id")
-    p.add_argument("--schedule-file", help="Project schedule manifest JSON used when creating a group")
     p.add_argument("--limit", type=int)
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -7582,7 +7566,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=[
         "history", "queue-status", "diagnostics", "sessions", "start-session", "stop-session", "session-groups",
         "groups", "create-group", "update-group", "delete-group", "recipients", "add-recipient", "delete-recipient",
-        "external-contacts", "create-external-contact", "delete-external-contact", "schedule-manifests", "refresh-complete",
+        "external-contacts", "create-external-contact", "delete-external-contact",
         "schedules", "create-schedule", "delete-schedule", "pause-schedule", "resume-schedule", "broadcast", "cancel-history", "restart-service",
     ])
     p.add_argument("--session-name")
@@ -7592,8 +7576,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--schedule-id")
     p.add_argument("--history-id")
     p.add_argument("--page-id")
-    p.add_argument("--refresh-id")
-    p.add_argument("--schedule-file", help="Project schedule manifest JSON used when creating a group")
     p.add_argument("--limit", type=int)
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
