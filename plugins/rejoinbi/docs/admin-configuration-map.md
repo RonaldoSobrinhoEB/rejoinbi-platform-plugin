@@ -19,10 +19,10 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Editar Usuarios | `GET /plataforma/api/users`, `GET /plataforma/api/setores`, `GET /plataforma/api/users-presence`, `GET /plataforma/api/download-users`, `POST /plataforma/api/update-user`, `POST /plataforma/api/change-user-password`, `POST /plataforma/api/delete-user` | `users`, `sectors`, `user-presence`, `download-users`, `update-user`, `set-user-password`, `delete-user` |
 | Gerenciar Permissoes | `GET /plataforma/api/pages`, `GET /plataforma/api/permissive-pages`, `GET /plataforma/api/user-permissions/<id>`, `GET /plataforma/api/download-permissions`, `POST /plataforma/api/update-permissions`, `POST /plataforma/api/recalcular-permissoes` | `permission-pages`, `user-permissions`, `download-permissions`, `set-user-permissions`, `recalculate-permissions` |
 | Gerenciar Grupos | `GET /plataforma/api/groups`, `POST /plataforma/api/create-group`, `POST /plataforma/api/update-group`, `POST /plataforma/api/delete-group`, `POST /plataforma/api/assign-user-to-group` | `groups`, `create-group`, `update-group`, `delete-group`, `assign-user-group` |
-| Upload de Arquivos | `POST /plataforma/api/upload-folder`, `POST /plataforma/api/extract-files`, `POST /plataforma/api/select-app-file`, `POST /plataforma/api/upload-multiple-files` | `upload-folder-select`, `upload-zip-select`, `upload-files` |
+| Upload de Arquivos | `POST /plataforma/api/upload-init`, `POST /plataforma/api/upload-chunk`, `POST /plataforma/api/upload-finish`, `POST /plataforma/api/select-app-file`, `POST /plataforma/api/upload-multiple-files` | `upload-folder-select`, `upload-files` |
 | Anuncios Internos | `GET /plataforma/api/anuncios/historico`, `GET /plataforma/api/anuncios/ativos`, `POST /plataforma/api/anuncios`, `DELETE /plataforma/api/anuncios/<id>` | `announcements`, `create-announcement`, `delete-announcement`, `announcement-groups` |
-| Configuracao WhatsApp | `/plataforma/api/whatsapp/*` | `whatsapp sessions`, `whatsapp groups`, `whatsapp create-group`, `whatsapp broadcast`, `whatsapp schedules`, `whatsapp diagnostics`, `whatsapp restart-service` |
-| Gestao de E-mails | `/plataforma/api/email/*` | `email sessions`, `email create-session`, `email groups`, `email create-group`, `email broadcast`, `email schedules`, `email external-contacts` |
+| Configuracao WhatsApp | `/plataforma/api/whatsapp/*` | `whatsapp sessions`, `whatsapp groups`, `whatsapp create-group`, `whatsapp schedule-manifests`, `whatsapp refresh-complete`, `whatsapp broadcast`, `whatsapp schedules`, `whatsapp pause-schedule`, `whatsapp resume-schedule`, `whatsapp diagnostics`, `whatsapp restart-service` |
+| Gestao de E-mails | `/plataforma/api/email/*` | `email sessions`, `email create-session`, `email groups`, `email create-group`, `email schedule-manifests`, `email refresh-complete`, `email broadcast`, `email schedules`, `email pause-schedule`, `email resume-schedule`, `email external-contacts` |
 | Configuracao Plataforma | `GET/POST /plataforma/api/platform-config`, `GET /plataforma/api/cores-config`, `POST /plataforma/api/platform-config/restore-defaults` | `platform-title`, `platform-config`, `colors-config`, `backup-platform-branding`, `set-platform-branding`, `restore-platform-branding`, `set-platform-config`, `export-platform-config`, `restore-platform-config-defaults` |
 | Workspace | `GET/POST/PUT /plataforma/api/containers`, workspace actions, logs, schedules, notifications, versions, upload endpoints | `workspaceall`, `create-workspace`, `update-workspace`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-schedule`, `workspace-notification`, `workspace-build`, `deploy-manifest` |
 | Gerenciar Paginas | `GET/POST/PUT/DELETE /plataforma/api/paginas*`, hierarchy/order/repair endpoints | `pages`, `page-files`, `create-page`, `update-page`, `delete-page`, `set-page-order`, `page-maintenance`, `resolve-page`, `smoke-pages` |
@@ -33,6 +33,7 @@ The plugin treats a successful login that does not request PIN as `Administrador
 | Gateway/Upload | `/plataforma/api/python-versions`, `/upload-capabilities`, `/gateway/*`, `/upload-status/<id>`, `/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
 | Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
 | Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `studio-inventory`, `data-engine inventory`, `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
+| Bancos gerenciados | `/plataforma/api/managed-databases/*` | `managed-databases list/get/create/update/schema/query/integrity/download/tokens/create-token/revoke-token/audit/diagnostics/create-table/create-view/create-index/delete-object/inspect-sqlite/migrate-sqlite` |
 | BI Studio | `/plataforma/api/bi/*` | `studio-inventory`, `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
 
 ## Fast Platform Branding
@@ -92,24 +93,15 @@ python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
 python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
 ```
 
-The sidebar accepts recursive hierarchy. A page that is already a child may be selected as the immediate parent of another page, producing `Pai > Filho > Neto` and deeper trees. Create or resolve every ancestor first, use the immediate parent id at each step, and verify the final recursive structure instead of treating grandchildren as root siblings:
-
-```powershell
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Pai" --file pai.html --route pai
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Filho" --file filho.html --route filho --parent pai
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Neto" --file neto.html --route neto --parent filho
-python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
-python .\scripts\rejoinbi.py accessible-pages
-```
-
-For manifest deployment, nested `children` arrays are flattened and topologically ordered before writes. Validation rejects duplicate ids, self-parenting, and cycles, while readiness checks confirm each expected parent in `accessible-pages`.
-
 Use JSON payloads for high-variation screens:
 
 ```powershell
 python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
 python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
 python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
+python .\scripts\rejoinbi.py email schedule-manifests --page-id producao-geral
+python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --schedule-file C:\path\projeto\rejoinbi-schedule.json --yes
+python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --schedule-file C:\path\projeto\rejoinbi-schedule.json --yes
 python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config.json --yes
 python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
 python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes

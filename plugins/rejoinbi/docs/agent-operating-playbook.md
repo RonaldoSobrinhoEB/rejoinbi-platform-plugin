@@ -6,7 +6,7 @@ This playbook is written for Codex agents and users who do not know the Rejoin B
 
 Rejoin BI has two sides that must not be confused:
 
-- The Rejoin BI platform address/server is the source of truth. Workspaces, pages, users, permissions, branding, RLS, BI Studio projects, Data Engine assets, email/WhatsApp configuration, and uploaded files live on the server.
+- The Rejoin BI platform address/server is the source of truth. Workspaces, pages, users, permissions, branding, RLS, BI Studio projects, Data Engine assets, managed databases, email/WhatsApp configuration, and uploaded files live on the server.
 - The local computer only holds the Codex plugin, login cookies, local dashboard source files before upload, generated backups, and test reports.
 
 If a command changes the platform, it must use the explicit platform address such as `--tenant subdomain.rejoinbi.com.br`. Do not rely on the active cached address for writes unless the user explicitly chooses `--use-active-tenant` after checking the session.
@@ -45,15 +45,17 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "listar workspaces", "quais workspaces tem" | Workspace inventory | `workspaceall` | none | Summarize id, name, status, password flag, last upload |
 | "o que tem nesse workspace", "listar arquivos", "pastas" | Workspace file tree | `workspace-content --workspace ...` | none | If asking page files, use `page-files` |
 | "subir arquivo X na pasta Y" | Direct file upload to workspace folder | `workspaceall`, maybe `workspace-content` | `upload-files --workspace ... --files ... --folder ...` | Explicit platform address; list folder after upload |
-| "subir zip", "subir pasta", "igual usuario subindo" | UI-like upload flow | `workspaceall` | `upload-zip-select` or `upload-folder-select` | Select startup file/mode; poll upload status |
+| "subir pasta", "igual usuario subindo" | UI-like resumable folder upload | `workspaceall` | `upload-folder-select` | Send bounded chunks; select startup file/mode; poll upload status. ZIP project upload is disabled. |
 | "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit platform address; if password requested, pass workspace password locally |
 | "remover workspace", "excluir workspace" | Safe workspace deletion | `delete-workspace --workspace ...` dry-run | `delete-workspace --yes --confirm-name ... --confirm-id ...` | Block if password-protected until `--workspace-password` validates; check page tree |
 | "senha do workspace" | Validate/unlock protected workspace | `workspaceall` | `validate-workspace --workspace ...` or deletion with `--workspace-password` | Never delete protected workspace without platform password validation |
-| "criar pagina", "rota", "menu", "pai/filho/neto" | Recursive Gerenciar Paginas tree; grandchildren and deeper descendants are supported | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | Create ancestors first; `create-page --parent <immediate-parent-id>`, `update-page`, `set-page-order`, `delete-page` | Never turn a requested grandchild into a root sibling; verify the full recursive tree in `accessible-pages` |
+| "criar pagina", "rota", "menu", "pai/filho/neto" | Gerenciar Paginas | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | `create-page`, `update-page`, `set-page-order`, `delete-page` | Use clean names with accents; technical ids/routes/files ASCII |
 | "dashboard", "painel", "ECharts", "criar 3 paginas" | Generate and publish dashboard package | Inspect local files/data; `validate-app` | `deploy-manifest` | One standalone HTML per Rejoin BI page; `smoke-pages` must pass |
 | "publicar BI", "BI Studio" | BI Studio project work | `studio-inventory`, `bi-projects` | `publish-bi` or `bi-create-project` | Project id/uid and workspace target explicit |
 | "dashboard BI Studio", "canvas profissional", "Data Engine + canvas" | Professional canvas dashboard | `studio-inventory`, inspect datasets | `bi-save-theme`, `bi-save-layout`, export/normalize/deploy | Use `examples/codex-bi-studio-canvas`; dataset completed, desktop/mobile layouts saved, smoke test passes |
 | "Data Engine", "datasets", "repositorio", "conexao banco" | Data Engine work | `studio-inventory`, then project-scoped `data-engine` read | `data-engine create-*`, `terminal-command`, `execute-code` | Project id/uid required; do not run code without user intent |
+| "criar/gerenciar banco", "SQLite gerenciado", "backup/token do banco" | Persistent managed database work | `managed-databases list`, then `get/schema/integrity/tokens` | `managed-databases create/update/query/download/create-token/revoke-token` | Master or Administrador Principal; use explicit tenant for writes |
+| "migrar/copiar o banco deste projeto" | Move the live project SQLite into managed storage | Inspect project references; `managed-databases inspect-sqlite --source ...` | `managed-databases migrate-sqlite --source ... --name ... --yes` | Preserve source; require matching row counts, per-table content hashes, schema objects, and destination integrity |
 | "usuarios", "cadastrar usuario", "editar usuario" | User admin | `users`, `sectors`, `user-presence` | `create-user`, `update-user`, `set-user-password`, `delete-user` | Profiles: Administrador Principal no PIN; others require PIN |
 | "permissoes", "acesso pagina" | Permissions | `permission-pages --permissive`, `user-permissions` | `set-user-permissions`, `recalculate-permissions` | Confirm target user/group and page permissions |
 | "grupos" | Permission groups | `groups`, `users-for-groups` | `create-group`, `update-group`, `assign-user-group`, `delete-group` | Confirm permissions and users before writes |
@@ -103,7 +105,7 @@ python .\scripts\rejoinbi.py workspace-versions --workspace workspace-name
 ```powershell
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-files --workspace workspace-name --files C:\path\file.html --folder relatorios
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file app.py --startup-mode file --auto-start
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-zip-select --workspace workspace-name --zip C:\path\app.zip --selected-file index.html --startup-mode static --auto-start
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file index.html --startup-mode static --auto-start
 ```
 
 After upload, list files or smoke pages. Do not assume production is ready just because upload returned success.
@@ -113,9 +115,6 @@ After upload, list files or smoke pages. Do not assume production is ready just 
 ```powershell
 python .\scripts\rejoinbi.py pages --all-containers
 python .\scripts\rejoinbi.py accessible-pages
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Pai" --file pai.html --route pai
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Filho" --file filho.html --route filho --parent pai
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Neto" --file neto.html --route neto --parent filho
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Visão Geral" --file visao-geral.html --route visao-geral
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-page --page-id page-id --name "Operações" --route operacoes
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-page-order --page-id child-id --parent parent-id --position 20
@@ -125,10 +124,6 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance
 ```
 
 Visible page names should match the user's language and may include accents. Technical page ids, routes, and filenames should stay ASCII and stable.
-
-The sidebar is recursive. There is no parent/child-only restriction: a child page can be the immediate parent of a grandchild, and that grandchild can parent another descendant. Resolve/create each ancestor before its descendants. For `Pai > Filho > Neto`, set `Filho.pai = Pai.id` and `Neto.pai = Filho.id`; setting both to `Pai.id` creates siblings and does not satisfy the request. After any hierarchy write, require cache refresh plus `page-maintenance verify-hierarchy` and inspect the recursive `accessible-pages` result.
-
-For repeatable deployments, prefer the nested manifest shape in `examples/codex-page-hierarchy/rejoinbi-app.json`. Nested `children` are flattened and created parent-first; cycles and duplicate ids are rejected before deployment, and readiness fails when the returned immediate parent differs from the manifest.
 
 If a page update unexpectedly moves a child page out of its parent, immediately run `update-page --parent <parent-id>` or `set-page-order --parent <parent-id>` and re-run `page-maintenance verify-hierarchy`. Treat duplicate order or `pai null` warnings as not ready for production.
 If page names or descriptions show `?` in place of accents, run `page-maintenance audit-encoding`, then fix the exact page ids with `update-page` using UTF-8 visible text and ASCII `route/file`.
@@ -264,6 +259,10 @@ Project-scoped Data Engine endpoints require `--project-id`, `--project-uid`, or
 
 Data Engine repository uploads support CSV, Excel, SQLite, and other files accepted by the platform. For Excel files, run `repository-inspect-sheets` first, then pass one or more `--selected-sheet` values. The upload command blocks sensitive-looking files such as `.env`, keys, certificates, tokens, and password-named files unless `--allow-sensitive-files` is explicitly provided after manual review.
 
+### Managed Databases
+
+For direct database requests, act with `managed-databases` instead of returning a capability explanation. Resolve existing targets with `list`; use `schema`, `query`, `integrity`, `download`, and token actions as requested. For project migrations, identify the SQLite file actually referenced by the application, run `inspect-sqlite`, then `migrate-sqlite`. Keep the source untouched until the destination passes schema-object, row-count, content-hash, and integrity validation. Rewire application code only when requested, using a non-committed HTTPS API token rather than a network SQLite path.
+
 Save all BI Studio/Data Engine JSON/code payloads as UTF-8. The CLI rejects strings that look like replaced accents or mojibake (`Vis?o`, `Cr?tico`, byte sequence `Vis\u00c3\u00a3o`) before they can create wrong tabs, filters, materialized datasets, or canvas labels.
 
 Notebook and finalize payloads are strict. `save-notebook-state` expects a list of cell objects, not an object wrapper. `finalize-dataset` with scoped output expects `dataframe_names` items shaped like `{"dataset_id":"Dataset","name":"df_name","cell_id":"cell-id"}`. Plain `"df_name"` can fail when `require_scoped_df` is true.
@@ -320,6 +319,7 @@ Treat system errors as platform/backend diagnostics unless required checks fail.
 - Never delete pages/workspaces before showing the dry-run plan.
 - Never broadcast email or WhatsApp without explicit recipient/payload/confirmation.
 - Never print secrets from Codex keys, DB connections, tokens, cookies, passwords, or connection strings.
+- Never delete or modify a project's source SQLite file during migration; remove it only in a separate explicitly requested cleanup after the migrated application has been validated.
 - Never upload or export `.env`, key, token, credential, session, or backup files unless the user explicitly accepts the security risk.
 - Never call a dashboard complete until `validate-app`, `deploy-manifest`, and `smoke-pages` pass.
 - Never call a BI Studio canvas complete until the workspace is running and every page has `html_ok`, `browser_route_ok`, and `menu_safe` true.

@@ -2,6 +2,8 @@
 
 Codex plugin for Rejoin BI platform environments under `rejoinbi.com.br`.
 
+The plugin also manages persistent SQLite databases outside project workspaces through `managed-databases`. It can create visual-schema payloads for tables, views and indexes, inspect schema, query, read audit/diagnostics timelines, inspect a project's current SQLite database, reproduce tables/data/indexes/views/triggers in a new managed database, and validate counts and integrity. Remote clients use the platform HTTPS API with a scoped, rate-limited and revocable database token; they must never open the SQLite file through a network share.
+
 ## Codex Marketplace Compatibility
 
 This repository is a root plugin artifact, matching the structure used by Codex plugin ingestion:
@@ -11,15 +13,13 @@ This repository is a root plugin artifact, matching the structure used by Codex 
 - `scripts/`
 - `docs/`
 - `examples/`
-- `assets/app-icon.png`
+- `assets/app-icon.svg`
 
 Submit it as artifact type `PLUGIN`, branch `main`, with sparse path empty or `.`. Do not submit it as a marketplace wrapper. See `docs/MARKETPLACE_SUBMISSION.md` for the local validation checklist.
 
 ## Core Rule For Dashboards
 
 Build dashboards as standalone platform pages. Do not create an internal menu, sidebar, SPA router, or page switcher inside the dashboard app. Rejoin BI already manages page hierarchy, icon, permission, route, and menu placement in Gerenciar Paginas.
-
-The platform sidebar hierarchy is recursive, not limited to parent and child. Any child can become the immediate parent of a grandchild, and the same rule applies to deeper descendants. The CLI resolves parent ids/routes/names, blocks cycles, refreshes menu caches after hierarchy writes, and verifies nested manifest relationships through `accessible-pages`.
 
 Correct pattern:
 
@@ -30,7 +30,7 @@ Correct pattern:
 - The manifest maps each page to its own `file` and `route`.
 - Visible page names may be localized with accents. Technical values (`id`, `route`, filenames) stay ASCII; for static dashboards, `route` should usually be the HTML filename without `.html`.
 
-See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For BI Studio canvas work, use `examples/codex-bi-studio-canvas`; it documents the professional canvas standard, Data Engine binding, Rejoin BI theme, export normalization, and Flask manifest shape for BI Studio exports. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`VisÃ£o RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
+See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For BI Studio canvas work, use `examples/codex-bi-studio-canvas`; it documents the professional canvas standard, Data Engine binding, Rejoin BI theme, export normalization, and Flask manifest shape for BI Studio exports. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`Visão RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
 
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
 
@@ -39,8 +39,6 @@ Read `docs/page-routing-map.md` for the platform route/menu contract. It maps `a
 Read `docs/admin-configuration-map.md` for the administrative configuration map. It follows the Rejoin BI manual permission levels and maps sidebar tools such as users, permissions, groups, announcements, platform branding, AI configuration, workspace, pages, RLS, audit, system management, and BI Studio to plugin commands or authenticated API fallbacks.
 
 Read `docs/agent-operating-playbook.md` when another Codex agent, teammate, or new user needs to understand the platform from zero. It includes the full natural-language router, command families, safety rules, response patterns, and completion checklist.
-
-Read `docs/windows-install.md` when a new Windows PC fails before installing the marketplace with `failed to run git clone ...: program not found`. That error happens before this plugin runs and means Codex cannot find `git.exe` on that user's machine.
 
 ## Common Commands
 
@@ -63,14 +61,13 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform
 python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
 python .\scripts\rejoinbi.py audit dashboard
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
-python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-page-hierarchy\rejoinbi-app.json
 python .\scripts\rejoinbi.py rls pages
 python .\scripts\rejoinbi.py codex-keys stats
 python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py data-engine status
 ```
 
-`ensure` first checks whether the Rejoin BI platform address already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting session cookies. Session inactivity uses a sliding 24-hour window: authenticated use persists the server-renewed cookie and renews the local timestamp (with throttled disk writes), and a full 24 hours without use discards the saved session and requires login again.
+`ensure` first checks whether the Rejoin BI platform address already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting session cookies.
 
 The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
 
@@ -82,7 +79,6 @@ These are the expected interpretations for Codex agents using this plugin:
 - "mudar logo", "favicon", "cores", "identidade visual": use `backup-platform-branding` and `set-platform-branding`.
 - "subir arquivo em uma pasta": use `upload-files --folder`.
 - "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
-- "criar pai, filho e neto": create the parent first, create the child with `--parent <parent-id>`, then create the grandchild with `--parent <child-id>`. Never attach both descendants to the root. For repeatable deploys, use nested `children` in `examples/codex-page-hierarchy/rejoinbi-app.json`.
 - "criar dashboard no BI Studio", "canvas profissional", "Data Engine + canvas": use `examples/codex-bi-studio-canvas` as the quality bar. Build the dataset first, save a professional desktop/mobile layout, export, normalize, deploy, and smoke test.
 - "o que tem no BI Studio/Data Engine": run `studio-inventory` first. For BI exports with accents/parquet, run `bi-normalize-export` before uploading.
 - "remover workspace": run `delete-workspace` dry-run first; password-protected workspaces require validated workspace password before deletion.
@@ -117,9 +113,6 @@ python .\scripts\rejoinbi.py page-files --workspace codex-suite
 python .\scripts\rejoinbi.py page-maintenance verify-orphan-permissions
 python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
 python .\scripts\rejoinbi.py set-page-order --page-id pagina-id --parent pagina-pai --position 20
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace codex-suite --name "Pai" --file pai.html --route pai
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace codex-suite --name "Filho" --file filho.html --route filho --parent pai
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace codex-suite --name "Neto" --file neto.html --route neto --parent filho
 
 python .\scripts\rejoinbi.py rls pages
 python .\scripts\rejoinbi.py rls page-config --page-id pagina-id --container-id 12
@@ -151,7 +144,7 @@ python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
 python .\scripts\rejoinbi.py data-engine db-connections --project-id 1
 python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file .\dados.xlsx
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file .\dados.xlsx --folder codex --selected-sheet "VisÃ£o Geral" --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file .\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
 python .\scripts\rejoinbi.py data-engine repository-list --project-id 1
 python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
 python .\scripts\rejoinbi.py bi-normalize-export --path .\bi-export --remove-old
@@ -208,8 +201,8 @@ python .\scripts\rejoinbi.py export-package
 
 This creates:
 
-- `%USERPROFILE%\Downloads\plugin\rejoinbi`
-- `%USERPROFILE%\Downloads\plugin\rejoinbi.zip`
+- `%USERPROFILE%\Downloads\plugin\rejoinbi-platform`
+- `%USERPROFILE%\Downloads\plugin\rejoinbi-platform.zip`
 - `%USERPROFILE%\Downloads\plugin\INSTALL.md`
 
 Secrets are not included. Passwords and PINs are entered in the local browser auth wizard by default, or read from local prompts/environment variables only when `--terminal` is used.

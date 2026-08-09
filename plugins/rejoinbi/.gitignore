@@ -9,7 +9,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
-.rejoinbi/
+.rejoinbi-platform/
 artifacts/
 sessions/
 *.zip

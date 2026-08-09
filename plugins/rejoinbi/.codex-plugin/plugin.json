@@ -1,10 +1,10 @@
 {
-  "name": "rejoinbi",
-  "version": "0.4.31",
+  "name": "rejoinbi-platform",
+  "version": "0.4.33+codex.20260809205710",
   "description": "Operate Rejoin BI environments, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
   "author": {
-    "name": "Rejoin BI",
-    "url": "https://rejoinbi.com.br"
+    "name": "Ronaldo Sobrinho",
+    "url": "https://github.com/RonaldoSobrinhoEB"
   },
   "homepage": "https://rejoinbi.com.br",
   "repository": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
@@ -24,8 +24,8 @@
   "interface": {
     "displayName": "Rejoin BI",
     "shortDescription": "Develop, publish, and administer Rejoin BI",
-    "longDescription": "Helps Codex connect to a full Rejoin BI address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, automate admin configuration including users, pages, permissions, RLS, announcements, title/logos/favicon/colors, messaging, Codex keys, system tools, upload gateway, and safely preview workspace/page cleanup using the authenticated API. Includes a detailed agent operating playbook and RLS smoke workflow so users and Codex agents who do not know Rejoin BI can route natural language requests to the correct safe command. If a user asks to see or change the title, use platform-title for the current browser title or set-platform-branding for full branding. Before any other action, validate a full address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
-    "developerName": "Rejoin BI",
+    "longDescription": "Helps Codex connect to a full Rejoin BI address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, manage persistent databases, inspect and migrate project SQLite databases with schema/data validation, automate admin configuration including users, pages, permissions, RLS, announcements, branding, messaging, Codex keys, system tools, upload gateway, and safely preview cleanup using the authenticated API. Natural-language requests to create, manage, back up, query, tokenize, or migrate a database are routed to dedicated managed-databases workflows. Before any other platform action, validate a full address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
+    "developerName": "Ronaldo Sobrinho",
     "category": "Engineering",
     "capabilities": [
       "Interactive",
@@ -38,11 +38,12 @@
     "defaultPrompt": [
       "Connect to my Rejoin BI platform",
       "List Rejoin BI workspaces",
-      "Inventory BI Studio and Data Engine"
+      "Inventory BI Studio and Data Engine",
+      "Migrate this project's SQLite database to Rejoin BI"
     ],
     "brandColor": "#004090",
-    "composerIcon": "./assets/app-icon.png",
-    "logo": "./assets/app-icon.png",
+    "composerIcon": "./assets/app-icon.svg",
+    "logo": "./assets/app-icon.svg",
     "screenshots": []
   }
 }

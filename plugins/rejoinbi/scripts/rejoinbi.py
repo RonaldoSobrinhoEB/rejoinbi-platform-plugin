@@ -13,6 +13,7 @@ import fnmatch
 import getpass
 import hashlib
 import html
+import io
 import json
 import mimetypes
 import os
@@ -41,13 +42,11 @@ except ImportError as exc:  # pragma: no cover - dependency guard
     raise SystemExit("The 'requests' package is required. Install it with: python -m pip install requests") from exc
 
 
-APP_HOME = Path(os.environ.get("REJOINBI_PLUGIN_HOME") or (Path.home() / ".rejoinbi"))
+APP_HOME = Path(os.environ.get("REJOINBI_PLUGIN_HOME") or (Path.home() / ".rejoinbi-platform"))
 SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 DEFAULT_TIMEOUT = 120
-SESSION_IDLE_TIMEOUT_SECONDS = 24 * 60 * 60
-SESSION_TOUCH_INTERVAL_SECONDS = 5 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -58,7 +57,7 @@ SENSITIVE_PATH_NAMES = {
     ".gcloud",
     ".gnupg",
     ".kube",
-    ".rejoinbi",
+    ".rejoinbi-platform",
     ".ssh",
     "id_dsa",
     "id_ecdsa",
@@ -137,7 +136,6 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "update-workspace",
     "upload-files",
     "upload-folder-select",
-    "upload-zip-select",
     "workspace-build",
     "workspace-delete",
     "workspace-input",
@@ -233,26 +231,26 @@ DATA_ENGINE_PROJECT_ACTIONS = {
 }
 
 PT_BR_WORD_ACCENT_FIXES = {
-    "acao": "a\u00e7\u00e3o",
-    "acoes": "a\u00e7\u00f5es",
-    "analise": "an\u00e1lise",
-    "atencao": "aten\u00e7\u00e3o",
-    "automacao": "automa\u00e7\u00e3o",
-    "avaliacao": "avalia\u00e7\u00e3o",
-    "composicao": "composi\u00e7\u00e3o",
-    "configuracao": "configura\u00e7\u00e3o",
-    "configuracoes": "configura\u00e7\u00f5es",
-    "conversao": "convers\u00e3o",
-    "evolucao": "evolu\u00e7\u00e3o",
-    "gestao": "gest\u00e3o",
-    "metricas": "m\u00e9tricas",
-    "operacao": "opera\u00e7\u00e3o",
-    "operacoes": "opera\u00e7\u00f5es",
-    "producao": "produ\u00e7\u00e3o",
-    "satisfacao": "satisfa\u00e7\u00e3o",
-    "usuarios": "usu\u00e1rios",
-    "visao": "vis\u00e3o",
-    "visoes": "vis\u00f5es",
+    "acao": "ação",
+    "acoes": "ações",
+    "analise": "análise",
+    "atencao": "atenção",
+    "automacao": "automação",
+    "avaliacao": "avaliação",
+    "composicao": "composição",
+    "configuracao": "configuração",
+    "configuracoes": "configurações",
+    "conversao": "conversão",
+    "evolucao": "evolução",
+    "gestao": "gestão",
+    "metricas": "métricas",
+    "operacao": "operação",
+    "operacoes": "operações",
+    "producao": "produção",
+    "satisfacao": "satisfação",
+    "usuarios": "usuários",
+    "visao": "visão",
+    "visoes": "visões",
 }
 
 
@@ -355,39 +353,6 @@ def auth_error_messages(error: str) -> tuple[str, str]:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def utc_timestamp(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    raw = str(value or "").strip()
-    if not raw:
-        return 0.0
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.timestamp()
-    except Exception:
-        return 0.0
-
-
-def session_last_used_timestamp(data: Any) -> float:
-    if not isinstance(data, dict):
-        return 0.0
-    return (
-        utc_timestamp(data.get("last_used_ts"))
-        or utc_timestamp(data.get("last_used_at"))
-        or utc_timestamp(data.get("saved_at"))
-    )
-
-
-def session_inactivity_expired(data: Any, *, now_ts: float | None = None) -> bool:
-    last_used_ts = session_last_used_timestamp(data)
-    if last_used_ts <= 0:
-        return False
-    current_ts = float(now_ts if now_ts is not None else time.time())
-    return (current_ts - last_used_ts) >= SESSION_IDLE_TIMEOUT_SECONDS
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -552,43 +517,6 @@ def print_payload(payload: Any, as_json: bool = True) -> None:
         print(str(payload))
 
 
-def fmt_output(data: dict, args, *, table_fields: list[str] | None = None) -> None:
-    """Standardized output formatter for all commands.
-    
-    If args.json is True, prints pretty-printed JSON.
-    Otherwise prints a human-readable summary.
-    
-    Args:
-        data: Dictionary to display
-        args: argparse namespace (must have .json attribute)
-        table_fields: Optional list of keys to show as a compact table
-    """
-    if getattr(args, 'json', False):
-        print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
-    else:
-        if table_fields and isinstance(data, dict) and data.get("success"):
-            for field in table_fields:
-                val = data.get(field)
-                if val is not None:
-                    if isinstance(val, list):
-                        print(f"  {field}: {len(val)} items")
-                        for item in val[:10]:
-                            if isinstance(item, dict):
-                                print(f"    - {item}")
-                            else:
-                                print(f"    - {item}")
-                        if len(val) > 10:
-                            print(f"    ... and {len(val)-10} more")
-                    elif isinstance(val, dict):
-                        print(f"  {field}:")
-                        for k, v in val.items():
-                            print(f"    {k}: {v}")
-                    else:
-                        print(f"  {field}: {val}")
-        else:
-            print(str(data))
-
-
 def prefer_utf8_response(response: requests.Response) -> requests.Response:
     content_type = (response.headers.get("content-type") or "").lower()
     if not (
@@ -618,7 +546,7 @@ def truthy_flag(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     raw = str(value).strip().lower()
-    if raw in {"", "0", "false", "no", "nao", "nÃ£o", "off", "none", "null"}:
+    if raw in {"", "0", "false", "no", "nao", "não", "off", "none", "null"}:
         return False
     return raw in {"1", "true", "yes", "sim", "s", "on", "locked", "protected", "password"}
 
@@ -631,7 +559,7 @@ def protected_secret_present(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     raw = str(value).strip()
-    if raw.lower() in {"", "0", "false", "no", "nao", "nÃ£o", "off", "none", "null"}:
+    if raw.lower() in {"", "0", "false", "no", "nao", "não", "off", "none", "null"}:
         return False
     return True
 
@@ -683,17 +611,11 @@ class RejoinBIClient:
             "X-RejoinBI-Client": "rejoinbi-platform-plugin",
         })
         self.session_path = SESSION_DIR / f"{session_slug(self.base_url)}.json"
-        self._last_session_touch_ts = 0.0
         self._last_heartbeat_monotonic = 0.0
         self.load_session()
 
     def load_session(self) -> None:
         data = read_json(self.session_path, {})
-        if session_inactivity_expired(data):
-            if self.session_path.exists():
-                self.session_path.unlink()
-            return
-        self._last_session_touch_ts = session_last_used_timestamp(data)
         cookies = data.get("cookies") if isinstance(data, dict) else None
         if isinstance(cookies, dict):
             jar = requests.cookies.RequestsCookieJar()
@@ -706,14 +628,10 @@ class RejoinBIClient:
 
     def save_session(self, identity: dict[str, Any] | None = None, auth_context: dict[str, Any] | None = None) -> None:
         existing = read_json(self.session_path, {})
-        now_ts = time.time()
         payload = {
             "base_url": self.base_url,
             "cookies": requests.utils.dict_from_cookiejar(self.session.cookies),
             "saved_at": utc_now(),
-            "last_used_at": utc_now(),
-            "last_used_ts": now_ts,
-            "idle_timeout_seconds": SESSION_IDLE_TIMEOUT_SECONDS,
         }
         if identity:
             payload["identity"] = identity
@@ -724,33 +642,12 @@ class RejoinBIClient:
         elif isinstance(existing, dict) and isinstance(existing.get("auth_context"), dict):
             payload["auth_context"] = existing.get("auth_context")
         write_json(self.session_path, payload)
-        self._last_session_touch_ts = now_ts
         config = read_json(CONFIG_PATH, {})
         if not isinstance(config, dict):
             config = {}
         config["active_base_url"] = self.base_url
         config["updated_at"] = utc_now()
         write_json(CONFIG_PATH, config)
-
-    def touch_session_usage(self, *, force: bool = False) -> None:
-        if not self.session_path.exists():
-            return
-        now_ts = time.time()
-        if not force and self._last_session_touch_ts > 0:
-            if (now_ts - self._last_session_touch_ts) < SESSION_TOUCH_INTERVAL_SECONDS:
-                return
-        data = read_json(self.session_path, {})
-        stored_cookies = data.get("cookies") if isinstance(data, dict) else None
-        current_cookies = requests.utils.dict_from_cookiejar(self.session.cookies)
-        if not current_cookies and (not isinstance(stored_cookies, dict) or not stored_cookies):
-            return
-        if current_cookies:
-            data["cookies"] = current_cookies
-        data["last_used_at"] = utc_now()
-        data["last_used_ts"] = now_ts
-        data["idle_timeout_seconds"] = SESSION_IDLE_TIMEOUT_SECONDS
-        write_json(self.session_path, data)
-        self._last_session_touch_ts = now_ts
 
     def clear_session(self) -> None:
         if self.session_path.exists():
@@ -795,7 +692,6 @@ class RejoinBIClient:
                 message = str(payload.get("error") or payload.get("message") or payload.get("raw") or "")
             message = compact_response_message(message)
             raise RejoinBIError(f"{method} {path} failed with HTTP {response.status_code}: {message}")
-        self.touch_session_usage()
         return payload, response
 
     def download(self, path: str, output: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
@@ -853,7 +749,6 @@ class RejoinBIClient:
             f"Workspace export was not ready after {timeout} seconds "
             f"(last status: {status.get('status') or 'unknown'})."
         )
-        self.touch_session_usage()
 
 
 def make_client(args: argparse.Namespace) -> RejoinBIClient:
@@ -917,7 +812,7 @@ def auth_html(
     safe_base_url = html.escape(base_url)
     safe_state = html.escape(state)
     safe_email = html.escape(email)
-    logo_uri = plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
+    logo_uri = plugin_asset_data_uri("app-icon.svg") or plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
     logo_markup = f'<img src="{logo_uri}" alt="" class="brand-logo">' if logo_uri else '<span class="brand-fallback">RJ</span>'
     favicon_link = f'<link rel="icon" href="{logo_uri}">' if logo_uri else ""
     error_title, error_detail = auth_error_messages(error)
@@ -1347,7 +1242,7 @@ def success_html(base_url: str, email: str, profile: str) -> bytes:
     safe_base_url = html.escape(base_url)
     safe_email = html.escape(email)
     safe_profile = html.escape(profile or "perfil validado")
-    logo_uri = plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
+    logo_uri = plugin_asset_data_uri("app-icon.svg") or plugin_asset_data_uri("app-icon.png") or plugin_asset_data_uri("Icon.png")
     logo_markup = f'<img src="{logo_uri}" alt="" class="brand-logo">' if logo_uri else '<span class="brand-fallback">RJ</span>'
     favicon_link = f'<link rel="icon" href="{logo_uri}">' if logo_uri else ""
     page = f"""<!doctype html>
@@ -1755,7 +1650,7 @@ def slugify_page_id(value: Any) -> str:
     raw = str(value or "").strip().lower()
     ascii_text = unicodedata.normalize("NFKD", raw)
     ascii_text = "".join(ch for ch in ascii_text if not unicodedata.combining(ch))
-    ascii_text = ascii_text.replace("Ã§", "c").replace("Ã±", "n")
+    ascii_text = ascii_text.replace("ç", "c").replace("ñ", "n")
     ascii_text = re.sub(r"\s+", "-", ascii_text)
     ascii_text = re.sub(r"[^a-z0-9_-]+", "", ascii_text)
     ascii_text = re.sub(r"-{2,}", "-", ascii_text).strip("-_")
@@ -1767,17 +1662,10 @@ def detect_manifest_language(manifest: dict[str, Any]) -> str:
     if explicit:
         return explicit
     text_parts: list[str] = []
-    def collect_page_text(items: Any) -> None:
-        if not isinstance(items, list):
-            return
-        for page in items:
-            if not isinstance(page, dict):
-                continue
+    for page in manifest.get("pages") or []:
+        if isinstance(page, dict):
             text_parts.append(str(page.get("name") or page.get("nome") or ""))
             text_parts.append(str(page.get("description") or page.get("descricao") or ""))
-            collect_page_text(page.get("children") or page.get("subpages") or page.get("subpaginas") or [])
-
-    collect_page_text(manifest.get("pages") or [])
     normalized = normalize_text(" ".join(text_parts))
     pt_markers = {
         "analise", "atendimento", "clientes", "comercial", "configuracao", "faturamento",
@@ -1830,7 +1718,7 @@ def looks_like_corrupted_text(value: Any) -> bool:
         return True
     # A literal question mark inside a word usually means a Windows code page
     # replaced an accent before the JSON reached the platform.
-    if re.search(r"[A-Za-z\u00C0-\u00FF]\?+[A-Za-z\u00C0-\u00FF]", text):
+    if re.search(r"[A-Za-zÀ-ÿ]\?+[A-Za-zÀ-ÿ]", text):
         return True
     return False
 
@@ -1846,20 +1734,13 @@ def manifest_text_integrity_errors(manifest: dict[str, Any]) -> list[str]:
     for field in ("description", "display_name"):
         if isinstance(workspace_cfg, dict) and field in workspace_cfg:
             visible_fields.append((f"workspace.{field}", workspace_cfg.get(field)))
-    def collect_page_fields(items: Any, path: str = "pages") -> None:
-        if not isinstance(items, list):
-            return
-        for index, page in enumerate(items):
-            if not isinstance(page, dict):
-                continue
-            page_path = f"{path}[{index}]"
-            for field in ("name", "nome", "description", "descricao", "expect_text"):
-                if field in page:
-                    visible_fields.append((f"{page_path}.{field}", page.get(field)))
-            children = page.get("children") or page.get("subpages") or page.get("subpaginas") or []
-            collect_page_fields(children, f"{page_path}.children")
-
-    collect_page_fields(manifest.get("pages") or [])
+    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    for index, page in enumerate(pages):
+        if not isinstance(page, dict):
+            continue
+        for field in ("name", "nome", "description", "descricao", "expect_text"):
+            if field in page:
+                visible_fields.append((f"pages[{index}].{field}", page.get(field)))
     for path, value in visible_fields:
         text = str(value or "")
         if looks_like_corrupted_text(text):
@@ -2296,47 +2177,6 @@ def resolve_page_from_pages(pages: list[dict[str, Any]], selector: str) -> dict[
     return None
 
 
-def resolve_page_parent_id(
-    pages: list[dict[str, Any]],
-    selector: Any,
-    *,
-    child_id: str = "",
-) -> str:
-    """Resolve a parent page at any depth and reject hierarchy cycles."""
-    raw_selector = safe_str(selector)
-    if not raw_selector:
-        return ""
-    parent_page = resolve_page_from_pages(pages, raw_selector)
-    if parent_page is None:
-        raise RejoinBIError(
-            f"Parent page not found: {raw_selector}. "
-            "Use the exact page id, a unique route, or a unique page name."
-        )
-    parent_id = page_id(parent_page)
-    normalized_child_id = safe_str(child_id)
-    if not normalized_child_id:
-        return parent_id
-    if parent_id == normalized_child_id:
-        raise RejoinBIError("A page cannot be its own parent.")
-
-    by_id = {page_id(page): page for page in pages if page_id(page)}
-    visited: set[str] = set()
-    current_id = parent_id
-    while current_id and current_id not in visited:
-        if current_id == normalized_child_id:
-            raise RejoinBIError(
-                f"Hierarchy cycle blocked: {parent_id} is already inside the descendants of {normalized_child_id}."
-            )
-        visited.add(current_id)
-        current_page = by_id.get(current_id) or {}
-        current_id = safe_str(
-            current_page.get("pai")
-            or current_page.get("pai_real")
-            or current_page.get("pai_ficticio")
-        )
-    return parent_id
-
-
 def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> dict[str, Any]:
     workspace_id = workspace.get("id")
     password_indicators = workspace_password_indicators(workspace)
@@ -2488,85 +2328,6 @@ def cmd_workspace_content(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_workspace_diff(args: argparse.Namespace) -> int:
-    """Compare local files with workspace content. Shows new, modified, and missing files."""
-    from pathlib import Path
-    from datetime import datetime, timezone
-
-    client = make_client(args)
-    workspace = resolve_workspace(client, args.workspace)
-    local_root = Path(args.path).expanduser().resolve()
-    if not local_root.is_dir():
-        raise RejoinBIError(f"Local folder not found: {local_root}")
-
-    # Get remote files
-    remote_result, _ = client.request("GET", "/plataforma/api/container-content",
-        params={"container_id": workspace.get("id"), "folder": args.folder or ""}, timeout=60)
-
-    remote_files: dict[str, dict] = {}
-    if isinstance(remote_result, dict):
-        files_list = remote_result.get("files") or remote_result.get("data") or []
-        for f in files_list:
-            if isinstance(f, dict):
-                name = f.get("name") or f.get("path") or ""
-                remote_files[name] = f
-            elif isinstance(f, str):
-                remote_files[f] = {"name": f}
-
-    # Walk local files
-    local_files: set[str] = set()
-    exclude = set(args.exclude or [])
-    for file_path in local_root.rglob("*"):
-        if file_path.is_file():
-            rel = str(file_path.relative_to(local_root)).replace("\\", "/")
-            parts = set(rel.lower().replace("\\", "/").split("/"))
-            if parts.intersection(exclude):
-                continue
-            local_files.add(rel)
-
-    # Diff logic
-    only_local = sorted(local_files - set(remote_files.keys()))
-    only_remote = sorted(set(remote_files.keys()) - local_files)
-    common = sorted(local_files & set(remote_files.keys()))
-
-    result = {
-        "workspace": workspace.get("name"),
-        "workspace_id": workspace.get("id"),
-        "local_path": str(local_root),
-        "only_local": only_local,
-        "only_remote": only_remote,
-        "common": common,
-        "total_local": len(local_files),
-        "total_remote": len(remote_files),
-        "summary": {
-            "local_only": len(only_local),
-            "remote_only": len(only_remote),
-            "in_sync": len(common),
-        }
-    }
-
-    if getattr(args, 'json', False):
-        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
-    else:
-        print(f"[DIFF] Workspace: {workspace.get('name')} (id={workspace.get('id')})")
-        print(f"[DIFF] Local path: {local_root}")
-        print(f"[DIFF] Local files: {len(local_files)} | Remote files: {len(remote_files)}")
-        print(f"[DIFF] In sync: {len(common)} | Local only (new): {len(only_local)} | Remote only (deleted/missing): {len(only_remote)}")
-        if only_local:
-            print(f"[DIFF] Files to upload ({len(only_local)}):")
-            for f in only_local[:20]:
-                print(f"  + {f}")
-            if len(only_local) > 20:
-                print(f"  ... and {len(only_local)-20} more")
-        if only_remote:
-            print(f"[DIFF] Files on server not in local ({len(only_remote)}):")
-            for f in only_remote[:20]:
-                print(f"  - {f}")
-            if len(only_remote) > 20:
-                print(f"  ... and {len(only_remote)-20} more")
-    return 0
-
-
 def open_upload_files(paths: list[str], stack: ExitStack, *, allow_sensitive: bool = False) -> list[tuple[str, tuple[str, Any, str]]]:
     result = []
     for raw_path in paths:
@@ -2584,16 +2345,6 @@ def open_upload_files(paths: list[str], stack: ExitStack, *, allow_sensitive: bo
 def cmd_upload_files(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
-    if getattr(args, "replace", False):
-        print("[UPLOAD] --replace mode enabled - backing up files before upload")
-        import tempfile, time
-        for f in args.files:
-            fp = Path(f).expanduser().resolve()
-            if fp.is_file():
-                bdir = Path(tempfile.mkdtemp(prefix="rejoinbi_replace_backup_"))
-                bp = bdir / f"{fp.stem}.{int(time.time())}.bak"
-                shutil.copy2(str(fp), str(bp))
-                print(f"  [BACKUP] {fp.name} -> {bp}")
     if args.workspace_password:
         client.request(
             "POST",
@@ -2614,74 +2365,14 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         form_data: list[tuple[str, str]] = [
             ("container_name", str(workspace.get("name") or "")),
             ("folder_path", args.folder or ""),
-            ("commit_message", args.message or "Uploaded by rejoinbi plugin"),
+            ("commit_message", args.message or "Uploaded by rejoinbi-platform plugin"),
             ("restart_container", "true" if args.restart else "false"),
         ]
         if file_paths_map:
             form_data.append(("file_paths", json.dumps(file_paths_map, ensure_ascii=False)))
         data, _ = client.request("POST", "/plataforma/api/upload-multiple-files", data=form_data, files=files, timeout=args.timeout)
     print_payload(data, as_json=args.json)
-    # Track upload in history for rollback support
-    workspace_id = workspace.get("id")
-    if workspace_id and data and isinstance(data, dict) and data.get("success"):
-        backup_dirs = []
-        if getattr(args, "replace", False):
-            import tempfile
-            backup_root = Path(tempfile.gettempdir())
-            for potential_backup in backup_root.glob("rejoinbi_replace_backup_*"):
-                if potential_backup.is_dir() and any(potential_backup.iterdir()):
-                    backup_dirs.append(str(potential_backup))
-        _save_upload_history(str(workspace_id), {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "workspace_name": workspace.get("name"),
-            "original_path": str([getattr(f, "name", str(f)) for f in getattr(args, "files", [])]),
-            "folder": getattr(args, "folder", ""),
-            "backup_dir": backup_dirs[0] if backup_dirs else None,
-            "has_replace": getattr(args, "replace", False),
-        })
     return 0
-
-
-def cmd_upload_file(args: argparse.Namespace) -> int:
-    """Upload a single file to a workspace. Wraps cmd_upload_files."""
-    import tempfile, shutil, time
-    from pathlib import Path
-
-    file_path = Path(args.file).expanduser().resolve()
-    if not file_path.is_file():
-        raise RejoinBIError(f"File not found: {file_path}")
-
-    map_list = []
-    if args.map:
-        map_list.append(f"{file_path.name}={args.map}")
-
-    if args.replace:
-        try:
-            target_path = (args.folder + "/" + file_path.name) if args.folder else file_path.name
-            if args.map:
-                target_path = args.map.rstrip("/") + "/" + file_path.name if "/" in args.map else args.map
-            backup_dir = Path(tempfile.mkdtemp(prefix="rejoinbi_backup_"))
-            backup_path = backup_dir / f"{file_path.stem}.{int(time.time())}.bak"
-            shutil.copy2(str(file_path), str(backup_path))
-            print(f"[BACKUP] Local backup saved: {backup_path}")
-        except Exception as e:
-            print(f"[WARN] Backup failed (continuing): {e}")
-
-    from types import SimpleNamespace
-    fake = SimpleNamespace(
-        workspace=args.workspace,
-        files=[str(file_path)],
-        folder=args.folder or "",
-        message=args.message,
-        map=map_list if map_list else None,
-        restart=args.restart,
-        workspace_password=args.workspace_password,
-        allow_sensitive_files=args.allow_sensitive_files,
-        timeout=args.timeout,
-        json=getattr(args, "json", False),
-        replace=getattr(args, "replace", False),
-    )
-    return cmd_upload_files(fake)
 
 
 def iter_folder_files(root: Path, exclude_names: set[str], *, allow_sensitive: bool = False) -> list[Path]:
@@ -2698,27 +2389,178 @@ def iter_folder_files(root: Path, exclude_names: set[str], *, allow_sensitive: b
     return files
 
 
-def validate_zip_for_upload(zip_path: Path, *, allow_sensitive: bool = False) -> None:
-    try:
-        archive = zipfile.ZipFile(zip_path)
-    except zipfile.BadZipFile as exc:
-        raise RejoinBIError(f"Invalid ZIP file: {zip_path}") from exc
-    with archive:
-        for info in archive.infolist():
-            raw_name = (info.filename or "").replace("\\", "/")
-            if not raw_name or raw_name.endswith("/"):
-                continue
-            rel = PurePosixPath(raw_name)
-            if rel.is_absolute() or any(part in ("", ".", "..") or part.endswith(":") for part in rel.parts):
-                raise RejoinBIError(f"Refusing ZIP with unsafe entry path: {info.filename}")
-            if (info.external_attr >> 16) & 0o170000 == 0o120000:
-                raise RejoinBIError(f"Refusing ZIP with symlink entry: {info.filename}")
-            reason = sensitive_path_reason(Path(*rel.parts))
-            if reason and not allow_sensitive:
-                raise RejoinBIError(
-                    f"Refusing ZIP with sensitive-looking entry {info.filename}: {reason}. "
-                    "Use --allow-sensitive-files only after manual review."
+def upload_folder_chunked(
+    client: RejoinBIClient,
+    workspace: dict[str, Any],
+    root: Path,
+    *,
+    timeout: int = 900,
+    exclude: list[str] | None = None,
+    allow_sensitive: bool = False,
+) -> list[dict[str, Any]]:
+    """Upload a project folder as bounded, retryable parts.
+
+    The project size is not used as a request limit.  Only one bounded part is
+    held in memory at a time, and the server stores each part idempotently so
+    a lost response can be retried without duplicating bytes.
+    """
+    if not root.is_dir():
+        raise RejoinBIError(f"Folder not found: {root}")
+    exclude_names = {item.lower() for item in (exclude or [
+        ".git", ".hg", ".svn", "venv", ".venv", "env", "__pycache__",
+        "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
+    ])}
+    paths = iter_folder_files(root, exclude_names, allow_sensitive=allow_sensitive)
+    if not paths:
+        raise RejoinBIError("No files found to upload.")
+    manifest = []
+    for path in paths:
+        stat = path.stat()
+        manifest.append({
+            "path": str(path.relative_to(root)).replace("\\", "/"),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        })
+    manifest_token = hashlib.sha256(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    workspace_key = str(workspace.get("id") or workspace.get("name") or "")
+    state_token = hashlib.sha256(
+        f"{client.base_url}|{workspace_key}|{root}|{manifest_token}".encode("utf-8")
+    ).hexdigest()[:32]
+    state_path = Path(tempfile.gettempdir()) / "rejoinbi-upload-sessions" / f"{state_token}.json"
+    state = read_json(state_path, {})
+    session_id = ""
+    completed_by_file: dict[str, set[int]] = {}
+    state_is_current = (
+        isinstance(state, dict)
+        and state.get("base_url") == client.base_url
+        and str(state.get("workspace_key") or "") == workspace_key
+        and state.get("manifest_token") == manifest_token
+        and (time.time() - utc_timestamp(state.get("updated_at"))) < SESSION_IDLE_TIMEOUT_SECONDS
+    )
+    if state_is_current:
+        session_id = str(state.get("session_id") or "")
+        stored_completed = state.get("completed_chunks")
+        if isinstance(stored_completed, dict):
+            for rel_path, indexes in stored_completed.items():
+                if isinstance(indexes, list):
+                    completed_by_file[str(rel_path)] = {int(index) for index in indexes if str(index).isdigit()}
+        if session_id:
+            try:
+                status_data, _ = client.request(
+                    "GET",
+                    "/plataforma/api/upload-session-status?" + urlencode({"session_id": session_id}),
+                    timeout=120,
                 )
+                if isinstance(status_data, dict) and status_data.get("success"):
+                    completed_by_file = {}
+                    for item in status_data.get("files") or []:
+                        if isinstance(item, dict) and isinstance(item.get("completed_chunks"), list):
+                            rel_path = str(item.get("rel_path") or "")
+                            completed_by_file[rel_path] = {
+                                int(index) for index in item["completed_chunks"] if str(index).isdigit()
+                            }
+                else:
+                    session_id = ""
+            except RejoinBIError:
+                # Older tenants may not expose the status route; a fresh session remains safe.
+                session_id = ""
+    chunk_size = 8 * 1024 * 1024
+    if not session_id:
+        total_size = sum(item["size"] for item in manifest)
+        init_data, _ = client.request(
+            "POST",
+            "/plataforma/api/upload-init",
+            json={
+                "container_id": workspace.get("id"),
+                "total_files": len(paths),
+                "total_size": total_size,
+                "force_clean": False,
+            },
+            timeout=120,
+        )
+        if not isinstance(init_data, dict) or not init_data.get("session_id"):
+            raise RejoinBIError("Chunked upload did not return a session id.")
+        session_id = str(init_data["session_id"])
+        chunk_size = max(1024 * 1024, min(int(init_data.get("chunk_size") or chunk_size), 64 * 1024 * 1024))
+        completed_by_file = {}
+        state = {
+            "version": 1,
+            "base_url": client.base_url,
+            "workspace_key": workspace_key,
+            "root": str(root),
+            "manifest_token": manifest_token,
+            "session_id": session_id,
+            "chunk_size": chunk_size,
+            "completed_chunks": {},
+            "updated_at": utc_now(),
+        }
+        write_json(state_path, state)
+    if session_id and isinstance(state, dict):
+        chunk_size = max(1024 * 1024, min(int(state.get("chunk_size") or chunk_size), 64 * 1024 * 1024))
+    max_attempts = 5
+    uploaded_files = []
+
+    for file_number, path in enumerate(paths, 1):
+        relative = str(path.relative_to(root)).replace("\\", "/")
+        file_size = path.stat().st_size
+        total_chunks = max(1, (file_size + chunk_size - 1) // chunk_size)
+        completed_chunks = completed_by_file.setdefault(relative, set())
+        for chunk_index in range(total_chunks):
+            if chunk_index in completed_chunks:
+                continue
+            offset = chunk_index * chunk_size
+            length = min(chunk_size, file_size - offset)
+            last_error = None
+            for attempt in range(max_attempts):
+                try:
+                    with path.open("rb") as handle:
+                        handle.seek(offset)
+                        chunk_bytes = handle.read(length)
+                    mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+                    client.request(
+                        "POST",
+                        "/plataforma/api/upload-chunk",
+                        data={
+                            "session_id": session_id,
+                            "rel_path": relative,
+                            "chunk_index": str(chunk_index),
+                            "total_chunks": str(total_chunks),
+                        },
+                        files={"file": (path.name, io.BytesIO(chunk_bytes), mime)},
+                        timeout=timeout,
+                    )
+                    last_error = None
+                    completed_chunks.add(chunk_index)
+                    state["completed_chunks"] = {
+                        item_path: sorted(item_indexes)
+                        for item_path, item_indexes in completed_by_file.items()
+                    }
+                    state["updated_at"] = utc_now()
+                    write_json(state_path, state)
+                    break
+                except RejoinBIError as exc:
+                    last_error = exc
+                    if attempt + 1 < max_attempts:
+                        time.sleep(min(15, 2 ** attempt))
+            if last_error is not None:
+                raise last_error
+        uploaded_files.append({"path": relative, "size": file_size, "is_binary": False})
+        if file_number % 25 == 0:
+            client.keep_session_alive(force=True)
+
+    finish_data, _ = client.request(
+        "POST",
+        "/plataforma/api/upload-finish",
+        json={"session_id": session_id, "container_id": workspace.get("id")},
+        timeout=timeout,
+    )
+    try:
+        state_path.unlink()
+    except FileNotFoundError:
+        pass
+    return list((finish_data or {}).get("files") or uploaded_files) if isinstance(finish_data, dict) else uploaded_files
 
 
 def choose_entry_file(files_payload: list[dict[str, Any]], startup_mode: str, selected_file: str = "") -> str | None:
@@ -2785,65 +2627,22 @@ def select_app_file(
     }
 
 
-def cmd_upload_zip_select(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    workspace = resolve_workspace(client, args.workspace)
-    if getattr(args, "replace", False):
-        print("[UPLOAD] --replace mode enabled - backing up files before upload")
-        import tempfile, time
-        for f in args.files:
-            fp = Path(f).expanduser().resolve()
-            if fp.is_file():
-                bdir = Path(tempfile.mkdtemp(prefix="rejoinbi_replace_backup_"))
-                bp = bdir / f"{fp.stem}.{int(time.time())}.bak"
-                shutil.copy2(str(fp), str(bp))
-                print(f"  [BACKUP] {fp.name} -> {bp}")
-    if args.workspace_password:
-        client.request("POST", "/plataforma/api/validate-container-password", json={"container_id": workspace.get("id"), "password": args.workspace_password})
-    zip_path = Path(args.zip).expanduser().resolve()
-    if not zip_path.is_file():
-        raise RejoinBIError(f"ZIP not found: {zip_path}")
-    validate_zip_for_upload(zip_path, allow_sensitive=bool(args.allow_sensitive_files))
-    with zip_path.open("rb") as handle:
-        files = {"file": (zip_path.name, handle, "application/zip")}
-        data, _ = client.request("POST", "/plataforma/api/extract-files", data={"container_id": str(workspace.get("id"))}, files=files, timeout=args.timeout)
-    files_payload = list((data or {}).get("files") or []) if isinstance(data, dict) else []
-    result = select_app_file(client, workspace, files_payload, args)
-    print_payload(result, as_json=args.json)
-    return 0
-
-
 def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
-    if getattr(args, "replace", False):
-        print("[UPLOAD] --replace mode enabled - backing up files before upload")
-        import tempfile, time
-        for f in args.files:
-            fp = Path(f).expanduser().resolve()
-            if fp.is_file():
-                bdir = Path(tempfile.mkdtemp(prefix="rejoinbi_replace_backup_"))
-                bp = bdir / f"{fp.stem}.{int(time.time())}.bak"
-                shutil.copy2(str(fp), str(bp))
-                print(f"  [BACKUP] {fp.name} -> {bp}")
     if args.workspace_password:
         client.request("POST", "/plataforma/api/validate-container-password", json={"container_id": workspace.get("id"), "password": args.workspace_password})
     root = Path(args.path).expanduser().resolve()
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    exclude = set(args.exclude or [])
-    with ExitStack() as stack:
-        data_items: list[tuple[str, str]] = [("container_id", str(workspace.get("id")))]
-        files = []
-        for path in iter_folder_files(root, {item.lower() for item in exclude}, allow_sensitive=bool(args.allow_sensitive_files)):
-            rel = str(path.relative_to(root)).replace("\\", "/")
-            mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-            data_items.append(("paths", rel))
-            files.append(("files", (path.name, stack.enter_context(path.open("rb")), mime)))
-        if not files:
-            raise RejoinBIError("No files found to upload.")
-        data, _ = client.request("POST", "/plataforma/api/upload-folder", data=data_items, files=files, timeout=args.timeout)
-    files_payload = list((data or {}).get("files") or []) if isinstance(data, dict) else []
+    files_payload = upload_folder_chunked(
+        client,
+        workspace,
+        root,
+        timeout=args.timeout,
+        exclude=args.exclude,
+        allow_sensitive=bool(args.allow_sensitive_files),
+    )
     result = select_app_file(client, workspace, files_payload, args)
     print_payload(result, as_json=args.json)
     return 0
@@ -3230,7 +3029,7 @@ POST_PUBLISH_FATAL_PATTERNS = (
     ("parquet_engine_missing", "unable to find a usable engine"),
     ("parquet_engine_missing", "pyarrow is required for parquet support"),
     ("parquet_engine_missing", "fastparquet is required for parquet support"),
-    ("materialized_dataframe_missing", "nenhum artefato legÃ­vel"),
+    ("materialized_dataframe_missing", "nenhum artefato legível"),
 )
 
 
@@ -4676,33 +4475,18 @@ def cmd_set_page_order(args: argparse.Namespace) -> int:
     payload = parse_json_payload(args)
     if not isinstance(payload, dict):
         raise RejoinBIError("Page order payload must be a JSON object.")
-    current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
-    current_page = resolve_page_from_pages(current_pages, args.page_id)
-    if current_page is None:
-        raise RejoinBIError(f"Page not found: {args.page_id}")
-    current_page_id = page_id(current_page)
     if args.position is not None:
-        payload["ordem_menu"] = args.position
+        payload["ordem"] = args.position
     if args.parent is not None:
-        payload["pai"] = resolve_page_parent_id(current_pages, args.parent, child_id=current_page_id)
-    elif "pai" in payload:
-        payload["pai"] = resolve_page_parent_id(current_pages, payload.get("pai"), child_id=current_page_id)
+        payload["pai"] = args.parent
     if args.before is not None:
         payload["before"] = args.before
     if args.after is not None:
         payload["after"] = args.after
     if not payload:
         raise RejoinBIError("Provide --data-file, --data-json, --position, --parent, --before, or --after.")
-    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(current_page_id)}/ordem", json=payload, timeout=120)
-    result = data if isinstance(data, dict) else {"raw": data}
-    if "pai" in payload:
-        result["hierarchy"] = {
-            "page_id": current_page_id,
-            "parent_id": payload.get("pai") or "",
-            "recursive_depth_supported": True,
-        }
-        result["menu_refresh"] = refresh_menu_caches(client)
-    print_payload(result, as_json=args.json)
+    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(args.page_id)}/ordem", json=payload, timeout=120)
+    print_payload(data, as_json=args.json)
     return 0
 
 
@@ -4852,9 +4636,13 @@ def cmd_email_manager(args: argparse.Namespace) -> int:
         "external-contacts": lambda: ("GET", "/plataforma/api/email/external_contacts", False),
         "create-external-contact": lambda: ("POST", "/plataforma/api/email/external_contacts", True),
         "delete-external-contact": lambda: ("DELETE", f"/plataforma/api/email/external_contacts/{required_int(args, 'contact_id', '--contact-id')}", True),
+        "schedule-manifests": lambda: ("GET", path_with_query("/plataforma/api/email/schedule-manifests", compact_params(page_id=args.page_id)), False),
+        "refresh-complete": lambda: ("POST", "/plataforma/api/email/project-refresh/complete", True),
         "schedules": lambda: ("GET", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}/schedules", False),
         "create-schedule": lambda: ("POST", f"/plataforma/api/email/groups/{required_int(args, 'group_id', '--group-id')}/schedules", True),
         "delete-schedule": lambda: ("DELETE", f"/plataforma/api/email/schedules/{required_int(args, 'schedule_id', '--schedule-id')}", True),
+        "pause-schedule": lambda: ("PATCH", f"/plataforma/api/email/schedules/{required_int(args, 'schedule_id', '--schedule-id')}/status", True),
+        "resume-schedule": lambda: ("PATCH", f"/plataforma/api/email/schedules/{required_int(args, 'schedule_id', '--schedule-id')}/status", True),
         "broadcast": lambda: ("POST", "/plataforma/api/email/broadcast", True),
         "cancel-history": lambda: ("POST", f"/plataforma/api/email/history/{required_int(args, 'history_id', '--history-id')}/cancel", True),
     }
@@ -4862,6 +4650,13 @@ def cmd_email_manager(args: argparse.Namespace) -> int:
     if destructive:
         require_yes(args, f"{args.action} changes e-mail configuration or sends/cancels messages and requires --yes.")
     payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    if args.action == "create-group" and getattr(args, "schedule_file", None):
+        payload = payload if isinstance(payload, dict) else {}
+        payload["schedule_manifest"] = load_json_file(args.schedule_file)
+    if args.action == "refresh-complete" and not payload:
+        payload = {"page_id": args.page_id, "refresh_id": args.refresh_id}
+    if args.action in {"pause-schedule", "resume-schedule"} and not getattr(args, "data_json", None) and not getattr(args, "data_file", None):
+        payload = {"is_paused": args.action == "pause-schedule"}
     data, _ = client.request(method, path, json=payload, timeout=args.timeout)
     print_payload(data, as_json=args.json)
     return 0
@@ -4887,9 +4682,13 @@ def cmd_whatsapp_manager(args: argparse.Namespace) -> int:
         "external-contacts": lambda: ("GET", "/plataforma/api/whatsapp/external_contacts", False),
         "create-external-contact": lambda: ("POST", "/plataforma/api/whatsapp/external_contacts", True),
         "delete-external-contact": lambda: ("DELETE", f"/plataforma/api/whatsapp/external_contacts/{required_int(args, 'contact_id', '--contact-id')}", True),
+        "schedule-manifests": lambda: ("GET", path_with_query("/plataforma/api/whatsapp/schedule-manifests", compact_params(page_id=args.page_id)), False),
+        "refresh-complete": lambda: ("POST", "/plataforma/api/whatsapp/project-refresh/complete", True),
         "schedules": lambda: ("GET", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}/schedules", False),
         "create-schedule": lambda: ("POST", f"/plataforma/api/whatsapp/groups/{required_int(args, 'group_id', '--group-id')}/schedules", True),
         "delete-schedule": lambda: ("DELETE", f"/plataforma/api/whatsapp/schedules/{required_int(args, 'schedule_id', '--schedule-id')}", True),
+        "pause-schedule": lambda: ("PATCH", f"/plataforma/api/whatsapp/schedules/{required_int(args, 'schedule_id', '--schedule-id')}/status", True),
+        "resume-schedule": lambda: ("PATCH", f"/plataforma/api/whatsapp/schedules/{required_int(args, 'schedule_id', '--schedule-id')}/status", True),
         "broadcast": lambda: ("POST", "/plataforma/api/whatsapp/broadcast", True),
         "cancel-history": lambda: ("POST", f"/plataforma/api/whatsapp/history/{required_int(args, 'history_id', '--history-id')}/cancel", True),
         "restart-service": lambda: ("POST", "/plataforma/api/whatsapp/admin/restart_service", True),
@@ -4898,6 +4697,13 @@ def cmd_whatsapp_manager(args: argparse.Namespace) -> int:
     if destructive:
         require_yes(args, f"{args.action} changes WhatsApp configuration or sends/cancels messages and requires --yes.")
     payload = parse_json_payload(args) if method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    if args.action == "create-group" and getattr(args, "schedule_file", None):
+        payload = payload if isinstance(payload, dict) else {}
+        payload["schedule_manifest"] = load_json_file(args.schedule_file)
+    if args.action == "refresh-complete" and not payload:
+        payload = {"page_id": args.page_id, "refresh_id": args.refresh_id}
+    if args.action in {"pause-schedule", "resume-schedule"} and not getattr(args, "data_json", None) and not getattr(args, "data_file", None):
+        payload = {"is_paused": args.action == "pause-schedule"}
     data, _ = client.request(method, path, json=payload, timeout=args.timeout)
     print_payload(data, as_json=args.json)
     return 0
@@ -5184,7 +4990,9 @@ def _managed_database_query(
     params: list[Any] | None,
     timeout: int,
 ) -> dict[str, Any]:
-    client.keep_session_alive()
+    keep_session_alive = getattr(client, "keep_session_alive", None)
+    if callable(keep_session_alive):
+        keep_session_alive()
     data, _ = client.request(
         "POST",
         f"{base}/{quote(database_id)}/query",
@@ -5476,7 +5284,7 @@ def cmd_managed_databases(args: argparse.Namespace) -> int:
 
     if action == "list":
         data, _ = client.request("GET", base, timeout=args.timeout)
-    elif action in {"get", "schema", "tokens", "integrity", "download"}:
+    elif action in {"get", "schema", "tokens", "integrity", "download", "audit", "diagnostics"}:
         database_id = required_arg(args, "database_id", "--database-id")
         if action == "download":
             output = Path(args.output or f"managed-database-{database_id}.sqlite3").expanduser().resolve()
@@ -5507,12 +5315,31 @@ def cmd_managed_databases(args: argparse.Namespace) -> int:
         database_id = required_arg(args, "database_id", "--database-id")
         if not str(payload.get("sql") or "").strip():
             raise RejoinBIError("--sql or a payload containing sql is required.")
+        if getattr(args, "scope", None):
+            payload["scope"] = args.scope
         data, _ = client.request("POST", f"{base}/{quote(database_id)}/query", json=payload, timeout=args.timeout)
+    elif action in {"create-table", "create-view", "create-index"}:
+        require_yes(args, f"{action} changes the managed database schema and requires --yes.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        if not payload:
+            raise RejoinBIError(f"{action} requires --data-json or --data-file with the object definition.")
+        suffix = {"create-table": "tables", "create-view": "views", "create-index": "indexes"}[action]
+        data, _ = client.request("POST", f"{base}/{quote(database_id)}/{suffix}", json=payload, timeout=args.timeout)
+    elif action == "delete-object":
+        require_yes(args, "Deleting a database object creates an automatic backup and requires --yes.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        object_type = required_arg(args, "object_type", "--object-type")
+        object_name = required_arg(args, "object_name", "--object-name")
+        payload["confirm_name"] = object_name
+        data, _ = client.request(
+            "DELETE", f"{base}/{quote(database_id)}/objects/{quote(object_type)}/{quote(object_name)}",
+            json=payload, timeout=args.timeout,
+        )
     elif action == "create-token":
         require_yes(args, "Creating an external database token requires --yes.")
         database_id = required_arg(args, "database_id", "--database-id")
         payload["name"] = required_arg(args, "token_name", "--token-name")
-        payload["scope"] = str(args.scope or "read_write")
+        payload["scope"] = str(args.scope or "read")
         data, _ = client.request("POST", f"{base}/{quote(database_id)}/tokens", json=payload, timeout=args.timeout)
     elif action == "revoke-token":
         require_yes(args, "Revoking an external database token requires --yes.")
@@ -5949,10 +5776,6 @@ def cmd_workspace_action(args: argparse.Namespace) -> int:
 def cmd_create_page(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
-    parent_id = ""
-    if args.parent:
-        current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
-        parent_id = resolve_page_parent_id(current_pages, args.parent)
     payload = {
         "nome": args.name,
         "container_id": workspace.get("id"),
@@ -5960,7 +5783,7 @@ def cmd_create_page(args: argparse.Namespace) -> int:
         "rota": args.route or "",
         "icone": args.icon or "fas fa-chart-line",
         "descricao": args.description or "",
-        "pai": parent_id,
+        "pai": args.parent or "",
         "ativo": not args.inactive,
         "rls": bool(args.rls),
     }
@@ -5968,14 +5791,7 @@ def cmd_create_page(args: argparse.Namespace) -> int:
         payload["container_password"] = args.workspace_password
     validate_page_payload(payload, context="create-page payload")
     data, _ = client.request("POST", "/plataforma/api/paginas", json=payload, timeout=60)
-    result = data if isinstance(data, dict) else {"raw": data}
-    result["hierarchy"] = {
-        "page_id": safe_str(result.get("page_id")),
-        "parent_id": parent_id,
-        "recursive_depth_supported": True,
-    }
-    result["menu_refresh"] = refresh_menu_caches(client)
-    print_payload(result, as_json=args.json)
+    print_payload(data, as_json=args.json)
     return 0
 
 
@@ -6046,7 +5862,6 @@ def cmd_update_page(args: argparse.Namespace) -> int:
     current_page = resolve_page_from_pages(current_pages, args.page_id)
     if current_page is None:
         raise RejoinBIError(f"Page not found: {args.page_id}")
-    current_page_id = page_id(current_page)
     payload: dict[str, Any] = {}
     if args.name:
         payload["nome"] = args.name
@@ -6059,7 +5874,7 @@ def cmd_update_page(args: argparse.Namespace) -> int:
     if args.description is not None:
         payload["descricao"] = args.description
     if args.parent is not None:
-        payload["pai"] = resolve_page_parent_id(current_pages, args.parent, child_id=current_page_id)
+        payload["pai"] = args.parent
     if args.workspace:
         workspace = resolve_workspace(client, args.workspace)
         payload["container_id"] = workspace.get("id")
@@ -6082,16 +5897,8 @@ def cmd_update_page(args: argparse.Namespace) -> int:
     if not payload:
         raise RejoinBIError("No page changes provided.")
     validate_page_payload(payload, context="update-page payload")
-    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(current_page_id, safe='')}", json=payload, timeout=60)
-    result = data if isinstance(data, dict) else {"raw": data}
-    if args.parent is not None:
-        result["hierarchy"] = {
-            "page_id": current_page_id,
-            "parent_id": payload.get("pai") or "",
-            "recursive_depth_supported": True,
-        }
-        result["menu_refresh"] = refresh_menu_caches(client)
-    print_payload(result, as_json=args.json)
+    data, _ = client.request("PUT", f"/plataforma/api/paginas/{quote(args.page_id, safe='')}", json=payload, timeout=60)
+    print_payload(data, as_json=args.json)
     return 0
 
 
@@ -6219,19 +6026,13 @@ def upload_folder_with_options(
 ) -> dict[str, Any]:
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    exclude_names = set(exclude or [".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
-    with ExitStack() as stack:
-        data_items: list[tuple[str, str]] = [("container_id", str(workspace.get("id")))]
-        files = []
-        for path in iter_folder_files(root, exclude_names):
-            rel = str(path.relative_to(root)).replace("\\", "/")
-            mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-            data_items.append(("paths", rel))
-            files.append(("files", (path.name, stack.enter_context(path.open("rb")), mime)))
-        if not files:
-            raise RejoinBIError("No files found to upload.")
-        data, _ = client.request("POST", "/plataforma/api/upload-folder", data=data_items, files=files, timeout=timeout)
-    files_payload = list((data or {}).get("files") or []) if isinstance(data, dict) else []
+    files_payload = upload_folder_chunked(
+        client,
+        workspace,
+        root,
+        timeout=timeout,
+        exclude=exclude,
+    )
     options = argparse.Namespace(
         startup_mode=startup_mode,
         selected_file=selected_file,
@@ -6269,129 +6070,6 @@ def manifest_page_id(page: dict[str, Any]) -> str:
     return str(page.get("id") or page.get("page_id") or "").strip()
 
 
-MANIFEST_PAGE_CHILD_KEYS = ("children", "subpages", "subpaginas")
-
-
-def manifest_page_children(page: dict[str, Any]) -> list[Any]:
-    populated = [key for key in MANIFEST_PAGE_CHILD_KEYS if page.get(key) not in (None, [])]
-    if len(populated) > 1:
-        raise RejoinBIError(
-            f"Manifest page {manifest_page_id(page) or page.get('name')!r} uses more than one child field: "
-            f"{', '.join(populated)}. Use only 'children'."
-        )
-    if not populated:
-        return []
-    children = page.get(populated[0])
-    if not isinstance(children, list):
-        raise RejoinBIError(
-            f"Manifest page {manifest_page_id(page) or page.get('name')!r} child field must be an array."
-        )
-    return children
-
-
-def prepare_manifest_pages(raw_pages: Any) -> list[dict[str, Any]]:
-    """Flatten nested page trees and order internal dependencies parent-first."""
-    if not isinstance(raw_pages, list):
-        raise RejoinBIError("Manifest pages must be an array.")
-    expanded: list[dict[str, Any]] = []
-
-    def walk(raw_page: Any, inherited_parent: str = "", path: str = "pages") -> None:
-        if not isinstance(raw_page, dict):
-            raise RejoinBIError(f"Invalid manifest page entry at {path}: {raw_page}")
-        page = dict(raw_page)
-        children = manifest_page_children(page)
-        for key in MANIFEST_PAGE_CHILD_KEYS:
-            page.pop(key, None)
-        page_ref = manifest_page_id(page)
-        explicit_parent = safe_str(page.get("parent") or page.get("pai"))
-        if inherited_parent:
-            if explicit_parent and explicit_parent != inherited_parent:
-                raise RejoinBIError(
-                    f"Conflicting parent for {page_ref or page.get('name')!r}: "
-                    f"nested under {inherited_parent!r} but declares {explicit_parent!r}."
-                )
-            page["parent"] = inherited_parent
-            page.pop("pai", None)
-        expanded.append(page)
-        if children and not page_ref:
-            raise RejoinBIError(
-                f"Manifest page {page.get('name')!r} has children and must define an ASCII id/page_id."
-            )
-        for index, child in enumerate(children):
-            walk(child, page_ref, f"{path}.{page_ref or 'page'}.children[{index}]")
-
-    for index, raw_page in enumerate(raw_pages):
-        walk(raw_page, path=f"pages[{index}]")
-
-    by_id: dict[str, dict[str, Any]] = {}
-    for page in expanded:
-        current_id = manifest_page_id(page)
-        if current_id and current_id in by_id:
-            raise RejoinBIError(f"Duplicate page id in manifest hierarchy: {current_id}")
-        if current_id:
-            by_id[current_id] = page
-
-    ordered: list[dict[str, Any]] = []
-    state: dict[str, int] = {}
-
-    def visit(page: dict[str, Any], ancestry: list[str]) -> None:
-        current_id = manifest_page_id(page)
-        if not current_id:
-            if page not in ordered:
-                ordered.append(page)
-            return
-        marker = state.get(current_id, 0)
-        if marker == 2:
-            return
-        if marker == 1:
-            cycle = " -> ".join(ancestry + [current_id])
-            raise RejoinBIError(f"Manifest page hierarchy contains a cycle: {cycle}")
-        state[current_id] = 1
-        parent_id = safe_str(page.get("parent") or page.get("pai"))
-        if parent_id == current_id:
-            raise RejoinBIError(f"Manifest page {current_id} cannot be its own parent.")
-        if parent_id in by_id:
-            visit(by_id[parent_id], ancestry + [current_id])
-        state[current_id] = 2
-        ordered.append(page)
-
-    for page in expanded:
-        visit(page, [])
-    return ordered
-
-
-def manifest_hierarchy_summary(pages: list[dict[str, Any]]) -> dict[str, Any]:
-    by_id = {manifest_page_id(page): page for page in pages if manifest_page_id(page)}
-    depths: dict[str, int] = {}
-
-    def depth_for(page_id_value: str) -> int:
-        if page_id_value in depths:
-            return depths[page_id_value]
-        page = by_id.get(page_id_value) or {}
-        parent_id = safe_str(page.get("parent") or page.get("pai"))
-        depth = depth_for(parent_id) + 1 if parent_id in by_id else 0
-        depths[page_id_value] = depth
-        return depth
-
-    edges = []
-    external_parents = []
-    for current_id, page in by_id.items():
-        parent_id = safe_str(page.get("parent") or page.get("pai"))
-        if parent_id:
-            edges.append({"page_id": current_id, "parent_id": parent_id})
-            if parent_id not in by_id and parent_id not in external_parents:
-                external_parents.append(parent_id)
-        depth_for(current_id)
-    return {
-        "page_count": len(pages),
-        "edge_count": len(edges),
-        "max_depth": max(depths.values(), default=0),
-        "recursive_depth_supported": True,
-        "edges": edges,
-        "external_parent_ids": external_parents,
-    }
-
-
 def page_create_name(page: dict[str, Any], display_name: str, desired_id: str) -> str:
     explicit = str(page.get("create_name") or page.get("technical_name") or "").strip()
     if explicit:
@@ -6426,19 +6104,14 @@ def flatten_page_tree(payload: Any) -> list[dict[str, Any]]:
         roots = []
     flat: list[dict[str, Any]] = []
 
-    def walk(items: Any, parent_id: str = "", depth: int = 0) -> None:
+    def walk(items: Any) -> None:
         if not isinstance(items, list):
             return
         for item in items:
             if not isinstance(item, dict):
                 continue
-            normalized_item = dict(item)
-            if parent_id and not safe_str(normalized_item.get("pai")):
-                normalized_item["_tree_parent_id"] = parent_id
-            normalized_item["_tree_depth"] = depth
-            flat.append(normalized_item)
-            current_id = safe_str(normalized_item.get("id"))
-            walk(item.get("subpaginas") or item.get("children") or [], current_id, depth + 1)
+            flat.append(item)
+            walk(item.get("subpaginas") or item.get("children") or [])
 
     walk(roots)
     return flat
@@ -6509,15 +6182,10 @@ def wait_manifest_pages_ready(
                 ).strip() if isinstance(accessible_page, dict) else ""
                 accessible_container_name = str(accessible_page.get("container_name") or "").strip() if isinstance(accessible_page, dict) else ""
                 accessible_container_id = str(accessible_page.get("container_id") or "").strip() if isinstance(accessible_page, dict) else ""
-                expected_parent_id = safe_str(page.get("parent") or page.get("pai"))
-                accessible_parent_id = safe_str(
-                    accessible_page.get("pai") or accessible_page.get("_tree_parent_id")
-                ) if isinstance(accessible_page, dict) else ""
-                parent_ok = not expected_parent_id or expected_parent_id == accessible_parent_id
                 name_ok = not expected_name or not accessible_name or expected_name == accessible_name
                 menu_safe = (not requires_container_name) or bool(accessible_container_name)
                 found = bool(accessible_page)
-                ready = found and name_ok and parent_ok and menu_safe and not resolve_error
+                ready = found and name_ok and menu_safe and not resolve_error
                 if not ready:
                     all_ready = False
                 last_results.append({
@@ -6527,10 +6195,6 @@ def wait_manifest_pages_ready(
                     "expected_name": expected_name,
                     "accessible_name": accessible_name,
                     "name_ok": name_ok,
-                    "expected_parent_id": expected_parent_id,
-                    "accessible_parent_id": accessible_parent_id,
-                    "parent_ok": parent_ok,
-                    "tree_depth": accessible_page.get("_tree_depth") if isinstance(accessible_page, dict) else None,
                     "requires_container_name": requires_container_name,
                     "container_id": accessible_container_id,
                     "container_name": accessible_container_name,
@@ -6630,10 +6294,9 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     app_root = Path(args.path).expanduser().resolve() if args.path else (manifest_path.parent / str(manifest.get("app_root") or ".")).resolve()
     workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
-    raw_pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
-    if not raw_pages:
+    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    if not pages:
         raise RejoinBIError("Manifest must include a non-empty pages array.")
-    pages = prepare_manifest_pages(raw_pages)
 
     workspace_name = args.workspace or workspace_cfg.get("name") or manifest.get("workspace_name")
     if not workspace_name:
@@ -6700,7 +6363,6 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
         "workspace": {"id": workspace.get("id"), "name": workspace.get("name"), "status": workspace.get("deploy_status")},
         "workspace_validation": validation,
         "upload": upload_result,
-        "page_hierarchy": manifest_hierarchy_summary(pages),
         "pages": page_results,
         "menu_refresh": menu_refresh,
         "page_readiness": page_readiness,
@@ -6713,8 +6375,7 @@ def cmd_smoke_pages(args: argparse.Namespace) -> int:
     manifest, manifest_path = load_manifest(args.manifest)
     bind_manifest_tenant(args, manifest)
     client = make_client(args)
-    raw_pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
-    pages = prepare_manifest_pages(raw_pages)
+    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
     readiness = wait_manifest_pages_ready(
         client,
         pages,
@@ -6966,18 +6627,11 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
     errors: list[str] = []
     warnings: list[str] = []
     checks: list[dict[str, Any]] = []
-    raw_pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
+    pages = manifest.get("pages") if isinstance(manifest.get("pages"), list) else []
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
     startup_mode = str(args.startup_mode or upload_cfg.get("startup_mode") or "static").strip().lower()
     manifest_language = detect_manifest_language(manifest)
     errors.extend(manifest_text_integrity_errors(manifest))
-    hierarchy_valid = True
-    try:
-        pages = prepare_manifest_pages(raw_pages) if raw_pages else []
-    except RejoinBIError as exc:
-        hierarchy_valid = False
-        pages = [page for page in raw_pages if isinstance(page, dict)]
-        errors.append(str(exc))
 
     if pages:
         files_by_page = []
@@ -6986,18 +6640,6 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
         workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
         workspace_name_for_pages = str(workspace_cfg.get("name") or manifest.get("workspace_name") or "").strip()
         workspace_name_key = normalize_text(workspace_name_for_pages)
-        hierarchy = manifest_hierarchy_summary(pages) if hierarchy_valid else {
-            "page_count": len(pages),
-            "recursive_depth_supported": True,
-            "valid": False,
-            "external_parent_ids": [],
-        }
-        checks.append({"name": "page_hierarchy", **hierarchy})
-        for external_parent_id in hierarchy.get("external_parent_ids") or []:
-            warnings.append(
-                f"Parent page '{external_parent_id}' is not declared in this manifest. "
-                "deploy-manifest will treat it as an existing platform page."
-            )
         for page in pages:
             if not isinstance(page, dict):
                 errors.append(f"Invalid manifest page entry: {page}")
@@ -7178,7 +6820,7 @@ def should_ignore_export(dir_path: str, names: list[str]) -> set[str]:
         ".codex",
         ".env",
         ".git",
-        ".rejoinbi",
+        ".rejoinbi-platform",
         ".pytest_cache",
         ".ruff_cache",
         ".mypy_cache",
@@ -7210,19 +6852,19 @@ This folder is a shareable Codex plugin package generated from:
 
 ## Install
 
-Copy the `rejoinbi` folder into the recipient Codex plugins folder, or import/use the zip package if their Codex setup supports plugin zip import.
+Copy the `rejoinbi-platform` folder into the recipient Codex plugins folder, or import/use the zip package if their Codex setup supports plugin zip import.
 
 Typical local path:
 
 ```powershell
-$HOME\\plugins\\rejoinbi
+$HOME\\plugins\\rejoinbi-platform
 ```
 
 ## Configure The Platform Address
 
 ```powershell
-python .\\rejoinbi\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
-python .\\rejoinbi\\scripts\\rejoinbi.py workspaceall
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py workspaceall
 ```
 
 The `ensure` command checks for a saved Rejoin BI session first. If needed, it opens a local browser login wizard. Passwords and PINs are never saved in the package and do not need to be pasted into chat.
@@ -7238,25 +6880,25 @@ Use `examples\\codex-advanced-suite\\rejoinbi-app.json` as the model: one HTML f
 Workspace and page deletion commands are dry-run by default and print the affected page tree before deleting:
 
 ```powershell
-python .\\rejoinbi\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
-python .\\rejoinbi\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
+python .\\rejoinbi-platform\\scripts\\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
 ```
 
 Actual deletion requires exact confirmation flags such as `--confirm-name`, `--confirm-id`, or `--confirm-page-id`.
 
 ## Package Contents
 
-- Plugin manifest: `rejoinbi\\.codex-plugin\\plugin.json`
-- Skill instructions: `rejoinbi\\skills\\rejoinbi\\SKILL.md`
-- CLI: `rejoinbi\\scripts\\rejoinbi.py`
-- Example dashboards: `rejoinbi\\examples`
+- Plugin manifest: `rejoinbi-platform\\.codex-plugin\\plugin.json`
+- Skill instructions: `rejoinbi-platform\\skills\\rejoinbi-platform\\SKILL.md`
+- CLI: `rejoinbi-platform\\scripts\\rejoinbi.py`
+- Example dashboards: `rejoinbi-platform\\examples`
 {zip_line}"""
     (target / "INSTALL.md").write_text(notes, encoding="utf-8")
 
 
 def cmd_export_package(args: argparse.Namespace) -> int:
     destination = Path(args.destination or (Path.home() / "Downloads" / "plugin")).expanduser().resolve()
-    package_dir = destination / "rejoinbi"
+    package_dir = destination / "rejoinbi-platform"
     destination.mkdir(parents=True, exist_ok=True)
 
     if args.clean and package_dir.exists():
@@ -7270,7 +6912,7 @@ def cmd_export_package(args: argparse.Namespace) -> int:
 
     package_zip = None
     if not args.no_zip:
-        zip_path = destination / "rejoinbi.zip"
+        zip_path = destination / "rejoinbi-platform.zip"
         if zip_path.exists():
             zip_path.unlink()
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -7289,175 +6931,6 @@ def cmd_export_package(args: argparse.Namespace) -> int:
         "install_notes": str(destination / "INSTALL.md"),
     }, as_json=args.json)
     return 0
-
-
-
-def cmd_self_test(args: argparse.Namespace) -> int:
-    """Run plugin self-diagnostics: connectivity, session, dependencies, version."""
-    print("[SELF-TEST] Rejoin BI Plugin Diagnostics")
-    print(f"[SELF-TEST] Plugin version: 0.4.31")
-    print(f"[SELF-TEST] Python: {sys.version}")
-    
-    # Check dependencies
-    missing_deps = []
-    for mod_name in ["json", "argparse", "pathlib", "zipfile", "mimetypes", "hashlib", "sqlite3"]:
-        try:
-            __import__(mod_name)
-        except ImportError:
-            missing_deps.append(mod_name)
-    
-    if missing_deps:
-        print(f"[SELF-TEST] FAIL: Missing dependencies: {missing_deps}")
-        return 1
-    print("[SELF-TEST] Dependencies: OK")
-    
-    # Check plugin directory structure
-    plugin_root = Path(__file__).resolve().parent.parent
-    required = ["scripts/rejoinbi.py", "skills/rejoinbi/SKILL.md", ".codex-plugin/plugin.json", "docs"]
-    for req in required:
-        if not (plugin_root / req).exists():
-            print(f"[SELF-TEST] WARN: Missing expected path: {plugin_root / req}")
-    print(f"[SELF-TEST] Plugin root: {plugin_root}")
-    
-    # Check docs
-    docs_dir = plugin_root / "docs"
-    if docs_dir.exists():
-        doc_count = len(list(docs_dir.glob("*.md")))
-        print(f"[SELF-TEST] Documentation: {doc_count} doc files")
-    
-    # Check examples
-    examples_dir = plugin_root / "examples"
-    if examples_dir.exists():
-        example_count = sum(1 for _ in examples_dir.rglob("*") if _.is_file())
-        print(f"[SELF-TEST] Examples: {example_count} files in {sum(1 for _ in examples_dir.iterdir() if _.is_dir())} suites")
-    
-    # Check examples dirs
-    if examples_dir.exists():
-        suites = [d.name for d in examples_dir.iterdir() if d.is_dir()]
-        print(f"[SELF-TEST] Example suites: {suites}")
-    
-    # Try to make a client (will fail if no session, but that's OK)
-    try:
-        client = make_client(args)
-        print(f"[SELF-TEST] Client factory: OK")
-    except Exception as e:
-        print(f"[SELF-TEST] Client factory: WARN - {e}")
-    
-    print("[SELF-TEST] Complete. All critical checks passed." if not missing_deps else "[SELF-TEST] Complete with warnings.")
-    return 0
-
-
-
-
-
-
-_UPLOAD_HISTORY_FILE = None
-
-def _get_upload_history_path() -> str:
-    global _UPLOAD_HISTORY_FILE
-    if _UPLOAD_HISTORY_FILE is None:
-        rejoinbi_dir = Path(os.environ.get("USERPROFILE", "") or "~").expanduser() / ".rejoinbi"
-        rejoinbi_dir.mkdir(parents=True, exist_ok=True)
-        _UPLOAD_HISTORY_FILE = str(rejoinbi_dir / "upload_history.json")
-    return _UPLOAD_HISTORY_FILE
-
-
-def _save_upload_history(workspace_id: str, entry: dict) -> None:
-    """Save last upload entry for a workspace."""
-    hist_path = _get_upload_history_path()
-    try:
-        if os.path.exists(hist_path):
-            with open(hist_path, "r", encoding="utf-8") as f:
-                history = json.load(f)
-        else:
-            history = {}
-        history[str(workspace_id)] = entry
-        with open(hist_path, "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"[WARN] Could not save upload history: {e}")
-
-
-def _load_upload_history(workspace_id: str) -> dict | None:
-    """Load last upload entry for a workspace."""
-    hist_path = _get_upload_history_path()
-    try:
-        if os.path.exists(hist_path):
-            with open(hist_path, "r", encoding="utf-8") as f:
-                history = json.load(f)
-            return history.get(str(workspace_id))
-    except Exception:
-        pass
-    return None
-
-
-def cmd_upload_rollback(args: argparse.Namespace) -> int:
-    """Roll back the last upload to a workspace using stored backup."""
-    client = make_client(args)
-    workspace = resolve_workspace(client, args.workspace)
-    ws_id = workspace.get("id")
-
-    history = _load_upload_history(ws_id)
-    if not history:
-        print("[ROLLBACK] No upload history found for this workspace.")
-        print("[ROLLBACK] Upload history is stored per-workspace after each successful upload.")
-        return 1
-
-    backup_dir = history.get("backup_dir")
-    if not backup_dir or not os.path.isdir(backup_dir):
-        print(f"[ROLLBACK] Backup directory not found: {backup_dir}")
-        print("[ROLLBACK] The backup may have been cleaned up or the path is invalid.")
-        return 1
-
-    backup_path = Path(backup_dir)
-    files = list(backup_path.iterdir()) if backup_path.exists() else []
-    if not files:
-        print("[ROLLBACK] Backup directory is empty.")
-        return 1
-
-    if not args.yes:
-        print(f"[ROLLBACK] Found {len(files)} backup file(s) from {history.get('timestamp', 'unknown')}:")
-        for f in files:
-            print(f"  {f.name}")
-        print(f"[ROLLBACK] From {history.get('original_path', 'unknown')}")
-        print("[ROLLBACK] Pass --yes to restore these files to the workspace.")
-        return 0
-
-    # Upload the backup files back to the workspace
-    import tempfile, shutil, time
-    from types import SimpleNamespace
-
-    fake = SimpleNamespace(
-        workspace=args.workspace,
-        files=[str(f) for f in files if f.is_file()],
-        folder=history.get("folder", ""),
-        message=f"Rollback from {history.get('timestamp', 'unknown')}",
-        map=None,
-        restart=getattr(args, "restart", False),
-        workspace_password=getattr(args, "workspace_password", None),
-        allow_sensitive_files=True,
-        timeout=getattr(args, "timeout", 120),
-        json=getattr(args, "json", False),
-        replace=False,
-    )
-    print(f"[ROLLBACK] Restoring {len(files)} file(s) to workspace '{workspace.get('name')}'...")
-    result = cmd_upload_files(fake)
-    
-    # After rollback, clear the history entry so it cannot be rolled back again
-    try:
-        hist_path = _get_upload_history_path()
-        if os.path.exists(hist_path):
-            with open(hist_path, "r", encoding="utf-8") as f:
-                history_all = json.load(f)
-            if str(ws_id) in history_all:
-                del history_all[str(ws_id)]
-                with open(hist_path, "w", encoding="utf-8") as f:
-                    json.dump(history_all, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
-
-    print(f"[ROLLBACK] Rollback complete. Backup files remain at: {backup_dir}")
-    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -7510,11 +6983,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=cmd_browser_login, password=None, pin=None, terminal=False)
 
     p = sub.add_parser("status", help="Check current session")
-    p.add_argument("--json", action="store_true", help="Output as structured JSON")
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("workspaceall", help="List all workspaces/containers")
-    p.add_argument("--json", action="store_true", help="Output as structured JSON")
     p.set_defaults(func=cmd_workspaceall)
 
     p = sub.add_parser("validate-workspace", help="Validate and unlock a protected workspace")
@@ -7525,16 +6996,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("workspace-content", help="List workspace repository content")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--folder", default="")
-    p.add_argument("--json", action="store_true", help="Output as structured JSON")
     p.set_defaults(func=cmd_workspace_content)
-
-    p = sub.add_parser("workspace-diff", help="Compare local files with workspace content. Shows new, modified, and missing files.")
-    p.add_argument("--workspace", required=True, help="Workspace id or name")
-    p.add_argument("--path", required=True, help="Local folder path to compare against the workspace")
-    p.add_argument("--folder", default="", help="Remote folder path (e.g. app/ or templates/)")
-    p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache", ".env"])
-    p.add_argument("--json", action="store_true", help="Output as structured JSON")
-    p.set_defaults(func=cmd_workspace_diff)
 
     p = sub.add_parser("create-workspace", help="Create a workspace/container")
     p.add_argument("--name", required=True)
@@ -7644,57 +7106,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--restart", action="store_true")
     p.add_argument("--workspace-password")
     p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
-    p.add_argument("--replace", action="store_true", help="Back up existing files in the workspace before overwriting")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_upload_files)
 
-    p = sub.add_parser("upload-file", help="Upload a single file to a workspace. Simpler alternative to upload-files.")
+    p = sub.add_parser("upload-folder-select", help="Upload a project folder in resumable chunks, then choose startup options like the UI")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
-    p.add_argument("--file", required=True, help="Path to the local file to upload")
-    p.add_argument("--folder", default="", help="Target folder inside the workspace (e.g. static/css or templates)")
-    p.add_argument("--map", help="Exact target path inside the workspace (overrides --folder)")
-    p.add_argument("--replace", action="store_true", help="Back up existing file before overwriting")
-    p.add_argument("--restart", action="store_true", help="Restart container after upload")
+    p.add_argument("--path", required=True)
+    p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
+    p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--selected-file", default="")
+    p.add_argument("--startup-mode", choices=["file", "command", "static"], default="file")
+    p.add_argument("--startup-command", default="")
+    p.add_argument("--python-path", default="auto")
+    p.add_argument("--auto-start", action="store_true", default=True)
+    p.add_argument("--no-auto-start", dest="auto_start", action="store_false")
+    p.add_argument("--rpa-support", action="store_true")
     p.add_argument("--workspace-password")
-    p.add_argument("--allow-sensitive-files", action="store_true")
-    p.add_argument("--message", default="File uploaded by rejoinbi plugin")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_upload_file)
-
-    p = sub.add_parser("upload-rollback", help="Roll back the last upload to a workspace using the stored backup")
-    p.add_argument("--workspace", required=True, help="Workspace id or name")
-    p.add_argument("--yes", action="store_true", help="Confirm rollback")
-    p.add_argument("--restart", action="store_true", help="Restart container after rollback")
-    p.add_argument("--workspace-password")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.add_argument("--json", action="store_true", help="Output as structured JSON")
-    p.set_defaults(func=cmd_upload_rollback)
-
-    for name, help_text, func in (
-        ("upload-zip-select", "Upload a ZIP then choose startup options like the UI", cmd_upload_zip_select),
-        ("upload-folder-select", "Upload a folder then choose startup options like the UI", cmd_upload_folder_select),
-    ):
-        p = sub.add_parser(name, help=help_text)
-        p.add_argument("--workspace", required=True, help="Workspace id or name")
-        if name == "upload-zip-select":
-            p.add_argument("--zip", required=True)
-        else:
-            p.add_argument("--path", required=True)
-            p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
-        p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
-        p.add_argument("--selected-file", default="")
-        p.add_argument("--startup-mode", choices=["file", "command", "static"], default="file")
-        p.add_argument("--startup-command", default="")
-        p.add_argument("--python-path", default="auto")
-        p.add_argument("--auto-start", action="store_true", default=True)
-        p.add_argument("--no-auto-start", dest="auto_start", action="store_false")
-        p.add_argument("--rpa-support", action="store_true")
-        p.add_argument("--workspace-password")
-        p.add_argument("--timeout", type=int, default=900)
-        p.add_argument("--interval", type=float, default=3.0)
-        p.add_argument("--replace", action="store_true", help="Back up existing files before overwriting")
-        p.add_argument("--dry-run", action="store_true", help="Show what would be uploaded without uploading")
-        p.set_defaults(func=func)
+    p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--interval", type=float, default=3.0)
+    p.set_defaults(func=cmd_upload_folder_select)
 
     p = sub.add_parser("bi-projects", help="List BI Studio projects")
     p.set_defaults(func=cmd_bi_projects)
@@ -7881,7 +7311,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("create-user", help="Create a user")
     p.add_argument("--email", required=True)
     p.add_argument("--name", required=True)
-    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "UsuÃ¡rio", "Gestor"], default="Usuario")
+    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "Usuário", "Gestor"], default="Usuario")
     p.add_argument("--setor", default="Codex")
     p.add_argument("--matricula", default="")
     p.add_argument("--contato", default="")
@@ -7890,7 +7320,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("update-user", help="Edit a user profile")
     p.add_argument("--user", required=True, help="User id or email")
     p.add_argument("--name")
-    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "UsuÃ¡rio", "Gestor"])
+    p.add_argument("--perfil", choices=["Administrador Principal", "Master", "Administrador", "Usuario", "Usuário", "Gestor"])
     p.add_argument("--setor")
     p.add_argument("--matricula")
     p.add_argument("--contato")
@@ -8130,8 +7560,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=[
         "history", "queue-status", "sessions", "create-session", "test-session", "update-session", "delete-session",
         "groups", "create-group", "update-group", "delete-group", "recipients", "add-recipient", "delete-recipient",
-        "external-contacts", "create-external-contact", "delete-external-contact",
-        "schedules", "create-schedule", "delete-schedule", "broadcast", "cancel-history",
+        "external-contacts", "create-external-contact", "delete-external-contact", "schedule-manifests", "refresh-complete",
+        "schedules", "create-schedule", "delete-schedule", "pause-schedule", "resume-schedule", "broadcast", "cancel-history",
     ])
     p.add_argument("--session-id")
     p.add_argument("--group-id")
@@ -8140,6 +7570,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--schedule-id")
     p.add_argument("--history-id")
     p.add_argument("--page-id")
+    p.add_argument("--refresh-id")
+    p.add_argument("--schedule-file", help="Project schedule manifest JSON used when creating a group")
     p.add_argument("--limit", type=int)
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -8150,8 +7582,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=[
         "history", "queue-status", "diagnostics", "sessions", "start-session", "stop-session", "session-groups",
         "groups", "create-group", "update-group", "delete-group", "recipients", "add-recipient", "delete-recipient",
-        "external-contacts", "create-external-contact", "delete-external-contact",
-        "schedules", "create-schedule", "delete-schedule", "broadcast", "cancel-history", "restart-service",
+        "external-contacts", "create-external-contact", "delete-external-contact", "schedule-manifests", "refresh-complete",
+        "schedules", "create-schedule", "delete-schedule", "pause-schedule", "resume-schedule", "broadcast", "cancel-history", "restart-service",
     ])
     p.add_argument("--session-name")
     p.add_argument("--group-id")
@@ -8159,6 +7591,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--contact-id")
     p.add_argument("--schedule-id")
     p.add_argument("--history-id")
+    p.add_argument("--page-id")
+    p.add_argument("--refresh-id")
+    p.add_argument("--schedule-file", help="Project schedule manifest JSON used when creating a group")
     p.add_argument("--limit", type=int)
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -8222,7 +7657,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("managed-databases", help="Manage persistent SQLite databases outside project workspaces")
     p.add_argument("action", choices=[
         "list", "get", "create", "update", "delete", "schema", "query", "integrity",
-        "download", "tokens", "create-token", "revoke-token", "inspect-sqlite", "migrate-sqlite",
+        "download", "tokens", "create-token", "revoke-token", "audit", "diagnostics",
+        "create-table", "create-view", "create-index", "delete-object", "inspect-sqlite", "migrate-sqlite",
     ])
     p.add_argument("--database-id", help="Managed database UUID")
     p.add_argument("--name", help="Database display name")
@@ -8231,7 +7667,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--params-json", help="JSON list/object with bound SQL parameters")
     p.add_argument("--token-name", help="Name for a new external access token")
     p.add_argument("--token-id", help="Token UUID to revoke")
-    p.add_argument("--scope", choices=["read", "read_write"], default="read_write")
+    p.add_argument("--scope", choices=["read", "data_write", "schema_admin", "read_write"])
+    p.add_argument("--object-type", choices=["table", "view", "index", "trigger"])
+    p.add_argument("--object-name")
     p.add_argument("--confirm-name", help="Exact database name required for deletion")
     p.add_argument("--output", help="Destination for a consistent SQLite backup")
     p.add_argument("--source", help="Local SQLite file to inspect or migrate")
@@ -8308,10 +7746,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_payload_args(p)
     p.set_defaults(func=cmd_page_maintenance)
 
-    p = sub.add_parser("set-page-order", help="Update page order or move it under any parent depth")
-    p.add_argument("--page-id", required=True, help="Exact id, unique route, or unique page name")
+    p = sub.add_parser("set-page-order", help="Update page order/parent placement")
+    p.add_argument("--page-id", required=True)
     p.add_argument("--position", type=int)
-    p.add_argument("--parent", help="Parent id/route/name; a child can be the parent of a grandchild")
+    p.add_argument("--parent")
     p.add_argument("--before")
     p.add_argument("--after")
     add_payload_args(p)
@@ -8320,14 +7758,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("accessible-pages", help="List pages visible to the current session")
     p.set_defaults(func=cmd_accessible_pages)
 
-    p = sub.add_parser("create-page", help="Create a root page or a child at any recursive sidebar depth")
+    p = sub.add_parser("create-page", help="Create a page linked to a workspace")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--name", required=True)
     p.add_argument("--file", default="")
     p.add_argument("--route", default="")
     p.add_argument("--icon", default="fas fa-chart-line")
     p.add_argument("--description", default="")
-    p.add_argument("--parent", default="", help="Parent id/route/name; use the child id to create a grandchild")
+    p.add_argument("--parent", default="")
     p.add_argument("--inactive", action="store_true")
     p.add_argument("--rls", action="store_true")
     p.add_argument("--workspace-password")
@@ -8341,7 +7779,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--route")
     p.add_argument("--icon")
     p.add_argument("--description")
-    p.add_argument("--parent", help="Parent id/route/name; empty removes the parent and cycles are blocked")
+    p.add_argument("--parent")
     p.add_argument("--active", action="store_true")
     p.add_argument("--inactive", action="store_true")
     p.add_argument("--rls", action="store_true")
@@ -8435,11 +7873,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-package", help="Copy this plugin to Downloads\\plugin for sharing and create a zip package")
     p.add_argument("--destination", help="Destination folder. Defaults to %%USERPROFILE%%\\Downloads\\plugin")
     p.add_argument("--clean", action="store_true", help="Remove the existing destination package folder before copying")
-    p.add_argument("--no-zip", action="store_true", help="Do not create rejoinbi.zip")
+    p.add_argument("--no-zip", action="store_true", help="Do not create rejoinbi-platform.zip")
     p.set_defaults(func=cmd_export_package)
-
-    p = sub.add_parser("self-test", help="Run plugin self-diagnostics: connectivity, session, dependencies")
-    p.set_defaults(func=cmd_self_test)
 
     p = sub.add_parser("api-get", help="Run an authenticated GET against a platform API path")
     p.add_argument("--path", required=True)
@@ -8470,7 +7905,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             "401" in error
             or "sessao" in lower_error
-            or "sessÃ£o" in lower_error
+            or "sessão" in lower_error
             or "session expired" in lower_error
             or "no saved session" in lower_error
             or "login required" in lower_error
@@ -8494,4 +7929,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
