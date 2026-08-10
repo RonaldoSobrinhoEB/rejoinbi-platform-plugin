@@ -1,6 +1,6 @@
 ---
 name: rejoinbi-platform
-description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload and publish dashboards, operate BI Studio/Data Engine, manage persistent databases, and inspect or migrate project SQLite databases with complete schema/data validation. Use for Rejoin BI administration, dashboard deployment, managed database creation/query/backup/token work, and migration of a project's existing SQLite database into platform-managed storage.
+description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload and publish dashboards, operate BI Studio/Data Engine, manage persistent databases, and inspect or migrate project SQLite databases with complete schema/data validation. Includes resumable folder and selected-file uploads with per-file diagnostics, explicit recovery choices, and path preservation. Use for Rejoin BI administration, dashboard deployment, managed database creation/query/backup/token work, and migration of a project's existing SQLite database into platform-managed storage.
 ---
 
 # Rejoin BI
@@ -30,7 +30,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "mudar logo", "favicon", "icone", "imagem do menu", "cores", "identidade visual": use `backup-platform-branding` first, then `set-platform-branding` with the relevant image/color files. Mention the restore command from the tool output.
 - "restaurar padrao", "voltar como estava", "desfazer visual": use `restore-platform-branding --backup <backup> --yes` when a backup exists. Use `restore-platform-config-defaults --yes` only when the user specifically wants platform defaults.
 - "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
-- "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with the explicit platform address in `--tenant`.
+- "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with the explicit platform address in `--tenant`. For files selected from an existing project, pass `--source-root <project-root>` so their relative folders are preserved; use `--target-path <source>=<target/path.ext>` for an exact destination.
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
 - "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
 - "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
@@ -74,8 +74,8 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Workspace management: `POST /plataforma/api/containers`, `PUT /plataforma/api/containers/<id>/password`, `POST /start`, `/stop`, `/restart`, `GET /status`, `/logs`, `/versions`, `/schedule`, `/notification-config`, and `/docker/build`.
 - Workspace deletion: `DELETE /plataforma/api/containers/<id>`. The platform deletes the workspace only after cleaning linked pages. The plugin must preview the full deletion plan first and require explicit confirmation.
 - Protected workspace validation: `POST /plataforma/api/validate-container-password` with `{container_id, password}`. This also marks the workspace as validated in the server session.
-- Direct file updates: `POST /plataforma/api/upload-multiple-files`.
-- User-like folder upload flow: start `POST /plataforma/api/upload-init`, send bounded parts through `POST /plataforma/api/upload-chunk`, finish with `POST /plataforma/api/upload-finish`, then call `POST /plataforma/api/select-app-file` and poll `/plataforma/api/upload-status/<process_id>`. ZIP project uploads are disabled.
+- Direct file updates: `POST /plataforma/api/upload-multiple-files` is available for compatibility; prefer the plugin's resumable `upload-files` flow so large selected files use bounded chunks and exact target paths.
+- User-like folder upload flow: start `POST /plataforma/api/upload-init`, send bounded parts through `POST /plataforma/api/upload-chunk`, recover with `GET /plataforma/api/upload-session-status` (always including `container_id`), optionally skip one broken file with `POST /plataforma/api/upload-skip-file`, cancel only the temporary session with `POST /plataforma/api/upload-cancel`, finish with `POST /plataforma/api/upload-finish`, then call `POST /plataforma/api/select-app-file` and poll `/plataforma/api/upload-status/<process_id>`. ZIP project uploads are disabled.
 - BI projects: `GET/POST /plataforma/api/bi/projects`, `GET /plataforma/api/bi/projects/<project_id>/export`.
 - BI publish: `POST /plataforma/api/bi/projects/<project_id>/internal-publish/start`, then poll `/status/<job_id>`.
 - ECharts template lookup: `GET /plataforma/api/bi/echarts/template?id=<template_id>`.
@@ -315,10 +315,26 @@ Upload a folder like the UI and choose startup options:
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start
 ```
 
-Project upload is folder-only and resumable; ZIP project uploads are disabled:
+Project upload is folder-only and resumable; ZIP project uploads are disabled. For selected files, use `upload-files` with the project root so paths are preserved:
 
 ```powershell
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start
+```
+
+## Resilient Upload Rules
+
+- Use `upload-folder-select` for a complete project directory. It sends one bounded chunk at a time, resumes the same server session after a network loss, and never requests a clean upload (`force_clean` is always false). Files already present in the workspace but absent from the selected folder are preserved.
+- Use `upload-files` for selected files only. With `--source-root C:\path\project`, files such as `C:\path\project\static\app.js` keep the `static/app.js` destination. `--folder assets` prefixes a destination folder, and repeated `--target-path <source>=<target/path.ext>` gives an exact individual destination without collisions between same-named files.
+- Every upload retries each failed part a bounded number of times. After those retries, the default `--on-file-error ask` must present the file path, chunk position, HTTP diagnosis, and the choices **retry**, **skip only this file**, or **cancel**. Never skip a file silently.
+- When an agent is running non-interactively and a file needs a decision, it must stop before finalization, report the structured diagnostic to the user, ask which of the three actions to take, then rerun using `--on-file-error retry`, `--on-file-error skip`, or `--on-file-error cancel`. `skip` calls the dedicated session endpoint and continues with the remaining files; it never removes any existing workspace file. `cancel` discards only the temporary upload session, before it can change the project.
+- A completed upload reports the count of requested/uploaded/skipped files and all diagnostics. Do not call `select-app-file`, restart the workspace, or claim success if the upload was cancelled or awaits a user decision.
+
+```powershell
+# Full project: resume safely and ask before discarding any failed file.
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file
+
+# Selected files: preserve the original project folders and leave other workspace files untouched.
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-files --workspace 12 --files C:\path\dashboard\static\app.js C:\path\dashboard\templates\index.html --source-root C:\path\dashboard
 ```
 
 Publish a BI Studio project to a workspace:

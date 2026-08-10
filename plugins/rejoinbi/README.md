@@ -67,6 +67,20 @@ python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py data-engine status
 ```
 
+## Upload resilience
+
+`upload-folder-select` uploads a complete project in resumable bounded chunks. It preserves files that already exist in the workspace and never performs a clean replacement. If a file still fails after retries, the default behavior is to show the diagnosis and require a decision: retry, skip only that file, or cancel the temporary session.
+
+`upload-files` uses the same resumable flow for selected files. Use `--source-root` to preserve the project's relative folders and `--target-path source=target/path.ext` for an exact destination. This lets same-named files go to distinct workspace folders without an accidental overwrite.
+
+```powershell
+# Complete project; ZIP uploads are not supported.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\project --selected-file app.py --startup-mode file
+
+# Only selected files, preserving static/ and templates/ beneath the project root.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-files --workspace 12 --files C:\path\project\static\app.js C:\path\project\templates\index.html --source-root C:\path\project
+```
+
 `ensure` first checks whether the Rejoin BI platform address already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting session cookies.
 
 The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
@@ -77,7 +91,7 @@ These are the expected interpretations for Codex agents using this plugin:
 
 - "mudar o titulo", "qual titulo atual", "trocar nome da aba": use `platform-title`; this is Configuracao Plataforma, not a workspace/dashboard title unless the user explicitly says so.
 - "mudar logo", "favicon", "cores", "identidade visual": use `backup-platform-branding` and `set-platform-branding`.
-- "subir arquivo em uma pasta": use `upload-files --folder`.
+- "subir arquivo em uma pasta": use `upload-files --folder`; add `--source-root` when selected files must keep their project folders.
 - "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
 - "criar dashboard no BI Studio", "canvas profissional", "Data Engine + canvas": use `examples/codex-bi-studio-canvas` as the quality bar. Build the dataset first, save a professional desktop/mobile layout, export, normalize, deploy, and smoke test.
 - "o que tem no BI Studio/Data Engine": run `studio-inventory` first. For BI exports with accents/parquet, run `bi-normalize-export` before uploading.

@@ -47,6 +47,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 DEFAULT_TIMEOUT = 120
+UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -353,6 +354,17 @@ def auth_error_messages(error: str) -> tuple[str, str]:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def utc_timestamp(value: Any) -> float:
+    """Read a persisted UTC ISO timestamp without making recovery fragile."""
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -2352,26 +2364,30 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
             json={"container_id": workspace.get("id"), "password": args.workspace_password},
             timeout=60,
         )
-
-    file_paths_map = {}
-    for item in args.map or []:
-        if "=" not in item:
-            raise RejoinBIError(f"Invalid --map value: {item}. Use filename=target/folder.")
-        key, value = item.split("=", 1)
-        file_paths_map[key.strip()] = value.strip()
-
-    with ExitStack() as stack:
-        files = open_upload_files(args.files, stack, allow_sensitive=bool(args.allow_sensitive_files))
-        form_data: list[tuple[str, str]] = [
-            ("container_name", str(workspace.get("name") or "")),
-            ("folder_path", args.folder or ""),
-            ("commit_message", args.message or "Uploaded by rejoinbi-platform plugin"),
-            ("restart_container", "true" if args.restart else "false"),
-        ]
-        if file_paths_map:
-            form_data.append(("file_paths", json.dumps(file_paths_map, ensure_ascii=False)))
-        data, _ = client.request("POST", "/plataforma/api/upload-multiple-files", data=form_data, files=files, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
+    entries = build_individual_upload_entries(args)
+    upload = upload_entries_chunked(
+        client,
+        workspace,
+        entries,
+        timeout=args.timeout,
+        max_retries=args.max_retries,
+        on_file_error=args.on_file_error,
+        max_recovery_retries=args.max_recovery_retries,
+    )
+    restart = None
+    if args.restart:
+        restart, _ = client.request(
+            "POST",
+            f"/plataforma/api/containers/{workspace.get('id')}/restart",
+            timeout=args.timeout,
+        )
+    print_payload({
+        "success": True,
+        "workspace": {"id": workspace.get("id"), "name": workspace.get("name")},
+        "upload": upload,
+        "restart": restart,
+        "preserved_existing_files": True,
+    }, as_json=args.json)
     return 0
 
 
@@ -2386,58 +2402,226 @@ def iter_folder_files(root: Path, exclude_names: set[str], *, allow_sensitive: b
         if sensitive_path_reason(path.relative_to(root)) and not allow_sensitive:
             continue
         files.append(path)
-    return files
+    return sorted(files, key=lambda item: item.relative_to(root).as_posix().lower())
 
 
-def upload_folder_chunked(
+def normalize_upload_relative_path(value: str, *, field: str = "upload path", allow_empty: bool = False) -> str:
+    raw = str(value or "").strip().replace("\\", "/")
+    if not raw:
+        if allow_empty:
+            return ""
+        raise RejoinBIError(f"{field} is required.")
+    if raw.startswith("/") or raw.startswith("//") or re.match(r"^[A-Za-z]:", raw):
+        raise RejoinBIError(f"{field} must be relative to the workspace: {value}")
+    parts: list[str] = []
+    for part in raw.split("/"):
+        clean = part.strip()
+        if not clean or clean == ".":
+            continue
+        if clean == ".." or "\x00" in clean:
+            raise RejoinBIError(f"Invalid {field}: {value}")
+        parts.append(clean)
+    if not parts:
+        if allow_empty:
+            return ""
+        raise RejoinBIError(f"{field} is required.")
+    return "/".join(parts)
+
+
+def parse_upload_path_mappings(values: list[str] | None, *, label: str, target_is_file: bool) -> dict[str, str]:
+    mappings: dict[str, str] = {}
+    for item in values or []:
+        if "=" not in item:
+            suffix = "target/path.ext" if target_is_file else "target/folder"
+            raise RejoinBIError(f"Invalid {label} value: {item}. Use source={suffix}.")
+        source, target = item.split("=", 1)
+        source = source.strip()
+        if not source:
+            raise RejoinBIError(f"Invalid {label} value: source cannot be empty.")
+        mappings[source] = normalize_upload_relative_path(
+            target,
+            field=f"{label} destination",
+            allow_empty=not target_is_file,
+        )
+    return mappings
+
+
+def mapping_value_for_path(mappings: dict[str, str], path: Path) -> str | None:
+    candidates = (str(path), str(path).replace("\\", "/"), path.name)
+    for candidate in candidates:
+        if candidate in mappings:
+            return mappings[candidate]
+    return None
+
+
+def build_individual_upload_entries(args: argparse.Namespace) -> list[tuple[Path, str]]:
+    paths: list[Path] = []
+    for raw_path in args.files:
+        path = Path(raw_path).expanduser().resolve()
+        if not path.is_file():
+            raise RejoinBIError(f"File not found: {path}")
+        reason = sensitive_path_reason(path)
+        if reason and not args.allow_sensitive_files:
+            raise RejoinBIError(
+                f"Refusing to upload sensitive-looking file {path}: {reason}. "
+                "Use --allow-sensitive-files only after manual review."
+            )
+        paths.append(path)
+
+    source_root = Path(args.source_root).expanduser().resolve() if args.source_root else None
+    preserve_paths = bool(args.preserve_paths or source_root)
+    if preserve_paths and source_root is None:
+        source_root = Path(os.path.commonpath([str(path.parent) for path in paths])).resolve()
+    if source_root is not None and not source_root.is_dir():
+        raise RejoinBIError(f"Source root is not a folder: {source_root}")
+
+    folder_by_source = parse_upload_path_mappings(args.map, label="--map", target_is_file=False)
+    target_by_source = parse_upload_path_mappings(args.target_path, label="--target-path", target_is_file=True)
+    base_folder = normalize_upload_relative_path(args.folder, field="--folder", allow_empty=True)
+    entries: list[tuple[Path, str]] = []
+    used_targets: dict[str, Path] = {}
+    for path in paths:
+        explicit_target = mapping_value_for_path(target_by_source, path)
+        if explicit_target:
+            target = explicit_target
+        else:
+            target_folder = mapping_value_for_path(folder_by_source, path)
+            if target_folder is None:
+                target_folder = base_folder
+            if preserve_paths:
+                try:
+                    relative_parent = path.relative_to(source_root).parent
+                except ValueError as exc:
+                    raise RejoinBIError(f"Selected file is outside --source-root: {path}") from exc
+                if relative_parent != Path("."):
+                    relative_folder = normalize_upload_relative_path(relative_parent.as_posix(), field="source relative folder")
+                    target_folder = "/".join(part for part in (target_folder, relative_folder) if part)
+            target = "/".join(part for part in (target_folder, path.name) if part)
+            target = normalize_upload_relative_path(target, field="target file path")
+        collision_key = target.casefold()
+        previous = used_targets.get(collision_key)
+        if previous and previous != path:
+            raise RejoinBIError(
+                f"Two selected files map to the same workspace path ({target}): {previous} and {path}. "
+                "Use --target-path to choose distinct destinations."
+            )
+        used_targets[collision_key] = path
+        entries.append((path, target))
+    return entries
+
+
+def upload_error_retryable(error: Exception) -> bool:
+    status = _http_status_from_error(str(error))
+    return status is None or status in {408, 409, 425, 429} or status >= 500
+
+
+def upload_diagnostic(*, relative: str, file_size: int, chunk_index: int, total_chunks: int, error: Exception) -> dict[str, Any]:
+    status = _http_status_from_error(str(error))
+    return {
+        "path": relative,
+        "file_size": file_size,
+        "chunk": {"current": chunk_index + 1, "total": total_chunks},
+        "http_status": status,
+        "retryable": upload_error_retryable(error),
+        "message": compact_response_message(str(error), max_length=700),
+        "actions": ["retry", "skip", "cancel"],
+    }
+
+
+def choose_upload_failure_action(diagnostic: dict[str, Any], policy: str) -> str:
+    if policy != "ask":
+        return policy
+    if not sys.stdin.isatty():
+        raise RejoinBIError(
+            "Upload needs a user decision for one failed file: "
+            + json.dumps(diagnostic, ensure_ascii=False)
+            + ". Ask whether to retry, skip only this file, or cancel the session; then rerun with "
+            "--on-file-error retry, --on-file-error skip, or --on-file-error cancel."
+        )
+    print("\n[UPLOAD] Falha em um arquivo:", file=sys.stderr)
+    print(json.dumps(diagnostic, ensure_ascii=False, indent=2), file=sys.stderr)
+    while True:
+        decision = input("Escolha [r]etentar, [p]ular este arquivo ou [c]ancelar: ").strip().lower()
+        if decision in {"r", "retry", "retentar", "tentar"}:
+            return "retry"
+        if decision in {"p", "skip", "pular"}:
+            return "skip"
+        if decision in {"c", "cancel", "cancelar"}:
+            return "cancel"
+        print("Resposta inválida. Use r, p ou c.", file=sys.stderr)
+
+
+def persist_upload_state(state_path: Path, state: dict[str, Any]) -> None:
+    state["updated_at"] = utc_now()
+    write_json(state_path, state)
+
+
+def record_completed_chunks(state: dict[str, Any], completed_by_file: dict[str, set[int]]) -> None:
+    state["completed_chunks"] = {
+        item_path: sorted(item_indexes)
+        for item_path, item_indexes in completed_by_file.items()
+    }
+
+
+def cancel_upload_session_safely(client: RejoinBIClient, session_id: str, container_id: Any) -> dict[str, Any]:
+    try:
+        payload, _ = client.request(
+            "POST",
+            "/plataforma/api/upload-cancel",
+            json={"session_id": session_id, "container_id": container_id},
+            timeout=120,
+        )
+        return payload if isinstance(payload, dict) else {"raw": payload}
+    except RejoinBIError as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def upload_entries_chunked(
     client: RejoinBIClient,
     workspace: dict[str, Any],
-    root: Path,
+    entries: list[tuple[Path, str]],
     *,
     timeout: int = 900,
-    exclude: list[str] | None = None,
-    allow_sensitive: bool = False,
-) -> list[dict[str, Any]]:
-    """Upload a project folder as bounded, retryable parts.
-
-    The project size is not used as a request limit.  Only one bounded part is
-    held in memory at a time, and the server stores each part idempotently so
-    a lost response can be retried without duplicating bytes.
-    """
-    if not root.is_dir():
-        raise RejoinBIError(f"Folder not found: {root}")
-    exclude_names = {item.lower() for item in (exclude or [
-        ".git", ".hg", ".svn", "venv", ".venv", "env", "__pycache__",
-        "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
-    ])}
-    paths = iter_folder_files(root, exclude_names, allow_sensitive=allow_sensitive)
-    if not paths:
+    max_retries: int = 5,
+    on_file_error: str = "ask",
+    max_recovery_retries: int = 1,
+) -> dict[str, Any]:
+    """Upload bounded parts without replacing files not included in *entries*."""
+    if not entries:
         raise RejoinBIError("No files found to upload.")
-    manifest = []
-    for path in paths:
+    max_retries = max(1, int(max_retries))
+    max_recovery_retries = max(0, int(max_recovery_retries))
+    manifest: list[dict[str, Any]] = []
+    seen_targets: set[str] = set()
+    for path, relative in entries:
+        if not path.is_file():
+            raise RejoinBIError(f"File disappeared before upload: {path}")
+        normalized_relative = normalize_upload_relative_path(relative, field="target file path")
+        if normalized_relative.casefold() in seen_targets:
+            raise RejoinBIError(f"Duplicate workspace target path: {normalized_relative}")
+        seen_targets.add(normalized_relative.casefold())
         stat = path.stat()
-        manifest.append({
-            "path": str(path.relative_to(root)).replace("\\", "/"),
-            "size": stat.st_size,
-            "mtime_ns": stat.st_mtime_ns,
-        })
+        manifest.append({"path": normalized_relative, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
+    entries = [(path, item["path"]) for (path, _), item in zip(entries, manifest)]
+
     manifest_token = hashlib.sha256(
         json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     workspace_key = str(workspace.get("id") or workspace.get("name") or "")
     state_token = hashlib.sha256(
-        f"{client.base_url}|{workspace_key}|{root}|{manifest_token}".encode("utf-8")
+        f"{client.base_url}|{workspace_key}|{manifest_token}".encode("utf-8")
     ).hexdigest()[:32]
     state_path = Path(tempfile.gettempdir()) / "rejoinbi-upload-sessions" / f"{state_token}.json"
     state = read_json(state_path, {})
     session_id = ""
     completed_by_file: dict[str, set[int]] = {}
+    skipped_files: set[str] = set()
     state_is_current = (
         isinstance(state, dict)
         and state.get("base_url") == client.base_url
         and str(state.get("workspace_key") or "") == workspace_key
         and state.get("manifest_token") == manifest_token
-        and (time.time() - utc_timestamp(state.get("updated_at"))) < SESSION_IDLE_TIMEOUT_SECONDS
+        and (time.time() - utc_timestamp(state.get("updated_at"))) < UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS
     )
     if state_is_current:
         session_id = str(state.get("session_id") or "")
@@ -2446,11 +2630,15 @@ def upload_folder_chunked(
             for rel_path, indexes in stored_completed.items():
                 if isinstance(indexes, list):
                     completed_by_file[str(rel_path)] = {int(index) for index in indexes if str(index).isdigit()}
+        skipped_files = {str(item) for item in state.get("skipped_files") or []}
         if session_id:
             try:
                 status_data, _ = client.request(
                     "GET",
-                    "/plataforma/api/upload-session-status?" + urlencode({"session_id": session_id}),
+                    "/plataforma/api/upload-session-status?" + urlencode({
+                        "session_id": session_id,
+                        "container_id": workspace.get("id"),
+                    }),
                     timeout=120,
                 )
                 if isinstance(status_data, dict) and status_data.get("success"):
@@ -2461,11 +2649,12 @@ def upload_folder_chunked(
                             completed_by_file[rel_path] = {
                                 int(index) for index in item["completed_chunks"] if str(index).isdigit()
                             }
+                    skipped_files = {str(item) for item in status_data.get("skipped_files") or []}
                 else:
                     session_id = ""
             except RejoinBIError:
-                # Older tenants may not expose the status route; a fresh session remains safe.
                 session_id = ""
+
     chunk_size = 8 * 1024 * 1024
     if not session_id:
         total_size = sum(item["size"] for item in manifest)
@@ -2474,7 +2663,7 @@ def upload_folder_chunked(
             "/plataforma/api/upload-init",
             json={
                 "container_id": workspace.get("id"),
-                "total_files": len(paths),
+                "total_files": len(entries),
                 "total_size": total_size,
                 "force_clean": False,
             },
@@ -2485,68 +2674,121 @@ def upload_folder_chunked(
         session_id = str(init_data["session_id"])
         chunk_size = max(1024 * 1024, min(int(init_data.get("chunk_size") or chunk_size), 64 * 1024 * 1024))
         completed_by_file = {}
+        skipped_files = set()
         state = {
-            "version": 1,
+            "version": 2,
             "base_url": client.base_url,
             "workspace_key": workspace_key,
-            "root": str(root),
             "manifest_token": manifest_token,
             "session_id": session_id,
             "chunk_size": chunk_size,
             "completed_chunks": {},
-            "updated_at": utc_now(),
+            "skipped_files": [],
+            "diagnostics": [],
+            "status": "uploading",
         }
-        write_json(state_path, state)
+        persist_upload_state(state_path, state)
     if session_id and isinstance(state, dict):
         chunk_size = max(1024 * 1024, min(int(state.get("chunk_size") or chunk_size), 64 * 1024 * 1024))
-    max_attempts = 5
-    uploaded_files = []
 
-    for file_number, path in enumerate(paths, 1):
-        relative = str(path.relative_to(root)).replace("\\", "/")
+    uploaded_files: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = list(state.get("diagnostics") or []) if isinstance(state, dict) else []
+    for file_number, (path, relative) in enumerate(entries, 1):
+        if relative in skipped_files:
+            continue
         file_size = path.stat().st_size
         total_chunks = max(1, (file_size + chunk_size - 1) // chunk_size)
         completed_chunks = completed_by_file.setdefault(relative, set())
-        for chunk_index in range(total_chunks):
-            if chunk_index in completed_chunks:
-                continue
-            offset = chunk_index * chunk_size
-            length = min(chunk_size, file_size - offset)
-            last_error = None
-            for attempt in range(max_attempts):
-                try:
-                    with path.open("rb") as handle:
-                        handle.seek(offset)
-                        chunk_bytes = handle.read(length)
-                    mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-                    client.request(
-                        "POST",
-                        "/plataforma/api/upload-chunk",
-                        data={
-                            "session_id": session_id,
-                            "rel_path": relative,
-                            "chunk_index": str(chunk_index),
-                            "total_chunks": str(total_chunks),
-                        },
-                        files={"file": (path.name, io.BytesIO(chunk_bytes), mime)},
-                        timeout=timeout,
-                    )
-                    last_error = None
-                    completed_chunks.add(chunk_index)
-                    state["completed_chunks"] = {
-                        item_path: sorted(item_indexes)
-                        for item_path, item_indexes in completed_by_file.items()
-                    }
-                    state["updated_at"] = utc_now()
-                    write_json(state_path, state)
+        recovery_retries = 0
+        while True:
+            failure: tuple[int, Exception] | None = None
+            for chunk_index in range(total_chunks):
+                if chunk_index in completed_chunks:
+                    continue
+                offset = chunk_index * chunk_size
+                length = min(chunk_size, file_size - offset)
+                last_error: Exception | None = None
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        with path.open("rb") as handle:
+                            handle.seek(offset)
+                            chunk_bytes = handle.read(length)
+                        if len(chunk_bytes) != length:
+                            raise RejoinBIError(f"Could not read the expected bytes from {path}")
+                        mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+                        client.request(
+                            "POST",
+                            "/plataforma/api/upload-chunk",
+                            data={
+                                "session_id": session_id,
+                                "rel_path": relative,
+                                "chunk_index": str(chunk_index),
+                                "total_chunks": str(total_chunks),
+                            },
+                            files={"file": (path.name, io.BytesIO(chunk_bytes), mime)},
+                            timeout=timeout,
+                        )
+                        last_error = None
+                        completed_chunks.add(chunk_index)
+                        record_completed_chunks(state, completed_by_file)
+                        persist_upload_state(state_path, state)
+                        break
+                    except (OSError, RejoinBIError) as exc:
+                        last_error = exc
+                        if attempt < max_retries:
+                            time.sleep(min(15, 2 ** (attempt - 1)))
+                if last_error is not None:
+                    failure = (chunk_index, last_error)
                     break
-                except RejoinBIError as exc:
-                    last_error = exc
-                    if attempt + 1 < max_attempts:
-                        time.sleep(min(15, 2 ** attempt))
-            if last_error is not None:
-                raise last_error
-        uploaded_files.append({"path": relative, "size": file_size, "is_binary": False})
+            if failure is None:
+                uploaded_files.append({"path": relative, "size": file_size, "is_binary": False})
+                break
+
+            chunk_index, error = failure
+            diagnostic = upload_diagnostic(
+                relative=relative,
+                file_size=file_size,
+                chunk_index=chunk_index,
+                total_chunks=total_chunks,
+                error=error,
+            )
+            diagnostics.append(diagnostic)
+            state["diagnostics"] = diagnostics[-100:]
+            state["last_failure"] = diagnostic
+            record_completed_chunks(state, completed_by_file)
+            persist_upload_state(state_path, state)
+            action = choose_upload_failure_action(diagnostic, on_file_error)
+            if action == "retry":
+                recovery_retries += 1
+                if on_file_error == "retry" and recovery_retries > max_recovery_retries:
+                    raise RejoinBIError(
+                        "Automatic recovery limit reached for " + relative + ". "
+                        + json.dumps(diagnostic, ensure_ascii=False)
+                    )
+                continue
+            if action == "skip":
+                skip_data, _ = client.request(
+                    "POST",
+                    "/plataforma/api/upload-skip-file",
+                    json={"session_id": session_id, "container_id": workspace.get("id"), "rel_path": relative},
+                    timeout=120,
+                )
+                if not isinstance(skip_data, dict) or not skip_data.get("success"):
+                    raise RejoinBIError(f"Could not skip failed file {relative}: {skip_data}")
+                skipped_files.add(relative)
+                state["skipped_files"] = sorted(skipped_files)
+                persist_upload_state(state_path, state)
+                break
+            if action == "cancel":
+                cancel_result = cancel_upload_session_safely(client, session_id, workspace.get("id"))
+                state["status"] = "cancelled"
+                state["cancel_result"] = cancel_result
+                persist_upload_state(state_path, state)
+                raise RejoinBIError(
+                    "Upload cancelled before finalization. No project files were changed by this session. "
+                    + json.dumps({"failed_file": relative, "cancel": cancel_result}, ensure_ascii=False)
+                )
+            raise RejoinBIError("Upload stopped after a failed file: " + json.dumps(diagnostic, ensure_ascii=False))
         if file_number % 25 == 0:
             client.keep_session_alive(force=True)
 
@@ -2560,7 +2802,52 @@ def upload_folder_chunked(
         state_path.unlink()
     except FileNotFoundError:
         pass
-    return list((finish_data or {}).get("files") or uploaded_files) if isinstance(finish_data, dict) else uploaded_files
+    files = list((finish_data or {}).get("files") or uploaded_files) if isinstance(finish_data, dict) else uploaded_files
+    return {
+        "files": files,
+        "summary": {
+            "session_id": session_id,
+            "requested_files": len(entries),
+            "uploaded_files": len(uploaded_files),
+            "skipped_files": sorted(skipped_files),
+            "diagnostics": diagnostics,
+            "preserved_existing_files": True,
+        },
+    }
+
+
+def upload_folder_chunked(
+    client: RejoinBIClient,
+    workspace: dict[str, Any],
+    root: Path,
+    *,
+    timeout: int = 900,
+    exclude: list[str] | None = None,
+    allow_sensitive: bool = False,
+    max_retries: int = 5,
+    on_file_error: str = "ask",
+    max_recovery_retries: int = 1,
+) -> dict[str, Any]:
+    """Upload one complete folder in bounded, resumable parts."""
+    if not root.is_dir():
+        raise RejoinBIError(f"Folder not found: {root}")
+    exclude_names = {item.lower() for item in (exclude or [
+        ".git", ".hg", ".svn", "venv", ".venv", "env", "__pycache__",
+        "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
+    ])}
+    paths = iter_folder_files(root, exclude_names, allow_sensitive=allow_sensitive)
+    if not paths:
+        raise RejoinBIError("No files found to upload.")
+    entries = [(path, path.relative_to(root).as_posix()) for path in paths]
+    return upload_entries_chunked(
+        client,
+        workspace,
+        entries,
+        timeout=timeout,
+        max_retries=max_retries,
+        on_file_error=on_file_error,
+        max_recovery_retries=max_recovery_retries,
+    )
 
 
 def choose_entry_file(files_payload: list[dict[str, Any]], startup_mode: str, selected_file: str = "") -> str | None:
@@ -2635,15 +2922,19 @@ def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     root = Path(args.path).expanduser().resolve()
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    files_payload = upload_folder_chunked(
+    upload = upload_folder_chunked(
         client,
         workspace,
         root,
         timeout=args.timeout,
         exclude=args.exclude,
         allow_sensitive=bool(args.allow_sensitive_files),
+        max_retries=args.max_retries,
+        on_file_error=args.on_file_error,
+        max_recovery_retries=args.max_recovery_retries,
     )
-    result = select_app_file(client, workspace, files_payload, args)
+    result = select_app_file(client, workspace, upload["files"], args)
+    result["upload"] = upload["summary"]
     print_payload(result, as_json=args.json)
     return 0
 
@@ -6009,15 +6300,21 @@ def upload_folder_with_options(
     timeout: int = 900,
     interval: float = 3.0,
     exclude: list[str] | None = None,
+    on_file_error: str = "ask",
+    max_retries: int = 5,
+    max_recovery_retries: int = 1,
 ) -> dict[str, Any]:
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    files_payload = upload_folder_chunked(
+    upload = upload_folder_chunked(
         client,
         workspace,
         root,
         timeout=timeout,
         exclude=exclude,
+        max_retries=max_retries,
+        on_file_error=on_file_error,
+        max_recovery_retries=max_recovery_retries,
     )
     options = argparse.Namespace(
         startup_mode=startup_mode,
@@ -6029,7 +6326,9 @@ def upload_folder_with_options(
         timeout=timeout,
         interval=interval,
     )
-    return select_app_file(client, workspace, files_payload, options)
+    result = select_app_file(client, workspace, upload["files"], options)
+    result["upload"] = upload["summary"]
+    return result
 
 
 def page_payload_from_manifest(page: dict[str, Any], workspace: dict[str, Any], workspace_password: str = "") -> dict[str, Any]:
@@ -6316,6 +6615,9 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             interval=args.interval,
             exclude=list(upload_cfg.get("exclude") or [".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"]),
+            on_file_error=args.on_file_error,
+            max_retries=args.max_retries,
+            max_recovery_retries=args.max_recovery_retries,
         )
 
     page_results = []
@@ -7083,15 +7385,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_workspace_stop_all)
 
-    p = sub.add_parser("upload-files", help="Upload individual files directly into a workspace app folder")
+    p = sub.add_parser("upload-files", help="Upload selected files in resumable chunks without replacing files not selected")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--files", nargs="+", required=True)
-    p.add_argument("--folder", default="")
+    p.add_argument("--folder", default="", help="Base destination folder inside the workspace app folder")
     p.add_argument("--message")
-    p.add_argument("--map", action="append", help="filename=target/folder mapping")
+    p.add_argument("--map", action="append", help="source-or-filename=target/folder mapping (kept for compatibility)")
+    p.add_argument("--target-path", action="append", help="source-or-filename=target/path.ext mapping; preserves distinct duplicate filenames")
+    p.add_argument("--source-root", help="Project root used to preserve each selected file's relative folder")
+    p.add_argument("--preserve-paths", action="store_true", help="Derive and preserve the selected files' common relative folder structure")
     p.add_argument("--restart", action="store_true")
     p.add_argument("--workspace-password")
     p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
+    p.add_argument("--max-retries", type=int, default=5, help="Bounded retries for each failed chunk")
+    p.add_argument("--max-recovery-retries", type=int, default=1, help="Extra retry cycles when --on-file-error retry is selected")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_upload_files)
 
@@ -7110,6 +7418,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--workspace-password")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--interval", type=float, default=3.0)
+    p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
+    p.add_argument("--max-retries", type=int, default=5, help="Bounded retries for each failed chunk")
+    p.add_argument("--max-recovery-retries", type=int, default=1, help="Extra retry cycles when --on-file-error retry is selected")
     p.set_defaults(func=cmd_upload_folder_select)
 
     p = sub.add_parser("bi-projects", help="List BI Studio projects")
@@ -7825,6 +8136,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-auto-start", action="store_true")
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--interval", type=float, default=3.0)
+    p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
+    p.add_argument("--max-retries", type=int, default=5, help="Bounded retries for each failed chunk")
+    p.add_argument("--max-recovery-retries", type=int, default=1, help="Extra retry cycles when --on-file-error retry is selected")
     p.add_argument("--readiness-timeout", type=float, default=300.0, help="Seconds to wait for accessible-pages to expose container_name for every page")
     p.add_argument("--no-page-readiness", action="store_true", help="Skip post-deploy accessible-pages/menu safety verification")
     p.set_defaults(func=cmd_deploy_manifest)
