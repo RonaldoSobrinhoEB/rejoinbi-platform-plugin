@@ -51,8 +51,8 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "subir arquivo X na pasta Y" | Direct file upload to workspace folder | `workspaceall`, maybe `workspace-content` | `upload-files --workspace ... --files ... --folder ...` | Explicit platform address; list folder after upload |
 | "subir pasta", "igual usuario subindo" | UI-like resumable folder upload | `workspaceall` | `upload-folder-select` | Send bounded chunks; select startup file/mode; poll upload status. ZIP project upload is disabled. |
 | "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit platform address; if password requested, pass workspace password locally |
-| "remover workspace", "excluir workspace" | Safe workspace deletion | `delete-workspace --workspace ...` dry-run | `delete-workspace --yes --confirm-name ... --confirm-id ...` | Block if password-protected until `--workspace-password` validates; check page tree |
-| "senha do workspace" | Validate/unlock protected workspace | `workspaceall` | `validate-workspace --workspace ...` or deletion with `--workspace-password` | Never delete protected workspace without platform password validation |
+| "remover workspace", "excluir workspace" | Safe workspace deletion | `delete-workspace --workspace ...` dry-run | `delete-workspace --yes --confirm-name ... --confirm-id ...` | For a protected workspace, request `--workspace-password` for this exact command; prior unlocks do not count; check page tree |
+| "senha do workspace" | Validate protected workspace for one operation | `workspaceall` | Request the password, then run the chosen workspace-specific command with `--workspace-password` | Never access or delete a protected workspace based on a saved/session unlock |
 | "criar pagina", "rota", "menu", "pai/filho/neto" | Gerenciar Paginas | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | `create-page`, `update-page`, `set-page-order`, `delete-page` | Use clean names with accents; technical ids/routes/files ASCII |
 | "dashboard", "painel", "ECharts", "criar 3 paginas" | Generate and publish dashboard package | Inspect local files/data; `validate-app` | `deploy-manifest` | One standalone HTML per Rejoin BI page; `smoke-pages` must pass |
 | "publicar BI", "BI Studio" | BI Studio project work | `studio-inventory`, `bi-projects` | `publish-bi` or `bi-create-project` | Project id/uid and workspace target explicit |
@@ -345,7 +345,7 @@ Treat system errors as platform/backend diagnostics unless required checks fail.
 
 - Never ask for platform password or PIN in chat by default. Use browser auth.
 - Never run mutating commands without explicit `--tenant`.
-- Never delete password-protected workspaces without validating the workspace password through the platform.
+- Never read, change, export, upload to, or delete a password-protected workspace without the requester supplying `--workspace-password` for that exact operation and the platform validating it.
 - Never delete pages/workspaces before showing the dry-run plan.
 - Never broadcast email or WhatsApp without explicit recipient/payload/confirmation.
 - Never print secrets from Codex keys, DB connections, tokens, cookies, passwords, or connection strings.

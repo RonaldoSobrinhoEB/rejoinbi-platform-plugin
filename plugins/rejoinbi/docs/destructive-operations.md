@@ -31,7 +31,7 @@ The plan shows:
 - Parent-child-grandchild tree.
 - Linked pages outside the workspace.
 
-Password-protected workspaces are blocked unless the caller provides the workspace password through `--workspace-password` or `REJOINBI_WORKSPACE_PASSWORD` and the platform validates it through `/plataforma/api/validate-container-password`. If the password is missing or invalid, no deletion is attempted and the user must remove the workspace manually in Rejoin BI after reviewing the security impact.
+Password-protected workspaces are blocked unless the caller provides the workspace password through `--workspace-password` on that same command and the platform validates it through `/plataforma/api/validate-container-password`. A prior unlock, persisted session, or `REJOINBI_WORKSPACE_PASSWORD` does not authorize deletion. If the password is missing or invalid, no deletion is attempted and the user must remove the workspace manually in Rejoin BI after reviewing the security impact.
 
 Deletion is blocked when linked pages outside the workspace are found. Add `--allow-linked-pages` only after reviewing those pages and confirming they are safe to remove.
 

@@ -171,6 +171,6 @@ BI Studio exports may contain localized display names with non-ASCII slugs. Befo
 - Destructive commands keep explicit confirmation flags.
 - User, direct-permission, and permission-group operations are disabled until the requester explicitly names that identity area and the command includes `--operation-scope identity --identity-scope`.
 - Identity writes require `--yes` plus an exact resolved target confirmation; a broad diagnostic request never authorizes them.
-- Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided and validated by the platform first.
+- Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided as `--workspace-password` for that exact command and validated by the platform; a prior session unlock is not reused.
 - Secrets, passwords, PINs, and local session files must never be exported.
 - Use dedicated commands for supported modules; use `api-get` / `api-send` only for new endpoints that are not yet present in this map, with the endpoint-derived scope and exact `--confirm-api-path`.

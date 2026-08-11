@@ -117,7 +117,7 @@ BI Studio canvas dashboards should be built like production BI products, not qui
 - For changed-files mode, retain each file's path relative to the project root. Do not include a local .db, .sqlite, .sqlite3, .duckdb, journal, WAL, or SHM file unless the requester explicitly approves that exact file with --allow-database-files.
 - Changed-files mode does not restart the workspace, reselect app.py, or alter pages unless the requester separately confirms --restart-after-upload or --sync-pages.
 - Exclude `.git`, `venv`, `.venv`, `__pycache__`, `node_modules`, `.pytest_cache`, build folders, temporary files, and secrets.
-- For protected workspaces, validate the workspace password before uploading or creating pages.
+- For protected workspaces, request the password before every workspace-specific operation and pass it as `--workspace-password` on that same command. The plugin validates it again for that operation; a previous server-session unlock is never sufficient.
 - After upload, check workspace status and logs if the container is not running.
 
 ## Validation Commands

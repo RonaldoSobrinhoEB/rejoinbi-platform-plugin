@@ -412,6 +412,41 @@ WORKSPACE_PASSWORD_VALUE_FIELDS = (
     "password_hash",
     "senha_hash",
 )
+WORKSPACE_PASSWORD_PRECHECK_EXEMPT_COMMANDS = {
+    "connect",
+    "login",
+    "ensure",
+    "ensure-connected",
+    "tenant",
+    "auth",
+    "browser-login",
+    "status",
+    "workspaceall",
+    "validate-workspace",
+    "create-workspace",
+    "validate-app",
+    "bi-normalize-export",
+    "export-package",
+}
+# These commands have no workspace selector. They can only run while the tenant has
+# no password-protected workspace, otherwise the API call could disclose data from a
+# workspace for which the current operation did not receive a password.
+UNSCOPED_WORKSPACE_ACCESS_COMMANDS = {
+    "accessible-pages",
+    "delete-page",
+    "page-maintenance",
+    "pages",
+    "resolve-page",
+    "set-page-order",
+    "smoke-pages",
+    "workspace-stop-all",
+    "update-page",
+    "ai-config",
+    "set-ai-config",
+    "delete-ai-config",
+    "rls",
+    "rls-export",
+}
 DATA_ENGINE_PROJECT_ACTIONS = {
     "session-status",
     "db-connections",
@@ -1142,6 +1177,7 @@ def make_client(args: argparse.Namespace) -> RejoinBIClient:
     client = RejoinBIClient(base_url, operation_scope=operation_scope)
     if getattr(args, "command", "") not in SAFE_PROFILE_COMMANDS:
         require_allowed_profile(client, args)
+    enforce_workspace_password_precheck(client, args)
     return client
 
 
@@ -1158,6 +1194,17 @@ def secret_value(cli_value: str | None, env_name: str, label: str, *, required: 
     if required:
         raise RejoinBIError(f"{label} not provided. Use --{label.lower()} or set {env_name}.")
     return ""
+
+
+def explicit_workspace_password(cli_value: str | None, *, label: str = "workspace-password") -> str:
+    """Read a workspace password only from this operation, never from ambient env/session state."""
+    if cli_value:
+        return cli_value
+    if sys.stdin.isatty():
+        value = getpass.getpass(f"{label}: ")
+        if value:
+            return value
+    raise RejoinBIError(f"{label} not provided. Pass it explicitly for this operation.")
 
 
 def has_secret(cli_value: str | None, env_name: str) -> bool:
@@ -2412,6 +2459,120 @@ def resolve_workspace(client: RejoinBIClient, selector: str) -> dict[str, Any]:
     raise RejoinBIError(f"Workspace not found: {selector}")
 
 
+def workspace_selector_from_args(args: argparse.Namespace) -> str:
+    """Return the explicit workspace selector supplied to one command.
+
+    `container_id` is only accepted as a legacy selector for commands that expose
+    it. It is resolved through the same password gate as `--workspace`.
+    """
+    return safe_str(getattr(args, "workspace", None) or getattr(args, "container_id", None))
+
+
+def validate_workspace_password(
+    client: RejoinBIClient,
+    workspace: dict[str, Any],
+    password: str,
+) -> dict[str, Any]:
+    """Validate one password for this operation; never trust an old server unlock."""
+    if not password:
+        raise RejoinBIError("Workspace password was not provided for this operation.")
+    data, _ = client.request(
+        "POST",
+        "/plataforma/api/validate-container-password",
+        json={"container_id": workspace.get("id"), "password": password},
+        timeout=60,
+    )
+    result = data if isinstance(data, dict) else {"raw": data}
+    for status_field in ("success", "valid", "authorized", "validated"):
+        if status_field in result and not truthy_flag(result.get(status_field)):
+            raise RejoinBIError("Workspace password was rejected by Rejoin BI. No workspace operation was performed.")
+    client.save_session()
+    return result
+
+
+def require_workspace_access(
+    client: RejoinBIClient,
+    workspace: dict[str, Any],
+    *,
+    password: str,
+    command: str,
+) -> dict[str, Any] | None:
+    """Block protected workspaces unless this exact command supplies its password."""
+    if not workspace_password_protected(workspace):
+        return None
+    if not password:
+        workspace_name = safe_str(workspace.get("name")) or safe_str(workspace.get("id")) or "selecionado"
+        raise RejoinBIError(
+            f"Workspace protegido por senha: {workspace_name}. O comando {command} foi bloqueado antes de acessar "
+            "arquivos, logs, páginas ou configurações. Solicite a senha ao usuário e informe --workspace-password "
+            "nesta mesma operação; uma validação antiga da sessão não é reutilizada pelo plugin."
+        )
+    return validate_workspace_password(client, workspace, password)
+
+
+def block_unscoped_workspace_access(client: RejoinBIClient, command: str) -> None:
+    protected = [item for item in load_workspaces(client) if workspace_password_protected(item)]
+    if not protected:
+        return
+    labels = [safe_str(item.get("name")) or safe_str(item.get("id")) for item in protected]
+    raise RejoinBIError(
+        f"O comando global {command} foi bloqueado porque este tenant possui workspace(s) protegido(s): "
+        f"{', '.join(labels)}. Use um comando limitado a --workspace e informe --workspace-password; "
+        "o plugin não executa operações globais que possam atravessar um workspace protegido."
+    )
+
+
+def raw_api_targets_workspace_data(path: str) -> bool:
+    """Raw API calls cannot prove a workspace password, so deny workspace-capable paths."""
+    normalized = normalized_api_path(path).lower()
+    return (
+        api_path_operation_scope(normalized) in {"workspace", "upload", "pages", "rls"}
+        or normalized.startswith("/plataforma/api/ai-config")
+        or normalized.startswith("/plataforma/api/container-content")
+        or normalized.startswith("/plataforma/api/stop-all")
+    )
+
+
+def enforce_workspace_password_precheck(client: RejoinBIClient, args: argparse.Namespace) -> None:
+    """Apply the protected-workspace gate before every command handler can call an API."""
+    command = safe_str(getattr(args, "command", ""))
+    if command in WORKSPACE_PASSWORD_PRECHECK_EXEMPT_COMMANDS:
+        return
+    if command in {"api-get", "api-send"}:
+        if raw_api_targets_workspace_data(safe_str(getattr(args, "path", ""))):
+            raise RejoinBIError(
+                "Raw API access to workspace, upload, page, RLS, or AI-config routes is blocked. "
+                "Use the dedicated command with --workspace and --workspace-password so Rejoin BI validates "
+                "the protected workspace for this operation."
+            )
+        return
+    selector = workspace_selector_from_args(args)
+    if selector:
+        workspace = resolve_workspace(client, selector)
+        require_workspace_access(
+            client,
+            workspace,
+            password=safe_str(getattr(args, "workspace_password", "")),
+            command=command,
+        )
+        if command == "delete-workspace":
+            other_protected = [
+                item
+                for item in load_workspaces(client)
+                if not same_id(item.get("id"), workspace.get("id")) and workspace_password_protected(item)
+            ]
+            if other_protected:
+                labels = [safe_str(item.get("name")) or safe_str(item.get("id")) for item in other_protected]
+                raise RejoinBIError(
+                    "delete-workspace was blocked before its cross-workspace page analysis because other password-protected "
+                    f"workspaces exist: {', '.join(labels)}. Remove the workspace manually in Rejoin BI after reviewing links."
+                )
+        setattr(args, "_resolved_workspace", workspace)
+        return
+    if command in UNSCOPED_WORKSPACE_ACCESS_COMMANDS:
+        block_unscoped_workspace_access(client, command)
+
+
 def safe_str(value: Any) -> str:
     return str(value or "").strip()
 
@@ -2592,7 +2753,7 @@ def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> 
         "manual_deletion_required": False,
         "security_message": (
             "Workspace protegido por senha detectado. O plugin so remove apos validar a senha do workspace; "
-            "informe --workspace-password ou REJOINBI_WORKSPACE_PASSWORD. Sem senha validada, remova manualmente."
+            "informe --workspace-password nesta mesma operação. Sem senha validada, remova manualmente."
             if password_protected
             else ""
         ),
@@ -2688,14 +2849,8 @@ def cmd_workspaceall(args: argparse.Namespace) -> int:
 def cmd_validate_workspace(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
-    password = secret_value(args.password, "REJOINBI_WORKSPACE_PASSWORD", "password")
-    data, _ = client.request(
-        "POST",
-        "/plataforma/api/validate-container-password",
-        json={"container_id": workspace.get("id"), "password": password},
-        timeout=60,
-    )
-    client.save_session()
+    password = explicit_workspace_password(args.password, label="password")
+    data = validate_workspace_password(client, workspace, password)
     print_payload(data, as_json=args.json)
     return 0
 
@@ -4032,7 +4187,7 @@ def cmd_publish_bi(args: argparse.Namespace) -> int:
         }, as_json=args.json)
         return 1
     workspace = resolve_workspace(client, args.workspace)
-    password = args.workspace_password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
+    password = args.workspace_password or ""
     payload = {
         "container_id": workspace.get("id"),
         "password": password,
@@ -6606,7 +6761,7 @@ def cmd_accessible_pages(args: argparse.Namespace) -> int:
 
 def cmd_create_workspace(args: argparse.Namespace) -> int:
     client = make_client(args)
-    password = args.password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
+    password = args.password or ""
     payload = {
         "name": args.name,
         "password": password,
@@ -6642,15 +6797,14 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
     if args.confirm_id and safe_str(args.confirm_id) != workspace_id:
         errors.append(f"--confirm-id must exactly match resolved workspace id: {workspace_id}")
     if password_protected:
-        if not has_secret(getattr(args, "workspace_password", None), "REJOINBI_WORKSPACE_PASSWORD"):
+        if not getattr(args, "workspace_password", None):
             errors.append(
                 "Workspace protegido por senha detectado. Para remover pelo plugin, informe --workspace-password "
-                "ou defina REJOINBI_WORKSPACE_PASSWORD. Sem senha validada, remova manualmente pela plataforma."
+                "nesta mesma operação. Sem senha validada, remova manualmente pela plataforma."
             )
         else:
             try:
-                workspace_password = secret_value(args.workspace_password, "REJOINBI_WORKSPACE_PASSWORD", "workspace-password")
-                validation = validate_workspace_if_password(client, workspace, workspace_password)
+                validation = validate_workspace_password(client, workspace, args.workspace_password)
                 validation_success = bool(validation and validation.get("success", True))
                 plan["workspace_password_validation"] = {
                     "success": validation_success,
@@ -6699,7 +6853,7 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
 def cmd_set_workspace_password(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
-    password = args.password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
+    password = args.password or ""
     data, _ = client.request(
         "PUT",
         f"/plataforma/api/containers/{workspace.get('id')}/password",
@@ -6807,7 +6961,14 @@ def cmd_delete_page(args: argparse.Namespace) -> int:
 
 def cmd_update_page(args: argparse.Namespace) -> int:
     client = make_client(args)
-    current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
+    workspace = resolve_workspace(client, args.workspace) if args.workspace else None
+    current_pages = list_pages(
+        client,
+        workspace_id=workspace.get("id") if workspace else None,
+        all_containers=workspace is None,
+        include_inactive=True,
+        exclude_fictitious=False,
+    )
     current_page = resolve_page_from_pages(current_pages, args.page_id)
     if current_page is None:
         raise RejoinBIError(f"Page not found: {args.page_id}")
@@ -6824,8 +6985,7 @@ def cmd_update_page(args: argparse.Namespace) -> int:
         payload["descricao"] = args.description
     if args.parent is not None:
         payload["pai"] = args.parent
-    if args.workspace:
-        workspace = resolve_workspace(client, args.workspace)
+    if workspace:
         payload["container_id"] = workspace.get("id")
     elif current_page.get("container_id") is not None:
         payload["container_id"] = current_page.get("container_id")
@@ -6943,19 +7103,6 @@ def create_workspace_if_needed(
     if container:
         return container
     return resolve_workspace(client, name)
-
-
-def validate_workspace_if_password(client: RejoinBIClient, workspace: dict[str, Any], password: str = "") -> dict[str, Any] | None:
-    if not password:
-        return None
-    data, _ = client.request(
-        "POST",
-        "/plataforma/api/validate-container-password",
-        json={"container_id": workspace.get("id"), "password": password},
-        timeout=60,
-    )
-    client.save_session()
-    return data if isinstance(data, dict) else {"raw": data}
 
 
 def upload_folder_with_options(
@@ -7259,7 +7406,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     workspace_name = args.workspace or workspace_cfg.get("name") or manifest.get("workspace_name")
     if not workspace_name:
         raise RejoinBIError("Workspace name not provided. Use --workspace or manifest.workspace.name.")
-    workspace_password = args.workspace_password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
+    workspace_password = args.workspace_password or ""
     create_workspace = args.create_workspace or manifest_bool(workspace_cfg, "create", False)
     replace_pages = args.replace_pages or manifest_bool(manifest, "replace_pages", False)
     if upload_mode == "changed-files" and create_workspace:
@@ -7281,7 +7428,12 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
         create=create_workspace,
         timeout=args.timeout,
     )
-    validation = validate_workspace_if_password(client, workspace, workspace_password)
+    validation = require_workspace_access(
+        client,
+        workspace,
+        password=workspace_password,
+        command="deploy-manifest",
+    )
 
     upload_result = None
     if upload_mode == "full":
@@ -8968,6 +9120,11 @@ def build_parser() -> argparse.ArgumentParser:
             choices=OPERATION_SCOPE_CHOICES,
             help="Required exact operation domain before any remote platform request.",
         )
+        if "--workspace-password" not in command_parser._option_string_actions:
+            command_parser.add_argument(
+                "--workspace-password",
+                help="Required on this same command when the selected workspace is password-protected; prior session unlocks are not reused.",
+            )
 
     return parser
 
