@@ -201,6 +201,163 @@ IDENTITY_GOVERNANCE_API_PATH = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+# Every remote command is locked to one operational domain. The caller must
+# acknowledge that domain with --operation-scope before the client opens a
+# session or sends a request. This makes an agent's selected command and its
+# declared intent mechanically comparable instead of relying on prose alone.
+OPERATION_SCOPE_CHOICES = (
+    "ai",
+    "auth",
+    "bi",
+    "data",
+    "deployment",
+    "diagnostics",
+    "identity",
+    "local",
+    "messaging",
+    "pages",
+    "platform",
+    "raw-api",
+    "rls",
+    "system",
+    "upload",
+    "workspace",
+)
+LOCAL_OR_SESSION_SCOPES = {"auth", "local"}
+COMMAND_OPERATION_SCOPES = {
+    # Authentication and local-only helpers.
+    "auth": "auth",
+    "browser-login": "auth",
+    "connect": "auth",
+    "ensure": "auth",
+    "ensure-connected": "auth",
+    "export-package": "local",
+    "login": "auth",
+    "status": "auth",
+    "tenant": "auth",
+    "validate-app": "local",
+    # Workspace lifecycle.
+    "create-workspace": "workspace",
+    "delete-workspace": "workspace",
+    "set-workspace-password": "workspace",
+    "update-workspace": "workspace",
+    "validate-workspace": "workspace",
+    "workspaceall": "workspace",
+    "workspace-build": "workspace",
+    "workspace-content": "workspace",
+    "workspace-delete": "workspace",
+    "workspace-input": "workspace",
+    "workspace-logs": "workspace",
+    "workspace-notification": "workspace",
+    "workspace-restart": "workspace",
+    "workspace-schedule": "workspace",
+    "workspace-start": "workspace",
+    "workspace-status": "workspace",
+    "workspace-stop": "workspace",
+    "workspace-stop-all": "workspace",
+    "workspace-version-delete": "workspace",
+    "workspace-version-export": "workspace",
+    "workspace-version-restore": "workspace",
+    "workspace-versions": "workspace",
+    # Uploads and deployment.
+    "deploy-manifest": "deployment",
+    "upload-files": "upload",
+    "upload-folder-select": "upload",
+    # BI Studio.
+    "bi-create-project": "bi",
+    "bi-create-tab": "bi",
+    "bi-data-inventory": "bi",
+    "bi-delete-tab": "bi",
+    "bi-delete-theme": "bi",
+    "bi-duplicate-tab": "bi",
+    "bi-export": "bi",
+    "bi-init-canvas": "bi",
+    "bi-inventory": "bi",
+    "bi-load-layout": "bi",
+    "bi-normalize-export": "local",
+    "bi-projects": "bi",
+    "bi-rename-tab": "bi",
+    "bi-reorder-tabs": "bi",
+    "bi-save-layout": "bi",
+    "bi-save-theme": "bi",
+    "bi-tab-content": "bi",
+    "bi-tabs": "bi",
+    "bi-themes": "bi",
+    "echarts-template": "bi",
+    "publish-bi": "bi",
+    "studio-inventory": "bi",
+    # Identity governance.
+    "announcement-groups": "identity",
+    "assign-user-group": "identity",
+    "create-group": "identity",
+    "create-user": "identity",
+    "delete-group": "identity",
+    "delete-user": "identity",
+    "download-permissions": "identity",
+    "download-users": "identity",
+    "groups": "identity",
+    "permission-pages": "identity",
+    "recalculate-permissions": "identity",
+    "sectors": "identity",
+    "setores": "identity",
+    "set-user-password": "identity",
+    "set-user-permissions": "identity",
+    "update-group": "identity",
+    "update-user": "identity",
+    "user-permissions": "identity",
+    "user-presence": "identity",
+    "users": "identity",
+    "users-for-groups": "identity",
+    # Page and RLS configuration.
+    "accessible-pages": "pages",
+    "create-page": "pages",
+    "delete-page": "pages",
+    "page-files": "pages",
+    "page-maintenance": "pages",
+    "pages": "pages",
+    "resolve-page": "pages",
+    "set-page-order": "pages",
+    "smoke-pages": "pages",
+    "update-page": "pages",
+    "rls": "rls",
+    "rls-export": "rls",
+    # Platform configuration, communication, AI, diagnostics, and systems.
+    "backup-platform-branding": "platform",
+    "colors-config": "platform",
+    "export-platform-config": "platform",
+    "menu": "platform",
+    "menu-maintenance": "platform",
+    "platform-config": "platform",
+    "platform-title": "platform",
+    "restore-platform-branding": "platform",
+    "restore-platform-config-defaults": "platform",
+    "set-platform-branding": "platform",
+    "set-platform-config": "platform",
+    "storage-path": "platform",
+    "announcements": "messaging",
+    "create-announcement": "messaging",
+    "delete-announcement": "messaging",
+    "email": "messaging",
+    "whatsapp": "messaging",
+    "ai-config": "ai",
+    "cleanup-ai-config": "ai",
+    "codex-keys": "ai",
+    "delete-ai-config": "ai",
+    "set-ai-config": "ai",
+    "audit": "diagnostics",
+    "audit-export": "diagnostics",
+    "smoke-admin": "diagnostics",
+    "route-map": "system",
+    "sleep-manager": "system",
+    "system-admin": "system",
+    "upload-admin": "system",
+    # Data and raw API.
+    "data-engine": "data",
+    "managed-databases": "data",
+    "api-get": "raw-api",
+    "api-send": "raw-api",
+}
 FICTITIOUS_PAGE_PREFIXES = ("avo-ficticio-", "pai-ficticio-", "filho-ficticio-")
 DELETE_PAGE_REFERENCE_FIELDS = ("pai", "ficticio")
 DELETE_WORKSPACE_REFERENCE_FIELDS = ("pai", "pai_real", "pai_ficticio", "ficticio", "hierarquia_id")
@@ -575,12 +732,97 @@ def api_path_is_identity_governance(path: str) -> bool:
     return bool(IDENTITY_GOVERNANCE_API_PATH.match(path_only))
 
 
+def api_path_operation_scope(path: str) -> str:
+    """Classify a raw API path without granting a broader command scope."""
+    path_only = urlparse(str(path or "")).path or str(path or "")
+    if path_only and not path_only.startswith("/"):
+        path_only = "/" + path_only
+    lowered = path_only.lower()
+    if api_path_is_identity_governance(path_only):
+        return "identity"
+    if lowered.startswith("/plataforma/data-engine/api/") or lowered.startswith("/plataforma/api/managed-databases/"):
+        return "data"
+    if lowered.startswith("/plataforma/api/bi/"):
+        return "bi"
+    if lowered.startswith("/plataforma/api/rls"):
+        return "rls"
+    if lowered.startswith(("/plataforma/api/paginas", "/plataforma/api/accessible-pages", "/plataforma/api/capture/")):
+        return "pages"
+    if lowered.startswith(("/plataforma/api/email/", "/plataforma/api/whatsapp/", "/plataforma/api/anuncios")):
+        return "messaging"
+    if lowered.startswith(("/plataforma/api/ai-config", "/plataforma/api/codex/")):
+        return "ai"
+    if lowered.startswith(("/plataforma/api/upload", "/plataforma/api/select-app-file", "/plataforma/api/python-versions")):
+        return "upload"
+    if lowered.startswith("/plataforma/api/containers"):
+        return "workspace"
+    if lowered.startswith((
+        "/plataforma/api/platform-config",
+        "/plataforma/api/cores-config",
+        "/plataforma/api/menu",
+        "/plataforma/api/check-menu-duplicates",
+        "/plataforma/api/reload-menu",
+        "/plataforma/api/clear-menu-cache",
+    )):
+        return "platform"
+    if lowered.startswith(("/plataforma/api/audit/", "/plataforma/api/session-", "/plataforma/api/check-session")):
+        return "diagnostics"
+    if lowered.startswith(("/plataforma/api/sleep-manager/", "/plataforma/api/route-", "/plataforma/api/gateway/", "/plataforma/api/runtime-", "/plataforma/api/database/", "/plataforma/api/middleware/", "/plataforma/api/upload-capabilities")):
+        return "system"
+    return "raw-api"
+
+
+def normalized_api_path(path: str) -> str:
+    path_only = urlparse(str(path or "")).path or str(path or "")
+    if path_only and not path_only.startswith("/"):
+        path_only = "/" + path_only
+    return path_only
+
+
+def operation_scope_for_command(args: argparse.Namespace) -> str:
+    """Return the immutable scope of a command, including protected sub-actions."""
+    command = str(getattr(args, "command", "") or "").strip()
+    if command in {"api-get", "api-send"}:
+        return api_path_operation_scope(str(getattr(args, "path", "") or ""))
+    if command == "workspace-notification" and str(getattr(args, "action", "") or "") == "users":
+        return "identity"
+    if command == "sleep-manager" and str(getattr(args, "action", "") or "") == "users-online":
+        return "identity"
+    if command == "codex-keys" and str(getattr(args, "action", "") or "") == "users":
+        return "identity"
+    scope = COMMAND_OPERATION_SCOPES.get(command)
+    if scope:
+        return scope
+    raise RejoinBIError(
+        f"Command '{command or 'unknown'}' has no registered operation scope. Refusing to call the platform until the scope map is updated."
+    )
+
+
+def ensure_operation_scope_for_command(args: argparse.Namespace) -> str:
+    """Require an exact declared scope before any platform client is created."""
+    expected = operation_scope_for_command(args)
+    if expected in LOCAL_OR_SESSION_SCOPES:
+        return expected
+    provided = str(getattr(args, "operation_scope", "") or "").strip().lower()
+    if provided != expected:
+        raise RejoinBIError(
+            f"This command is locked to the '{expected}' operation scope. Pass --operation-scope {expected} "
+            "only after the user explicitly requested that exact area."
+        )
+    if str(getattr(args, "command", "") or "") in {"api-get", "api-send"}:
+        expected_path = normalized_api_path(str(getattr(args, "path", "") or ""))
+        confirmed_path = normalized_api_path(str(getattr(args, "confirm_api_path", "") or ""))
+        if not expected_path or confirmed_path != expected_path:
+            raise RejoinBIError(
+                "Raw API access requires --confirm-api-path with the exact API path after manual review."
+            )
+    return expected
+
+
 def command_uses_identity_governance(args: argparse.Namespace) -> bool:
     command = str(getattr(args, "command", "") or "").strip()
     if command in IDENTITY_GOVERNANCE_COMMANDS:
         return True
-    if command == "smoke-admin":
-        return bool(getattr(args, "include_identity", False))
     if command == "workspace-notification":
         return str(getattr(args, "action", "") or "") == "users"
     if command == "sleep-manager":
@@ -715,8 +957,9 @@ def render_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]]) -> 
 
 
 class RejoinBIClient:
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, *, operation_scope: str | None = None):
         self.base_url = clean_base_url(base_url)
+        self.operation_scope = str(operation_scope or "").strip().lower()
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "rejoinbi-platform-plugin/0.1.0",
@@ -783,7 +1026,15 @@ class RejoinBIClient:
             return path
         return self.base_url + "/" + path.lstrip("/")
 
+    def ensure_scope_allows_path(self, path: str) -> None:
+        """Defence in depth: a non-identity client can never reach identity APIs."""
+        if api_path_is_identity_governance(path) and self.operation_scope != "identity":
+            raise RejoinBIError(
+                "Operation scope lock blocked an identity-governance endpoint from a non-identity command."
+            )
+
     def request(self, method: str, path: str, *, timeout: int = DEFAULT_TIMEOUT, **kwargs: Any) -> tuple[Any, requests.Response]:
+        self.ensure_scope_allows_path(path)
         try:
             response = self.session.request(method, self.url(path), timeout=timeout, **kwargs)
         except requests.RequestException as exc:
@@ -807,6 +1058,7 @@ class RejoinBIClient:
         return payload, response
 
     def download(self, path: str, output: Path, *, timeout: int = DEFAULT_TIMEOUT) -> None:
+        self.ensure_scope_allows_path(path)
         try:
             response = self.session.get(self.url(path), timeout=timeout, stream=True)
         except requests.RequestException as exc:
@@ -864,6 +1116,7 @@ class RejoinBIClient:
 
 
 def make_client(args: argparse.Namespace) -> RejoinBIClient:
+    operation_scope = ensure_operation_scope_for_command(args)
     ensure_identity_scope_for_command(args)
     ensure_explicit_tenant_for_command(args)
     base_url = resolve_base_url(
@@ -871,7 +1124,7 @@ def make_client(args: argparse.Namespace) -> RejoinBIClient:
         domain=getattr(args, "domain", DEFAULT_DOMAIN) or DEFAULT_DOMAIN,
         base_url=getattr(args, "base_url", "") or "",
     )
-    client = RejoinBIClient(base_url)
+    client = RejoinBIClient(base_url, operation_scope=operation_scope)
     if getattr(args, "command", "") not in SAFE_PROFILE_COMMANDS:
         require_allowed_profile(client, args)
     return client
@@ -7022,7 +7275,6 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         {"name": "session-status", "method": "GET", "path": "/plataforma/api/session-status", "required": True},
         {"name": "check-session", "method": "GET", "path": "/plataforma/api/check-session", "required": True},
         {"name": "workspaces", "method": "GET", "path": "/plataforma/api/containers", "required": True},
-        {"name": "announcements", "method": "GET", "path": "/plataforma/api/anuncios/historico", "required": False},
         {"name": "platform-config", "method": "GET", "path": "/plataforma/api/platform-config", "required": True},
         {"name": "colors-config", "method": "GET", "path": "/plataforma/api/cores-config", "required": True},
         {"name": "menu", "method": "GET", "path": "/plataforma/api/menu", "required": True},
@@ -7037,28 +7289,14 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         {"name": "accessible-pages", "method": "GET", "path": "/plataforma/api/accessible-pages", "required": True},
         {"name": "page-hierarchy", "method": "GET", "path": "/plataforma/api/paginas/verificar-hierarquia", "required": False},
         {"name": "page-orphan-permissions", "method": "GET", "path": "/plataforma/api/paginas/verificar-permissoes-orfas", "required": False},
-        {"name": "rls-pages", "method": "GET", "path": "/plataforma/api/rls-pages", "required": False},
         {"name": "audit-dashboard", "method": "GET", "path": "/plataforma/api/audit/dashboard", "required": False},
-        {"name": "sleep-manager-status", "method": "GET", "path": "/plataforma/api/sleep-manager/status", "required": False},
-        {"name": "email-sessions", "method": "GET", "path": "/plataforma/api/email/sessions", "required": False},
-        {"name": "whatsapp-sessions", "method": "GET", "path": "/plataforma/api/whatsapp/sessions", "required": False},
         {"name": "upload-capabilities", "method": "GET", "path": "/plataforma/api/upload-capabilities", "required": False},
         {"name": "python-versions", "method": "GET", "path": "/plataforma/api/python-versions", "required": False},
         {"name": "gateway-pairings", "method": "GET", "path": "/plataforma/api/gateway/pairings", "required": False},
         {"name": "route-map-routes", "method": "GET", "path": "/plataforma/api/route-mapping/routes", "required": False},
-        {"name": "codex-keys-stats", "method": "GET", "path": "/plataforma/api/codex/keys/stats", "required": False},
-        {"name": "data-engine-status", "method": "GET", "path": "/plataforma/data-engine/api/status", "required": False},
         {"name": "system-database-status", "method": "GET", "path": "/plataforma/api/database/status", "required": False},
         {"name": "system-runtime-readiness", "method": "GET", "path": "/plataforma/api/runtime-readiness", "required": False},
     ]
-    if args.include_identity:
-        checks.extend([
-            {"name": "users", "method": "GET", "path": "/plataforma/api/users", "required": False},
-            {"name": "sectors", "method": "GET", "path": "/plataforma/api/setores", "required": False},
-            {"name": "permissive-pages", "method": "GET", "path": "/plataforma/api/permissive-pages", "required": False},
-            {"name": "user-presence", "method": "GET", "path": "/plataforma/api/users-presence", "required": False},
-            {"name": "groups", "method": "GET", "path": "/plataforma/api/groups", "required": False},
-        ])
     results: list[dict[str, Any]] = []
     for check in checks:
         path = path_with_query(check["path"], check.get("params"))
@@ -7108,7 +7346,7 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         "success": success,
         "base_url": client.base_url,
         "strict": bool(args.strict),
-        "identity_scope_included": bool(args.include_identity),
+        "operation_scope": operation_scope_for_command(args),
         "counts": {
             "total": len(results),
             "ok": sum(1 for item in results if item.get("status") == "ok"),
@@ -8471,8 +8709,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", help="Optional folder to write smoke-admin.json")
     p.add_argument("--strict", action="store_true", help="Fail when optional diagnostics are blocked or unavailable")
     p.add_argument("--timeout", type=int, default=60)
-    p.add_argument("--include-identity", action="store_true", help="Include users, permissions, and permission groups only with --identity-scope")
-    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_smoke_admin)
 
     p = sub.add_parser("validate-app", help="Check a dashboard folder/manifest against Rejoin BI workspace compatibility rules")
@@ -8492,12 +8728,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("api-get", help="Run an authenticated GET against a platform API path")
     p.add_argument("--path", required=True)
+    p.add_argument("--confirm-api-path", help="Exact API path acknowledgement required for raw access")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_identity_scope_argument(p)
     p.set_defaults(func=cmd_api_get)
 
     p = sub.add_parser("api-send", help="Run an authenticated JSON request against a platform API path")
     p.add_argument("--path", required=True)
+    p.add_argument("--confirm-api-path", help="Exact API path acknowledgement required for raw access")
     p.add_argument("--method", choices=["POST", "PUT", "PATCH", "DELETE"], default="POST")
     p.add_argument("--data-json")
     p.add_argument("--data-file")
@@ -8505,6 +8743,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true", help="Confirm the raw API mutation after manual review")
     add_identity_scope_argument(p)
     p.set_defaults(func=cmd_api_post)
+
+    # Keep the acknowledgement after the command so both people and Codex
+    # agents can see the selected domain next to the action they are running.
+    configured_parsers: set[int] = set()
+    for command_parser in sub.choices.values():
+        parser_id = id(command_parser)
+        if parser_id in configured_parsers:
+            continue
+        configured_parsers.add(parser_id)
+        command_parser.add_argument(
+            "--operation-scope",
+            choices=OPERATION_SCOPE_CHOICES,
+            help="Required exact operation domain before any remote platform request.",
+        )
 
     return parser
 

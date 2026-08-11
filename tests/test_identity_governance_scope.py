@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import inspect
+import io
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 
@@ -22,7 +25,8 @@ def scoped_args(command: str, **overrides) -> argparse.Namespace:
         "identity_scope": False,
         "yes": False,
         "path": "",
-        "include_identity": False,
+        "confirm_api_path": "",
+        "operation_scope": "",
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -95,30 +99,121 @@ class IdentityGovernanceScopeTests(unittest.TestCase):
                 scoped_args("api-get", path="plataforma/api/sleep-manager/users-online")
             )
 
-    def test_smoke_admin_skips_identity_unless_both_flags_are_given(self):
+    def test_smoke_admin_is_permanently_non_identity(self):
         default = scoped_args("smoke-admin")
         self.assertFalse(plugin.command_uses_identity_governance(default))
         plugin.ensure_identity_scope_for_command(default)
 
-        requested = scoped_args("smoke-admin", include_identity=True)
-        self.assertTrue(plugin.command_uses_identity_governance(requested))
-        with self.assertRaisesRegex(plugin.RejoinBIError, "Identity governance is disabled"):
-            plugin.ensure_identity_scope_for_command(requested)
-
-        plugin.ensure_identity_scope_for_command(
-            scoped_args("smoke-admin", include_identity=True, identity_scope=True)
-        )
-
-    def test_parser_exposes_identity_scope_only_for_identity_commands(self):
         parser = plugin.build_parser()
-        users = parser.parse_args(["users", "--identity-scope"])
-        self.assertTrue(users.identity_scope)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(["smoke-admin", "--include-identity"])
 
-        smoke = parser.parse_args(
-            ["smoke-admin", "--include-identity", "--identity-scope"]
+        smoke_source = inspect.getsource(plugin.cmd_smoke_admin)
+        for forbidden_path in (
+            "/plataforma/api/users",
+            "/plataforma/api/groups",
+            "/plataforma/api/email/",
+            "/plataforma/api/whatsapp/",
+            "/plataforma/api/codex/",
+            "/plataforma/data-engine/api/",
+            "/plataforma/api/rls",
+        ):
+            self.assertNotIn(forbidden_path, smoke_source)
+
+    def test_parser_exposes_identity_and_operation_scope(self):
+        parser = plugin.build_parser()
+        users = parser.parse_args(["users", "--identity-scope", "--operation-scope", "identity"])
+        self.assertTrue(users.identity_scope)
+        self.assertEqual(users.operation_scope, "identity")
+
+        smoke = parser.parse_args(["smoke-admin", "--operation-scope", "diagnostics"])
+        self.assertEqual(smoke.operation_scope, "diagnostics")
+
+    def test_every_registered_command_has_a_locked_scope(self):
+        parser = plugin.build_parser()
+        subcommands = next(
+            action for action in parser._actions if action.__class__.__name__ == "_SubParsersAction"
         )
-        self.assertTrue(smoke.include_identity)
-        self.assertTrue(smoke.identity_scope)
+        unmapped = []
+        for command in subcommands.choices:
+            try:
+                scope = plugin.operation_scope_for_command(scoped_args(command))
+            except plugin.RejoinBIError:
+                unmapped.append(command)
+                continue
+            if scope not in plugin.OPERATION_SCOPE_CHOICES:
+                unmapped.append(command)
+        self.assertEqual(unmapped, [])
+
+    def test_operation_scope_is_required_and_must_match(self):
+        with self.assertRaisesRegex(plugin.RejoinBIError, "locked to the 'workspace' operation scope"):
+            plugin.ensure_operation_scope_for_command(scoped_args("workspaceall"))
+        with self.assertRaisesRegex(plugin.RejoinBIError, "locked to the 'workspace' operation scope"):
+            plugin.ensure_operation_scope_for_command(
+                scoped_args("workspaceall", operation_scope="pages")
+            )
+        self.assertEqual(
+            plugin.ensure_operation_scope_for_command(
+                scoped_args("workspaceall", operation_scope="workspace")
+            ),
+            "workspace",
+        )
+
+    def test_raw_api_scope_is_derived_from_the_endpoint(self):
+        with self.assertRaisesRegex(plugin.RejoinBIError, "locked to the 'identity' operation scope"):
+            plugin.ensure_operation_scope_for_command(
+                scoped_args("api-get", path="/plataforma/api/users", operation_scope="raw-api")
+            )
+        self.assertEqual(
+            plugin.ensure_operation_scope_for_command(
+                scoped_args(
+                    "api-get",
+                    path="/plataforma/api/users",
+                    confirm_api_path="/plataforma/api/users",
+                    operation_scope="identity",
+                )
+            ),
+            "identity",
+        )
+        self.assertEqual(
+            plugin.ensure_operation_scope_for_command(
+                scoped_args(
+                    "api-get",
+                    path="/plataforma/api/unknown-new-endpoint",
+                    confirm_api_path="/plataforma/api/unknown-new-endpoint",
+                    operation_scope="raw-api",
+                )
+            ),
+            "raw-api",
+        )
+
+    def test_raw_api_requires_exact_path_confirmation(self):
+        with self.assertRaisesRegex(plugin.RejoinBIError, "--confirm-api-path"):
+            plugin.ensure_operation_scope_for_command(
+                scoped_args(
+                    "api-get",
+                    path="/plataforma/api/unknown-new-endpoint",
+                    operation_scope="raw-api",
+                )
+            )
+        with self.assertRaisesRegex(plugin.RejoinBIError, "--confirm-api-path"):
+            plugin.ensure_operation_scope_for_command(
+                scoped_args(
+                    "api-get",
+                    path="/plataforma/api/unknown-new-endpoint",
+                    confirm_api_path="/plataforma/api/other-endpoint",
+                    operation_scope="raw-api",
+                )
+            )
+
+    def test_low_level_client_scope_lock_blocks_identity_paths(self):
+        client = object.__new__(plugin.RejoinBIClient)
+        client.operation_scope = "workspace"
+        with self.assertRaisesRegex(plugin.RejoinBIError, "scope lock blocked"):
+            client.ensure_scope_allows_path("/plataforma/api/users")
+
+        client.operation_scope = "identity"
+        client.ensure_scope_allows_path("/plataforma/api/users")
 
     def test_target_confirmation_requires_resolved_identity(self):
         args = argparse.Namespace(confirm_user="wrong@example.com")

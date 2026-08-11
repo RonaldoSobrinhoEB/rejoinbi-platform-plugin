@@ -1,99 +1,97 @@
 # Command Scope and Governance Map
 
-This is the authoritative execution-scope map for `scripts/rejoinbi.py`. It exists so a broad request such as “analyze the platform”, “fix an upload”, “publish a page”, or “run diagnostics” cannot be interpreted as authority to inspect or modify customer identities, direct permissions, or permission groups.
+This is the authoritative scope contract for `scripts/rejoinbi.py`. It prevents a broad request such as "analyze the platform", "fix an upload", or "run diagnostics" from being interpreted as authority to access another operational area.
 
-## Scope Contract
+## Mandatory Scope-Lock Protocol
 
-Every command belongs to one of the following areas. A command can access only its own area and the authenticated Rejoin BI tenant.
+Every command has one immutable scope. Before an authenticated client is created, the CLI compares that built-in scope with the mandatory `--operation-scope` acknowledgement. A missing or mismatched value stops the command before it can make a remote request.
 
-| Area | Commands and API families | Default authority | Additional barriers |
-| --- | --- | --- | --- |
-| Authentication and session | `connect`, `login`, `ensure`, `status`, `tenant` | Session only | Never exports password, PIN, or cookies. |
-| Workspace lifecycle | `workspaceall`, `workspace-*`, `create-workspace`, `update-workspace`, `delete-workspace`, `validate-workspace` | Read or targeted workspace change | Tenant acknowledgement for writes; destructive commands also use name/id/password confirmation. |
-| Project transfer | `upload-folder-select`, `upload-files`, `deploy-manifest`, `select-app-file`, upload-session APIs | Targeted workspace only | Explicit tenant, resumable bounded chunks, retry/skip/cancel behavior, no automatic ZIP project upload. |
-| Pages and routing | `pages`, `accessible-pages`, `page-*`, `create-page`, `update-page`, `delete-page`, `smoke-pages` | Read or targeted page change | Tenant acknowledgement for writes; page deletion has its own dry-run and cascade confirmations. |
-| BI and data | `studio-inventory`, `bi-*`, `echarts-*`, `data-engine`, `managed-databases` | Project/database scoped | Project id/uid or database target is required where applicable; credentials are redacted. |
-| Platform operations | branding/configuration, announcements, email, WhatsApp, RLS, audit, sleep, Codex keys, route/system/upload admin | Module scoped | Mutating commands require their module's `--yes` and payload/target validation. |
-| Identity governance | users, departments, online-user presence, direct page permissions, permission exports, permission groups, group membership, and identity selectors exposed by notifications/AI keys | **Denied by default** | Requires `--identity-scope`; writes also require `--yes` and exact target confirmation. |
-| Raw authenticated APIs | `api-get`, `api-send` | Endpoint scoped | Identity paths receive the same governance barriers; raw writes also require `--yes`. |
+1. Identify one business area before a remote call.
+2. Use the dedicated command for that area and repeat its exact value in `--operation-scope`.
+3. Split a multi-area request into explicit steps. Do not use broad administration or diagnostics as a shortcut.
+4. Use additional confirmations for identity, mutations, destructive operations, and raw paths.
+5. If the requested area or target is unclear, stop before calling the platform.
 
-## Complete Top-Level Command Catalog
+The only deliberate multi-area transaction is `deploy-manifest`, which is locked to `deployment` and owns its workspace, upload, and page steps internally.
 
-The catalog below is generated from the parser contract in `rejoinbi.py`; aliases are omitted where they invoke the same command. Sub-actions remain inside their named family and inherit the family scope unless this map says otherwise.
-
-| Scope | Top-level commands |
-| --- | --- |
-| Authentication/session | `connect`, `login`, `ensure`, `ensure-connected`, `tenant`, `auth`, `browser-login`, `status` |
-| Workspace/container | `workspaceall`, `validate-workspace`, `workspace-content`, `create-workspace`, `update-workspace`, `delete-workspace`, `set-workspace-password`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-version-export`, `workspace-version-restore`, `workspace-version-delete`, `workspace-schedule`, `workspace-notification`, `workspace-input`, `workspace-build`, `workspace-stop-all` |
-| Upload/deployment | `upload-files`, `upload-folder-select`, `deploy-manifest`, `smoke-pages`, `validate-app`, `export-package` |
-| BI Studio/canvas | `bi-projects`, `studio-inventory`, `bi-create-project`, `bi-init-canvas`, `bi-tabs`, `bi-tab-content`, `bi-create-tab`, `bi-duplicate-tab`, `bi-rename-tab`, `bi-delete-tab`, `bi-reorder-tabs`, `bi-load-layout`, `bi-save-layout`, `bi-themes`, `bi-save-theme`, `bi-delete-theme`, `bi-export`, `bi-normalize-export`, `publish-bi`, `echarts-template` |
-| Protected identity governance | `users`, `sectors`, `permission-pages`, `user-presence`, `download-users`, `download-permissions`, `create-user`, `update-user`, `set-user-password`, `delete-user`, `user-permissions`, `set-user-permissions`, `recalculate-permissions`, `groups`, `create-group`, `update-group`, `delete-group`, `assign-user-group`, `users-for-groups`, `announcement-groups` |
-| Pages/routes/RLS | `pages`, `page-files`, `page-maintenance`, `set-page-order`, `accessible-pages`, `create-page`, `update-page`, `delete-page`, `resolve-page`, `rls`, `rls-export` |
-| Platform config and messaging | `menu`, `menu-maintenance`, `announcements`, `create-announcement`, `delete-announcement`, `platform-config`, `colors-config`, `set-platform-config`, `export-platform-config`, `backup-platform-branding`, `platform-title`, `set-platform-branding`, `restore-platform-branding`, `restore-platform-config-defaults`, `ai-config`, `set-ai-config`, `delete-ai-config`, `cleanup-ai-config`, `storage-path`, `audit`, `audit-export`, `sleep-manager`, `email`, `whatsapp`, `codex-keys`, `route-map`, `system-admin`, `upload-admin` |
-| Persistent data | `managed-databases`, `data-engine` |
-| Generic API | `api-get`, `api-send` |
-
-Special sub-actions with identity data are `workspace-notification users`, `sleep-manager users-online`, and `codex-keys users`. Those individual reads require `--identity-scope`; other actions in their same module retain their normal module scope. E-mail and WhatsApp groups are messaging/contact objects and are intentionally not classified as platform permission groups.
-
-## Identity Governance: Explicit Opt-In Only
-
-The protected identity area includes all user records, user status, departments, direct user permissions, permission reports, permission pages, permission groups, group membership, and global permission recalculation. The following commands are protected:
-
-| Intent | Commands | Minimum invocation rule |
+| Scope value | Area | Main commands |
 | --- | --- | --- |
-| Read users and reports | `users`, `sectors`, `user-presence`, `download-users`, `download-permissions` | User explicitly asked for this identity information + `--identity-scope`. |
-| Read permission structure | `permission-pages`, `user-permissions` | User explicitly asked for permissions + `--identity-scope`. |
-| Read groups/memberships | `groups`, `users-for-groups` | User explicitly asked for groups + `--identity-scope`. |
-| Read identity selectors in other modules | `announcement-groups`, `workspace-notification users`, `sleep-manager users-online`, `codex-keys users` | User explicitly asked for those users/groups + `--identity-scope`. E-mail and WhatsApp contact groups remain messaging-scope objects. |
-| Create identity objects | `create-user`, `create-group` | Exact requested object + `--identity-scope --yes`. |
-| Change or delete a user | `update-user`, `set-user-password`, `delete-user` | Exact requested change + `--identity-scope --yes --confirm-user <resolved-id-or-email>`. |
-| Replace direct permissions | `set-user-permissions` | Exact requested access set + `--identity-scope --yes --confirm-user <resolved-id-or-email>`. An empty replacement also requires `--allow-empty-permissions`. |
-| Change or delete a group | `update-group`, `delete-group` | Exact requested change + `--identity-scope --yes --confirm-group <resolved-id-or-name>`. |
-| Change group membership | `assign-user-group` | Exact requested membership + `--identity-scope --yes --confirm-user <resolved> --confirm-group <resolved>`. |
-| Recalculate everyone | `recalculate-permissions` | Explicit global request + `--identity-scope --yes --confirm-all-users RECALCULATE-ALL`. |
+| `auth` | Local authentication/session handling | `connect`, `login`, `ensure`, `status`, `tenant` |
+| `local` | Local-only tools | `validate-app`, `bi-normalize-export`, `export-package` |
+| `workspace` | Workspace lifecycle and configuration | `workspace*`, `create-workspace`, `update-workspace`, `delete-workspace`, `validate-workspace` |
+| `upload` | Direct project/file transfer | `upload-folder-select`, `upload-files` |
+| `deployment` | Manifest-driven publish transaction | `deploy-manifest` |
+| `pages` | Pages, hierarchy, routes, and page smoke | `pages`, `page-*`, `create-page`, `update-page`, `delete-page`, `smoke-pages` |
+| `rls` | Row-level-security configuration | `rls`, `rls-export` |
+| `bi` | BI Studio and canvas publishing | `bi-*`, `studio-inventory`, `echarts-template`, `publish-bi` |
+| `data` | Data Engine and managed databases | `data-engine`, `managed-databases` |
+| `platform` | Branding, menu, title, and platform configuration | `platform-*`, `colors-config`, `menu*`, `storage-path` |
+| `messaging` | Announcements, e-mail, and WhatsApp | `announcements`, `email`, `whatsapp` |
+| `ai` | Page AI configuration and Codex keys | `ai-config`, `set-ai-config`, `codex-keys` |
+| `diagnostics` | Audit and reduced core health checks | `audit`, `audit-export`, `smoke-admin` |
+| `system` | Runtime, route, sleep, and upload gateway operations | `system-admin`, `route-map`, `sleep-manager`, `upload-admin` |
+| `identity` | Users, direct permissions, permission groups, and membership | See protected identity rules below. |
+| `raw-api` | An unknown raw API endpoint only | `api-get`, `api-send`, with exact endpoint confirmation. |
 
-`smoke-admin` deliberately excludes all identity endpoints. Only a request explicitly asking for an identity smoke check may use `smoke-admin --include-identity --identity-scope`.
+## Complete Parser Catalog
 
-The raw API escape hatches cannot bypass this map. `api-get` and `api-send` classify all mapped identity paths under `/plataforma/api/` as identity governance. Therefore an API read still needs `--identity-scope`, and an API write needs both `--identity-scope --yes` in addition to any endpoint-specific data validation.
+The following groups are registered in `COMMAND_OPERATION_SCOPES`. Automated tests derive every parser choice and fail if a new command has no registered scope.
 
-## What Is Not Authority
+| Scope | Registered commands |
+| --- | --- |
+| Authentication/local | `auth`, `browser-login`, `connect`, `ensure`, `ensure-connected`, `login`, `status`, `tenant`, `validate-app`, `bi-normalize-export`, `export-package` |
+| Workspace | `workspaceall`, `validate-workspace`, `workspace-content`, `create-workspace`, `update-workspace`, `delete-workspace`, `workspace-delete`, `set-workspace-password`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-version-export`, `workspace-version-restore`, `workspace-version-delete`, `workspace-schedule`, `workspace-notification`, `workspace-input`, `workspace-build`, `workspace-stop-all` |
+| Upload/deployment | `upload-files`, `upload-folder-select`, `deploy-manifest` |
+| BI | `bi-projects`, `studio-inventory`, `bi-inventory`, `bi-data-inventory`, `bi-create-project`, `bi-init-canvas`, `bi-tabs`, `bi-tab-content`, `bi-create-tab`, `bi-duplicate-tab`, `bi-rename-tab`, `bi-delete-tab`, `bi-reorder-tabs`, `bi-load-layout`, `bi-save-layout`, `bi-themes`, `bi-save-theme`, `bi-delete-theme`, `bi-export`, `publish-bi`, `echarts-template` |
+| Identity | `users`, `sectors`, `setores`, `permission-pages`, `user-presence`, `download-users`, `download-permissions`, `create-user`, `update-user`, `set-user-password`, `delete-user`, `user-permissions`, `set-user-permissions`, `recalculate-permissions`, `groups`, `create-group`, `update-group`, `delete-group`, `assign-user-group`, `users-for-groups`, `announcement-groups` |
+| Pages/RLS | `pages`, `page-files`, `page-maintenance`, `set-page-order`, `accessible-pages`, `create-page`, `update-page`, `delete-page`, `resolve-page`, `smoke-pages`, `rls`, `rls-export` |
+| Platform/messaging/AI/diagnostics/system | `menu`, `menu-maintenance`, `announcements`, `create-announcement`, `delete-announcement`, `platform-config`, `colors-config`, `set-platform-config`, `export-platform-config`, `backup-platform-branding`, `platform-title`, `set-platform-branding`, `restore-platform-branding`, `restore-platform-config-defaults`, `ai-config`, `set-ai-config`, `delete-ai-config`, `cleanup-ai-config`, `storage-path`, `audit`, `audit-export`, `sleep-manager`, `email`, `whatsapp`, `codex-keys`, `route-map`, `system-admin`, `upload-admin`, `smoke-admin` |
+| Data/raw | `managed-databases`, `data-engine`, `api-get`, `api-send` |
 
-None of the following authorizes identity access:
+Special sub-actions that expose identity data are `workspace-notification users`, `sleep-manager users-online`, and `codex-keys users`. They dynamically change from their normal module scope to `identity`. E-mail and WhatsApp contact groups are messaging objects, not platform permission groups.
 
-- A valid Administrator, Master, or Administrador Principal session.
-- A request to analyze, diagnose, inventory, map, audit, deploy, upload, build, or repair the platform.
-- A workspace/page/BI/RLS/WhatsApp/e-mail request that does not explicitly name users, direct permissions, or permission groups.
-- A general request to "handle administration", "check everything", or "make it work".
-- A previous identity request in the conversation when the present operation has another scope.
+## Protected Identity Governance
 
-When identity work is genuinely requested, the plugin must first state the exact target and intended effect, then use the protected command and flags above. It must not create test users, adjust permissions, or touch groups merely to make a smoke test, deployment, or diagnosis easier.
+User records, departments, online-user presence, direct permissions, permission reports/pages, permission groups, and membership are denied by default. A successful administrative login is not authorization for this domain.
 
-## Enforcement Points in `rejoinbi.py`
+| Intent | Required acknowledgement |
+| --- | --- |
+| Read users, reports, permissions, or groups | The user explicitly asked for that exact identity information + `--operation-scope identity --identity-scope`. |
+| Create a user or permission group | Exact requested object + both identity flags + `--yes`. |
+| Change/delete a user | Both identity flags + `--yes --confirm-user <resolved-id-or-email>`. |
+| Replace direct permissions | Both identity flags + `--yes --confirm-user <resolved>`; an empty list also needs `--allow-empty-permissions`. |
+| Change/delete a group | Both identity flags + `--yes --confirm-group <resolved-id-or-name>`. |
+| Change membership | Both identity flags + `--yes --confirm-user <resolved> --confirm-group <resolved>`. |
+| Recalculate all permissions | Both identity flags + `--yes --confirm-all-users RECALCULATE-ALL`. |
 
-1. `make_client()` calls `ensure_identity_scope_for_command()` before any authenticated request is created.
-2. `command_uses_identity_governance()` covers dedicated identity commands, optional identity smoke checks, and raw API paths.
-3. `command_mutates_identity_governance()` adds the mandatory `--yes` barrier for identity writes.
-4. User and group mutators resolve the target from the server and require it to be repeated through `--confirm-user` or `--confirm-group` before the write.
-5. Permission replacement refuses an accidental empty allow/deny list; global recalculation requires a literal global-impact acknowledgement.
-6. The parser exposes identity flags only on identity commands and on `api-get`, `api-send`, and the explicitly optional identity smoke mode.
-7. Automated tests verify that identity reads, writes, raw endpoints, smoke expansion, parser flags, and target confirmations cannot regress silently.
+The protection exists at two levels: `make_client()` rejects a missing identity declaration and `RejoinBIClient.ensure_scope_allows_path()` blocks an identity API route from any client not locked to `identity`. Therefore a future handler cannot accidentally reach identity endpoints from a workspace, upload, page, BI, system, or messaging command.
 
-## Safe Examples
+`smoke-admin` is permanently limited to core diagnostics. It does not inspect identity, messaging, AI, Data Engine, or RLS. Use the dedicated command with the corresponding scope for those areas.
+
+## Raw API Rules
+
+`api-get` and `api-send` never bypass a scope. Known endpoint paths derive their actual scope: for example, `/plataforma/api/users` is `identity`, `/plataforma/api/platform-config` is `platform`, and `/plataforma/api/containers` is `workspace`. The caller must provide the derived value in `--operation-scope` and repeat the exact endpoint using `--confirm-api-path`.
+
+Identity raw paths additionally require `--identity-scope`; raw writes also require `--yes`. An unknown path is assigned `raw-api`, but still requires its exact path confirmation.
+
+## Examples
 
 ```powershell
-# Normal deployment: it has no identity scope and cannot reach identities.
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\rejoinbi-app.json
+# Deployment cannot access identity APIs.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest `
+  --manifest .\rejoinbi-app.json --operation-scope deployment
 
-# Explicit read requested by the customer.
-python .\scripts\rejoinbi.py users --identity-scope
+# Explicit identity read.
+python .\scripts\rejoinbi.py users --operation-scope identity --identity-scope
 
-# Explicit permission change for one resolved user.
+# Exact user-permission change.
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions `
   --user pessoa@empresa.com --confirm-user pessoa@empresa.com `
-  --permissions relatorio-financeiro --identity-scope --yes
+  --permissions relatorio-financeiro --operation-scope identity --identity-scope --yes
 
-# Explicit, read-only identity portion of an admin smoke check.
-python .\scripts\rejoinbi.py smoke-admin --include-identity --identity-scope
+# Raw access is path-bound and scope-derived.
+python .\scripts\rejoinbi.py api-get --path /plataforma/api/platform-config `
+  --confirm-api-path /plataforma/api/platform-config --operation-scope platform
 ```
 
-If an execution request cannot satisfy this map, stop before calling the protected endpoint and ask the requester to explicitly authorize the identity area and exact target.
+No broad request, old conversation topic, or privileged profile substitutes for these acknowledgements.

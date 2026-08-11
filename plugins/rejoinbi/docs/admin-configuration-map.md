@@ -15,12 +15,13 @@ The plugin treats a successful login that does not request PIN as `Administrador
 
 User records, departments, user-presence data, direct permissions, permission exports/pages, permission groups, and group membership are a protected identity-governance area. They are not part of a normal platform inventory, upload, deployment, workspace, page, RLS, messaging, BI, or diagnostic request.
 
-- Identity reads require an explicit user/permission/group request and `--identity-scope`.
-- Identity writes require `--identity-scope --yes` and the resolved target repeated with `--confirm-user` or `--confirm-group`.
+- Every remote command requires an exact `--operation-scope`; the parser rejects a missing or mismatched domain before it connects to the platform.
+- Identity reads require an explicit user/permission/group request, `--operation-scope identity`, and `--identity-scope`.
+- Identity writes require both identity scope flags, `--yes`, and the resolved target repeated with `--confirm-user` or `--confirm-group`.
 - An intentional empty direct-permission replacement additionally requires `--allow-empty-permissions`.
 - Recalculating all user permissions additionally requires `--confirm-all-users RECALCULATE-ALL`.
-- `smoke-admin` excludes this area by default. Include it only with `--include-identity --identity-scope` after the requester explicitly asks for that check.
-- `api-get` and `api-send` cannot bypass these rules for mapped identity endpoints.
+- `smoke-admin` is permanently restricted to core diagnostics; it cannot inspect identity, messaging, IA, Data Engine, or RLS.
+- `api-get` and `api-send` cannot bypass these rules: they derive known endpoint scopes and require exact `--confirm-api-path`.
 
 The complete boundary, including command families and non-authorizing requests, is in [command-scope-map.md](command-scope-map.md).
 
@@ -92,11 +93,11 @@ List and export users or permissions:
 
 ```powershell
 # Run only after the requester explicitly asks for identity information.
-python .\scripts\rejoinbi.py users --identity-scope
-python .\scripts\rejoinbi.py sectors --identity-scope
-python .\scripts\rejoinbi.py permission-pages --permissive --identity-scope
-python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx --identity-scope
-python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx --identity-scope
+python .\scripts\rejoinbi.py users --operation-scope identity --identity-scope
+python .\scripts\rejoinbi.py sectors --operation-scope identity --identity-scope
+python .\scripts\rejoinbi.py permission-pages --permissive --operation-scope identity --identity-scope
+python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx --operation-scope identity --identity-scope
+python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx --operation-scope identity --identity-scope
 ```
 
 Check and repair menu/page configuration:
@@ -126,12 +127,12 @@ RLS needs both page mapping and user dimension data. For platform-created worksp
 Inspect platform infrastructure and upload support:
 
 ```powershell
-python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
-python .\scripts\rejoinbi.py system-admin database-status
-python .\scripts\rejoinbi.py system-admin runtime-readiness
-python .\scripts\rejoinbi.py route-map routes
-python .\scripts\rejoinbi.py upload-admin capabilities
-python .\scripts\rejoinbi.py upload-admin gateway-pairings
+python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin --operation-scope diagnostics
+python .\scripts\rejoinbi.py system-admin database-status --operation-scope system
+python .\scripts\rejoinbi.py system-admin runtime-readiness --operation-scope system
+python .\scripts\rejoinbi.py route-map routes --operation-scope system
+python .\scripts\rejoinbi.py upload-admin capabilities --operation-scope system
+python .\scripts\rejoinbi.py upload-admin gateway-pairings --operation-scope system
 ```
 
 ## BI Studio and Data Engine Inventory
@@ -168,8 +169,8 @@ BI Studio exports may contain localized display names with non-ASCII slugs. Befo
 ## Safety Notes
 
 - Destructive commands keep explicit confirmation flags.
-- User, direct-permission, and permission-group operations are disabled until the requester explicitly names that identity area and the command includes `--identity-scope`.
+- User, direct-permission, and permission-group operations are disabled until the requester explicitly names that identity area and the command includes `--operation-scope identity --identity-scope`.
 - Identity writes require `--yes` plus an exact resolved target confirmation; a broad diagnostic request never authorizes them.
 - Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided and validated by the platform first.
 - Secrets, passwords, PINs, and local session files must never be exported.
-- Use dedicated commands for supported modules; use `api-get` / `api-send` only for new endpoints that are not yet present in this map.
+- Use dedicated commands for supported modules; use `api-get` / `api-send` only for new endpoints that are not yet present in this map, with the endpoint-derived scope and exact `--confirm-api-path`.
