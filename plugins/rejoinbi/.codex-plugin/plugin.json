@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi",
-  "version": "0.4.33+codex.20260811175243",
+  "version": "0.4.33+codex.20260811183756",
   "description": "Operate Rejoin BI workspaces, uploads, pages, BI Studio, Data Engine, and safely scoped platform administration from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",
@@ -42,8 +42,8 @@
       "Migrate this project's SQLite database to Rejoin BI"
     ],
     "brandColor": "#004090",
-    "composerIcon": "./assets/app-icon.svg",
-    "logo": "./assets/app-icon.svg",
+    "composerIcon": "./assets/app-icon.png",
+    "logo": "./assets/app-icon.png",
     "screenshots": []
   }
 }
