@@ -21,6 +21,12 @@ For administrative automation, consult `docs/admin-configuration-map.md`. It map
 
 For agents or users who do not know Rejoin BI, consult `docs/agent-operating-playbook.md`. It is the full operational playbook: mental model, natural-language router, command families, safety rules, response patterns, and completion checklist. Use it whenever the user asks what the plugin can do, uses vague admin wording, or asks for a multi-step platform task.
 
+## Scope Isolation: Users, Permissions, and Groups
+
+Treat user records, direct permissions, and permission groups as a separate identity-governance domain, not as ordinary “admin configuration”. Do not list, inspect, create, change, delete, test, or recalculate identities unless the user explicitly asks about users, direct permissions, or groups and the precise reason is clear. A broad request such as analyze, map, fix, deploy, upload, build, inventory, test, smoke, RLS, email, WhatsApp, or “administração” does **not** authorize this domain.
+
+The plugin enforces this with `--identity-scope` on every identity read. Identity writes also require `--yes` and an exact resolved `--confirm-user` or `--confirm-group`; permission recalculation requires `--confirm-all-users RECALCULATE-ALL`. Do not use `api-get` or `api-send` to bypass the restriction: mapped identity paths receive the same checks. `smoke-admin` intentionally excludes all identity endpoints; use `--include-identity --identity-scope` only after an explicit identity smoke request. Read `docs/command-scope-map.md` before performing this protected work.
+
 ## Natural Language Intent Map
 
 Use this map before asking clarifying questions. When the request is broad, unclear, or from a user who does not know Rejoin BI, also read `docs/agent-operating-playbook.md`. When a platform address is not connected yet, run `ensure` first; if no address was provided, ask only for the full address in the format `subdomain.rejoinbi.com.br`.
@@ -38,8 +44,9 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "criar banco", "gerenciar banco", "banco persistente", "SQLite gerenciado", "API de banco": act on the request with `managed-databases`; do not only explain the page. Resolve existing databases by list/name/id, then create, inspect schema, query, back up, check integrity, or manage tokens as requested.
 - "migrar o banco deste projeto", "copiar o SQLite atual", "levar os dados para o banco gerenciado": inspect the current project and follow the Managed Database Workflow below. Preserve the source, migrate structure and data, validate every table count and integrity, and rewire the project only when requested.
 - "email", "whatsapp", "agendar envio", "fila": use `email` or `whatsapp` read commands first. Do not broadcast to real recipients without explicit target, payload, and confirmation.
-- "usuarios", "permissoes", "grupos", "anuncios", "RLS", "IA", "auditoria", "sistema", "gateway", "codex keys": route through `docs/agent-operating-playbook.md` and `docs/admin-configuration-map.md`; do the read command first, then the safest write command with explicit platform address and confirmation.
-- "testar RLS", "usuario padrao com RLS", "validar PIN", "filtro por email": use `examples/codex-rls-suite`, create/read the mailbox through `https://pt.emailfake.com/channel1/`, grant only the target page, configure RLS by `container_id`, and connect the standard user only with `--allow-standard` for validation.
+- "usuarios", "permissoes", "grupos": only after confirming this exact identity-governance intent, route through `docs/command-scope-map.md` and `docs/agent-operating-playbook.md`. Add `--identity-scope` even to reads; add `--yes` and the exact resolved target confirmation to writes. Never infer this permission from other admin work.
+- "anuncios", "RLS", "IA", "auditoria", "sistema", "gateway", "codex keys": route through `docs/agent-operating-playbook.md` and `docs/admin-configuration-map.md`; do the module read command first, then the safest module write command with explicit platform address and confirmation. Do not touch users, groups, or direct permissions unless separately requested.
+- "testar RLS", "usuario padrao com RLS", "validar PIN", "filtro por email": configure and test the RLS data/page mapping first. Create a test user or grant page permissions only when the user explicitly asks for identity/PIN validation; then apply the identity-governance flags and confirmations before using `examples/codex-rls-suite` and `--allow-standard`.
 
 Do not give generic capability lists when the user already stated an actionable admin intent. Map the phrase to the command above, fetch current state when needed, and then ask only for the missing value required to make the change safely.
 
@@ -48,6 +55,8 @@ Do not give generic capability lists when the user already stated an actionable 
 - Prefer state-first answers. If the user asks "qual esta atual", fetch the current value instead of explaining possibilities.
 - Prefer dedicated commands over raw `api-get` or `api-send`.
 - Use `smoke-admin` for broad platform/admin health checks and `studio-inventory` for BI Studio/Data Engine questions.
+- Treat `smoke-admin` as non-identity by design. Do not add `--include-identity` unless the user specifically asked to inspect users, direct permissions, or groups.
+- Do not create test users, change direct permissions, or alter group membership to troubleshoot an unrelated platform task.
 - Separate plugin failures from platform/backend optional issues.
 - After any write, provide the changed fields, target platform address, backup path if any, and verification performed.
 - If a user asks for "tudo", "100%", "testa geral", or "evolucao extrema", run or propose the full checklist in `docs/agent-operating-playbook.md` instead of improvising.
@@ -147,14 +156,14 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 
 The script persists only cookies/session metadata in `%USERPROFILE%\.rejoinbi-platform`. It does not save the password or PIN.
 
-Administrative configuration shortcuts:
+Administrative configuration shortcuts (the identity examples below require an explicit identity-governance request):
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-user --user user@example.com --name "Nome" --setor "Comercial" --perfil Administrador
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-permissions --user user@example.com --permissions "workspace,paginas"
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" groups
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-group --name Comercial --permissions "workspace,paginas"
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users --identity-scope
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-user --user user@example.com --confirm-user user@example.com --name "Nome" --setor "Comercial" --perfil Administrador --identity-scope --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-permissions --user user@example.com --confirm-user user@example.com --permissions "workspace,paginas" --identity-scope --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" groups --identity-scope
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-group --name Comercial --permissions "workspace,paginas" --identity-scope --yes
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" announcements
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-announcement --title "Aviso" --message "Mensagem" --all
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" platform-config
@@ -197,7 +206,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" bi-normalize-export --path C:\path\bi-export --remove-old
 ```
 
-`smoke-admin` is read-only and useful after plugin changes or platform upgrades. For BI Studio/Data Engine work, run `studio-inventory` first. It is read-only, links projects to Data Engine resources, and redacts password, token, key, secret, credential, and connection-string fields. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
+`smoke-admin` is read-only and useful after plugin changes or platform upgrades, but deliberately excludes users, direct permissions, and groups. For BI Studio/Data Engine work, run `studio-inventory` first. It is read-only, links projects to Data Engine resources, and redacts password, token, key, secret, credential, and connection-string fields. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
 
 For configuration payloads with many fields, use JSON files instead of ad hoc chat text:
 
@@ -262,20 +271,20 @@ List workspaces:
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" workspaceall
 ```
 
-List users and pages:
+List pages; list users only after an explicit identity-governance request:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users --identity-scope
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" pages --all-containers
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" accessible-pages
 ```
 
-Create test users and set passwords through the admin endpoint:
+Create test users and set passwords only when the user explicitly asked for an identity/PIN test:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-user --email codex-test@example.com --name "Codex Test Master" --perfil Master --setor Codex
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br create-user --email codex-test@example.com --name "Codex Test Master" --perfil Master --setor Codex --identity-scope --yes
 $env:REJOINBI_NEW_PASSWORD = "..."
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-password --user codex-test@example.com
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br set-user-password --user codex-test@example.com --confirm-user codex-test@example.com --identity-scope --yes
 ```
 
 Create a workspace and an attached page:
@@ -327,7 +336,8 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 - Use `upload-files` for selected files only. With `--source-root C:\path\project`, files such as `C:\path\project\static\app.js` keep the `static/app.js` destination. `--folder assets` prefixes a destination folder, and repeated `--target-path <source>=<target/path.ext>` gives an exact individual destination without collisions between same-named files.
 - Every upload retries each failed part a bounded number of times. After those retries, the default `--on-file-error ask` must present the file path, chunk position, HTTP diagnosis, and the choices **retry**, **skip only this file**, or **cancel**. Never skip a file silently.
 - When an agent is running non-interactively and a file needs a decision, it must stop before finalization, report the structured diagnostic to the user, ask which of the three actions to take, then rerun using `--on-file-error retry`, `--on-file-error skip`, or `--on-file-error cancel`. `skip` calls the dedicated session endpoint and continues with the remaining files; it never removes any existing workspace file. `cancel` discards only the temporary upload session, before it can change the project.
-- A completed upload reports the count of requested/uploaded/skipped files and all diagnostics. Do not call `select-app-file`, restart the workspace, or claim success if the upload was cancelled or awaits a user decision.
+- `upload-finish` only starts the durable server-side assembly. Always wait for `upload-finish-status` to report `completed` before calling `select-app-file`; never infer readiness from a successful finalization request alone. This prevents a large project from racing the selection of `app.py`.
+- A completed upload reports the count of requested/uploaded/skipped files and all diagnostics. Do not call `select-app-file`, restart the workspace, or claim success if the upload was cancelled, is still finalizing, or awaits a user decision.
 
 ```powershell
 # Full project: resume safely and ask before discarding any failed file.

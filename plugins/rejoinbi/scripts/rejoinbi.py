@@ -149,6 +149,58 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "workspace-version-delete",
     "workspace-version-restore",
 }
+
+# Identity governance is intentionally isolated from normal workspace, upload,
+# page and BI operations. A capable admin session is not authorization to inspect
+# or change users, direct permissions, or platform permission groups by default.
+IDENTITY_GOVERNANCE_COMMANDS = {
+    "users",
+    "sectors",
+    "setores",
+    "permission-pages",
+    "user-presence",
+    "download-users",
+    "download-permissions",
+    "create-user",
+    "update-user",
+    "set-user-password",
+    "delete-user",
+    "user-permissions",
+    "set-user-permissions",
+    "recalculate-permissions",
+    "groups",
+    "create-group",
+    "update-group",
+    "delete-group",
+    "assign-user-group",
+    "announcement-groups",
+    "users-for-groups",
+}
+IDENTITY_GOVERNANCE_MUTATING_COMMANDS = {
+    "create-user",
+    "update-user",
+    "set-user-password",
+    "delete-user",
+    "set-user-permissions",
+    "recalculate-permissions",
+    "create-group",
+    "update-group",
+    "delete-group",
+    "assign-user-group",
+}
+IDENTITY_GOVERNANCE_API_PATH = re.compile(
+    r"^/plataforma/api/(?:"
+    r"users(?:/|$)|setores(?:/|$)|users-presence(?:/|$)|download-users(?:/|$)|"
+    r"download-permissions(?:/|$)|permissive-pages(?:/|$)|register(?:/|$)|"
+    r"update-user(?:/|$)|change-user-password(?:/|$)|delete-user(?:/|$)|"
+    r"user-permissions(?:/|$)|update-permissions(?:/|$)|recalcular-permissoes(?:/|$)|"
+    r"groups(?:/|$)|grupos(?:/|$)|create-group(?:/|$)|update-group(?:/|$)|"
+    r"delete-group(?:/|$)|assign-user-to-group(?:/|$)|users-for-groups(?:/|$)|"
+    r"containers/[^/]+/notification/users(?:/|$)|sleep-manager/users-online(?:/|$)|"
+    r"codex/keys/users(?:/|$)"
+    r")",
+    re.IGNORECASE,
+)
 FICTITIOUS_PAGE_PREFIXES = ("avo-ficticio-", "pai-ficticio-", "filho-ficticio-")
 DELETE_PAGE_REFERENCE_FIELDS = ("pai", "ficticio")
 DELETE_WORKSPACE_REFERENCE_FIELDS = ("pai", "pai_real", "pai_ficticio", "ficticio", "hierarquia_id")
@@ -516,6 +568,54 @@ def ensure_explicit_tenant_for_command(args: argparse.Namespace) -> None:
     )
 
 
+def api_path_is_identity_governance(path: str) -> bool:
+    path_only = urlparse(str(path or "")).path or str(path or "")
+    if path_only and not path_only.startswith("/"):
+        path_only = "/" + path_only
+    return bool(IDENTITY_GOVERNANCE_API_PATH.match(path_only))
+
+
+def command_uses_identity_governance(args: argparse.Namespace) -> bool:
+    command = str(getattr(args, "command", "") or "").strip()
+    if command in IDENTITY_GOVERNANCE_COMMANDS:
+        return True
+    if command == "smoke-admin":
+        return bool(getattr(args, "include_identity", False))
+    if command == "workspace-notification":
+        return str(getattr(args, "action", "") or "") == "users"
+    if command == "sleep-manager":
+        return str(getattr(args, "action", "") or "") == "users-online"
+    if command == "codex-keys":
+        return str(getattr(args, "action", "") or "") == "users"
+    if command in {"api-get", "api-send"}:
+        return api_path_is_identity_governance(str(getattr(args, "path", "") or ""))
+    return False
+
+
+def command_mutates_identity_governance(args: argparse.Namespace) -> bool:
+    command = str(getattr(args, "command", "") or "").strip()
+    if command in IDENTITY_GOVERNANCE_MUTATING_COMMANDS:
+        return True
+    return command == "api-send" and api_path_is_identity_governance(str(getattr(args, "path", "") or ""))
+
+
+def ensure_identity_scope_for_command(args: argparse.Namespace) -> None:
+    """Block user/permission/group access unless that exact domain was requested."""
+    if not command_uses_identity_governance(args):
+        return
+    if not getattr(args, "identity_scope", False):
+        raise RejoinBIError(
+            "Identity governance is disabled by default. This command can inspect or change users, "
+            "permissions, or permission groups. Use --identity-scope only after the user explicitly "
+            "requested that exact area."
+        )
+    if command_mutates_identity_governance(args) and not getattr(args, "yes", False):
+        raise RejoinBIError(
+            "Identity governance changes require both --identity-scope and --yes after the exact "
+            "target and intended access change have been confirmed."
+        )
+
+
 def session_slug(base_url: str) -> str:
     parsed = urlparse(base_url)
     host = parsed.netloc.lower()
@@ -764,6 +864,7 @@ class RejoinBIClient:
 
 
 def make_client(args: argparse.Namespace) -> RejoinBIClient:
+    ensure_identity_scope_for_command(args)
     ensure_explicit_tenant_for_command(args)
     base_url = resolve_base_url(
         subdomain=getattr(args, "tenant", "") or getattr(args, "subdomain", "") or "",
@@ -2576,6 +2677,70 @@ def cancel_upload_session_safely(client: RejoinBIClient, session_id: str, contai
         return {"success": False, "error": str(exc)}
 
 
+def wait_for_upload_finalization(
+    client: RejoinBIClient,
+    session_id: str,
+    container_id: Any,
+    *,
+    timeout: int,
+    interval: float = 1.5,
+    initial_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Wait for the server-side assembly before choosing the entrypoint.
+
+    ``upload-finish`` deliberately returns quickly so a reverse proxy never
+    waits for a large project.  Selecting app.py before the persisted
+    finalization is complete races the assembler and used to produce a false
+    "file not found" after every chunk had already been accepted.
+    """
+    deadline = time.time() + max(1, int(timeout))
+    current = initial_state if isinstance(initial_state, dict) else {}
+    last_message = ""
+    status_failures = 0
+    while time.time() < deadline:
+        state = str(current.get("status") or "").lower()
+        if state == "completed":
+            result = current.get("result")
+            return result if isinstance(result, dict) else {}
+        if state == "error":
+            raise RejoinBIError(current.get("message") or "Server upload finalization failed.")
+
+        try:
+            payload, _ = client.request(
+                "GET",
+                "/plataforma/api/upload-finish-status?" + urlencode({
+                    "session_id": session_id,
+                    "container_id": container_id,
+                }),
+                timeout=min(120, max(30, int(timeout))),
+            )
+            status_failures = 0
+        except RejoinBIError as exc:
+            if not upload_error_retryable(exc):
+                raise
+            status_failures += 1
+            retry_delay = min(10.0, max(0.5, float(interval)) * status_failures)
+            print(
+                f"[upload-finalization] Status unavailable; retrying in {retry_delay:.1f}s: {compact_response_message(str(exc))}",
+                file=sys.stderr,
+            )
+            time.sleep(retry_delay)
+            current = {"status": "unknown", "message": str(exc)}
+            continue
+        current = payload if isinstance(payload, dict) else {}
+        message = str(current.get("message") or "")
+        if message and message != last_message:
+            print(f"[upload-finalization] {message}", file=sys.stderr)
+            last_message = message
+        if str(current.get("status") or "").lower() not in {"completed", "error"}:
+            time.sleep(max(0.2, float(interval)))
+
+    raise RejoinBIError(
+        "Timed out waiting for the server to finalize the upload. "
+        "The temporary session was preserved; rerun the same command to resume safely."
+    )
+
+
 def upload_entries_chunked(
     client: RejoinBIClient,
     workspace: dict[str, Any],
@@ -2792,19 +2957,38 @@ def upload_entries_chunked(
         if file_number % 25 == 0:
             client.keep_session_alive(force=True)
 
-    finish_data, _ = client.request(
-        "POST",
-        "/plataforma/api/upload-finish",
-        json={"session_id": session_id, "container_id": workspace.get("id")},
+    try:
+        finish_data, _ = client.request(
+            "POST",
+            "/plataforma/api/upload-finish",
+            json={"session_id": session_id, "container_id": workspace.get("id")},
+            timeout=timeout,
+        )
+    except RejoinBIError as exc:
+        if not upload_error_retryable(exc):
+            raise
+        # The request can have reached the platform while its response was
+        # lost at the proxy. The persisted session status is authoritative.
+        print(
+            "[upload-finalization] Could not confirm start; checking the existing server session.",
+            file=sys.stderr,
+        )
+        finish_data = {"status": "unknown", "message": str(exc)}
+    finalization = wait_for_upload_finalization(
+        client,
+        session_id,
+        workspace.get("id"),
         timeout=timeout,
+        initial_state=finish_data if isinstance(finish_data, dict) else {},
     )
     try:
         state_path.unlink()
     except FileNotFoundError:
         pass
-    files = list((finish_data or {}).get("files") or uploaded_files) if isinstance(finish_data, dict) else uploaded_files
     return {
-        "files": files,
+        # Local manifest paths are complete even when the bounded server
+        # status intentionally returns only entrypoint candidates.
+        "files": uploaded_files,
         "summary": {
             "session_id": session_id,
             "requested_files": len(entries),
@@ -2812,6 +2996,7 @@ def upload_entries_chunked(
             "skipped_files": sorted(skipped_files),
             "diagnostics": diagnostics,
             "preserved_existing_files": True,
+            "finalization": finalization,
         },
     }
 
@@ -3689,6 +3874,24 @@ def resolve_user(client: RejoinBIClient, selector: str) -> dict[str, Any]:
     raise RejoinBIError(f"User not found: {selector}")
 
 
+def require_identity_target_confirmation(
+    args: argparse.Namespace,
+    argument_name: str,
+    label: str,
+    candidates: list[Any],
+) -> None:
+    """Require an exact resolved id or name before changing an identity target."""
+    provided = str(getattr(args, argument_name, "") or "").strip().casefold()
+    expected = {str(candidate).strip().casefold() for candidate in candidates if str(candidate).strip()}
+    if provided and provided in expected:
+        return
+    option = "--" + argument_name.replace("_", "-")
+    accepted = ", ".join(sorted(str(candidate) for candidate in candidates if str(candidate).strip()))
+    raise RejoinBIError(
+        f"Changing {label} requires {option} with one exact resolved value ({accepted or 'id'})."
+    )
+
+
 def cmd_users(args: argparse.Namespace) -> int:
     client = make_client(args)
     users = load_users(client)
@@ -3733,6 +3936,12 @@ def cmd_create_user(args: argparse.Namespace) -> int:
 def cmd_set_user_password(args: argparse.Namespace) -> int:
     client = make_client(args)
     user = resolve_user(client, args.user)
+    require_identity_target_confirmation(
+        args,
+        "confirm_user",
+        "a user password",
+        [user.get("user_id"), user.get("id"), user.get("email")],
+    )
     password = secret_value(args.password, "REJOINBI_NEW_PASSWORD", "new-password")
     payload = {
         "user_id": user.get("user_id") or user.get("id"),
@@ -3749,6 +3958,12 @@ def cmd_delete_user(args: argparse.Namespace) -> int:
     user = resolve_user(client, args.user)
     if not args.yes:
         raise RejoinBIError("Deleting users requires --yes.")
+    require_identity_target_confirmation(
+        args,
+        "confirm_user",
+        "a user",
+        [user.get("user_id"), user.get("id"), user.get("email")],
+    )
     data, _ = client.request(
         "POST",
         "/plataforma/api/delete-user",
@@ -3840,6 +4055,14 @@ def save_platform_config_backup(client: RejoinBIClient, output: str | None = Non
 def cmd_update_user(args: argparse.Namespace) -> int:
     client = make_client(args)
     user = resolve_user(client, args.user)
+    if all(getattr(args, field, None) is None for field in ("name", "perfil", "setor", "matricula", "contato")):
+        raise RejoinBIError("update-user requires at least one field to change.")
+    require_identity_target_confirmation(
+        args,
+        "confirm_user",
+        "a user",
+        [user.get("user_id"), user.get("id"), user.get("email")],
+    )
     payload = {
         "user_id": user.get("user_id") or user.get("id"),
         "nome": args.name if args.name is not None else user.get("nome", ""),
@@ -3862,6 +4085,14 @@ def cmd_update_user(args: argparse.Namespace) -> int:
 def cmd_set_user_permissions(args: argparse.Namespace) -> int:
     client = make_client(args)
     user = resolve_user(client, args.user)
+    if not args.permissions_file and args.permissions is None and args.denied_permissions is None:
+        raise RejoinBIError("set-user-permissions requires --permissions, --denied-permissions, or --permissions-file.")
+    require_identity_target_confirmation(
+        args,
+        "confirm_user",
+        "a user's permissions",
+        [user.get("user_id"), user.get("id"), user.get("email")],
+    )
     if args.permissions_file:
         payload = load_json_file(args.permissions_file)
         if not isinstance(payload, dict):
@@ -3871,6 +4102,10 @@ def cmd_set_user_permissions(args: argparse.Namespace) -> int:
     else:
         permissions = split_list(args.permissions)
         denied_permissions = split_list(args.denied_permissions)
+    if not permissions and not denied_permissions and not getattr(args, "allow_empty_permissions", False):
+        raise RejoinBIError(
+            "Refusing to clear all direct and denied permissions without --allow-empty-permissions."
+        )
     data, _ = client.request(
         "POST",
         "/plataforma/api/update-permissions",
@@ -3888,6 +4123,10 @@ def cmd_set_user_permissions(args: argparse.Namespace) -> int:
 def cmd_recalculate_permissions(args: argparse.Namespace) -> int:
     if not args.yes:
         raise RejoinBIError("Recalculating permissions for all users requires --yes.")
+    if str(getattr(args, "confirm_all_users", "") or "") != "RECALCULATE-ALL":
+        raise RejoinBIError(
+            "Recalculating permissions for every user requires --confirm-all-users RECALCULATE-ALL."
+        )
     client = make_client(args)
     data, _ = client.request("POST", "/plataforma/api/recalcular-permissoes", json={}, timeout=120)
     print_payload(data, as_json=args.json)
@@ -3942,6 +4181,14 @@ def cmd_create_group(args: argparse.Namespace) -> int:
 def cmd_update_group(args: argparse.Namespace) -> int:
     client = make_client(args)
     group = resolve_group(client, args.group)
+    if all(getattr(args, field, None) is None for field in ("name", "description", "permissions", "color")):
+        raise RejoinBIError("update-group requires at least one field to change.")
+    require_identity_target_confirmation(
+        args,
+        "confirm_group",
+        "a permission group",
+        [group.get("id"), group.get("nome"), group.get("name")],
+    )
     payload = {
         "id": group.get("id"),
         "nome": args.name if args.name is not None else group.get("nome", ""),
@@ -3959,6 +4206,12 @@ def cmd_delete_group(args: argparse.Namespace) -> int:
         raise RejoinBIError("Deleting groups requires --yes.")
     client = make_client(args)
     group = resolve_group(client, args.group)
+    require_identity_target_confirmation(
+        args,
+        "confirm_group",
+        "a permission group",
+        [group.get("id"), group.get("nome"), group.get("name")],
+    )
     data, _ = client.request("POST", "/plataforma/api/delete-group", json={"id": group.get("id")}, timeout=60)
     print_payload(data, as_json=args.json)
     return 0
@@ -3968,6 +4221,18 @@ def cmd_assign_user_group(args: argparse.Namespace) -> int:
     client = make_client(args)
     user = resolve_user(client, args.user)
     group = resolve_group(client, args.group)
+    require_identity_target_confirmation(
+        args,
+        "confirm_user",
+        "a user/group assignment",
+        [user.get("user_id"), user.get("id"), user.get("email")],
+    )
+    require_identity_target_confirmation(
+        args,
+        "confirm_group",
+        "a user/group assignment",
+        [group.get("id"), group.get("nome"), group.get("name")],
+    )
     data, _ = client.request(
         "POST",
         "/plataforma/api/assign-user-to-group",
@@ -6757,11 +7022,6 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         {"name": "session-status", "method": "GET", "path": "/plataforma/api/session-status", "required": True},
         {"name": "check-session", "method": "GET", "path": "/plataforma/api/check-session", "required": True},
         {"name": "workspaces", "method": "GET", "path": "/plataforma/api/containers", "required": True},
-        {"name": "users", "method": "GET", "path": "/plataforma/api/users", "required": True},
-        {"name": "sectors", "method": "GET", "path": "/plataforma/api/setores", "required": True},
-        {"name": "permissive-pages", "method": "GET", "path": "/plataforma/api/permissive-pages", "required": True},
-        {"name": "user-presence", "method": "GET", "path": "/plataforma/api/users-presence", "required": False},
-        {"name": "groups", "method": "GET", "path": "/plataforma/api/grupos", "required": False},
         {"name": "announcements", "method": "GET", "path": "/plataforma/api/anuncios/historico", "required": False},
         {"name": "platform-config", "method": "GET", "path": "/plataforma/api/platform-config", "required": True},
         {"name": "colors-config", "method": "GET", "path": "/plataforma/api/cores-config", "required": True},
@@ -6791,6 +7051,14 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         {"name": "system-database-status", "method": "GET", "path": "/plataforma/api/database/status", "required": False},
         {"name": "system-runtime-readiness", "method": "GET", "path": "/plataforma/api/runtime-readiness", "required": False},
     ]
+    if args.include_identity:
+        checks.extend([
+            {"name": "users", "method": "GET", "path": "/plataforma/api/users", "required": False},
+            {"name": "sectors", "method": "GET", "path": "/plataforma/api/setores", "required": False},
+            {"name": "permissive-pages", "method": "GET", "path": "/plataforma/api/permissive-pages", "required": False},
+            {"name": "user-presence", "method": "GET", "path": "/plataforma/api/users-presence", "required": False},
+            {"name": "groups", "method": "GET", "path": "/plataforma/api/groups", "required": False},
+        ])
     results: list[dict[str, Any]] = []
     for check in checks:
         path = path_with_query(check["path"], check.get("params"))
@@ -6840,6 +7108,7 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         "success": success,
         "base_url": client.base_url,
         "strict": bool(args.strict),
+        "identity_scope_included": bool(args.include_identity),
         "counts": {
             "total": len(results),
             "ok": sum(1 for item in results if item.get("status") == "ok"),
@@ -7240,6 +7509,13 @@ def build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument("--data-json", help="Raw JSON payload for POST/PUT/PATCH/DELETE actions")
         command_parser.add_argument("--data-file", help="JSON payload file for POST/PUT/PATCH/DELETE actions")
 
+    def add_identity_scope_argument(command_parser: argparse.ArgumentParser) -> None:
+        command_parser.add_argument(
+            "--identity-scope",
+            action="store_true",
+            help="Required acknowledgement for explicit users, permissions, or permission-groups work.",
+        )
+
     for name in ("connect", "login"):
         p = sub.add_parser(name, help="Authenticate and save Rejoin BI session cookies. Opens a browser wizard if no password is provided.")
         p.add_argument("--email")
@@ -7364,6 +7640,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_payload_args(p)
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_workspace_notification)
 
     p = sub.add_parser("workspace-input", help="Send terminal input to a running workspace")
@@ -7572,16 +7849,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("users", help="List users")
     p.add_argument("--profile", help="Filter by profile")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_users)
 
     p = sub.add_parser("sectors", aliases=["setores"], help="List unique user sectors")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_sectors)
 
     p = sub.add_parser("permission-pages", help="List system/permissive pages used by permission screens")
     p.add_argument("--permissive", action="store_true", help="Use /permissive-pages instead of /pages")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_permission_pages)
 
     p = sub.add_parser("user-presence", help="List currently online users from the edit-users screen")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_user_presence)
 
     p = sub.add_parser("download-users", help="Download users report")
@@ -7590,11 +7871,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--setor")
     p.add_argument("--search")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_download_users)
 
     p = sub.add_parser("download-permissions", help="Download permissions report")
     p.add_argument("--output", required=True)
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_download_permissions)
 
     p = sub.add_parser("menu", help="Read current authenticated menu")
@@ -7612,6 +7895,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--setor", default="Codex")
     p.add_argument("--matricula", default="")
     p.add_argument("--contato", default="")
+    p.add_argument("--yes", action="store_true", help="Confirm creation of this user")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_create_user)
 
     p = sub.add_parser("update-user", help="Edit a user profile")
@@ -7621,20 +7906,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--setor")
     p.add_argument("--matricula")
     p.add_argument("--contato")
+    p.add_argument("--confirm-user", help="Exact resolved user id or email required for the update")
+    p.add_argument("--yes", action="store_true", help="Confirm the user change")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_update_user)
 
     p = sub.add_parser("set-user-password", help="Set a user's password through the admin endpoint")
     p.add_argument("--user", required=True, help="User id or email")
     p.add_argument("--password")
+    p.add_argument("--confirm-user", help="Exact resolved user id or email required for the password change")
+    p.add_argument("--yes", action="store_true", help="Confirm the password change")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_set_user_password)
 
     p = sub.add_parser("delete-user", help="Delete a user")
     p.add_argument("--user", required=True, help="User id or email")
     p.add_argument("--yes", action="store_true")
+    p.add_argument("--confirm-user", help="Exact resolved user id or email required for deletion")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_delete_user)
 
     p = sub.add_parser("user-permissions", help="Read permissions for a user")
     p.add_argument("--user", required=True, help="User id or email")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_user_permissions)
 
     p = sub.add_parser("set-user-permissions", help="Replace direct/denied permissions for a user")
@@ -7642,13 +7936,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--permissions", help="Comma-separated or JSON array permissions to allow")
     p.add_argument("--denied-permissions", help="Comma-separated or JSON array permissions to deny")
     p.add_argument("--permissions-file", help="JSON file with permissions and denied_permissions arrays")
+    p.add_argument("--allow-empty-permissions", action="store_true", help="Allow intentionally clearing both direct and denied permissions")
+    p.add_argument("--confirm-user", help="Exact resolved user id or email required for the permission change")
+    p.add_argument("--yes", action="store_true", help="Confirm replacement of this user's permissions")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_set_user_permissions)
 
     p = sub.add_parser("recalculate-permissions", help="Recalculate permissions for all users")
     p.add_argument("--yes", action="store_true")
+    p.add_argument("--confirm-all-users", help="Must be RECALCULATE-ALL to recalculate every user")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_recalculate_permissions)
 
     p = sub.add_parser("groups", help="List permission groups")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_groups)
 
     p = sub.add_parser("create-group", help="Create a permission group")
@@ -7656,6 +7957,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--description", default="")
     p.add_argument("--permissions", default="")
     p.add_argument("--color", default="#6c757d")
+    p.add_argument("--yes", action="store_true", help="Confirm creation of this permission group")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_create_group)
 
     p = sub.add_parser("update-group", help="Update a permission group")
@@ -7664,20 +7967,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--description")
     p.add_argument("--permissions")
     p.add_argument("--color")
+    p.add_argument("--confirm-group", help="Exact resolved group id or name required for the update")
+    p.add_argument("--yes", action="store_true", help="Confirm the permission-group change")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_update_group)
 
     p = sub.add_parser("delete-group", help="Delete a permission group")
     p.add_argument("--group", required=True, help="Group id or exact name")
     p.add_argument("--yes", action="store_true")
+    p.add_argument("--confirm-group", help="Exact resolved group id or name required for deletion")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_delete_group)
 
     p = sub.add_parser("assign-user-group", help="Add or remove a user from a permission group")
     p.add_argument("--user", required=True, help="User id or email")
     p.add_argument("--group", required=True, help="Group id or exact name")
     p.add_argument("--action", choices=["add", "remove"], default="add")
+    p.add_argument("--confirm-user", help="Exact resolved user id or email required for the assignment")
+    p.add_argument("--confirm-group", help="Exact resolved group id or name required for the assignment")
+    p.add_argument("--yes", action="store_true", help="Confirm the group membership change")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_assign_user_group)
 
     p = sub.add_parser("users-for-groups", help="List users for group management")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_users_for_groups)
 
     p = sub.add_parser("announcements", help="List internal announcements")
@@ -7685,6 +7998,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_announcements)
 
     p = sub.add_parser("announcement-groups", help="List announcement target groups")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_announcement_groups)
 
     p = sub.add_parser("create-announcement", help="Create an internal announcement")
@@ -7851,6 +8165,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_payload_args(p)
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_sleep_manager)
 
     p = sub.add_parser("email", help="Manage e-mail sessions, groups, contacts, schedules, and sends")
@@ -7908,6 +8223,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     add_payload_args(p)
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_codex_keys)
 
     p = sub.add_parser("route-map", help="Inspect or refresh dynamic route mapping")
@@ -8155,6 +8471,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", help="Optional folder to write smoke-admin.json")
     p.add_argument("--strict", action="store_true", help="Fail when optional diagnostics are blocked or unavailable")
     p.add_argument("--timeout", type=int, default=60)
+    p.add_argument("--include-identity", action="store_true", help="Include users, permissions, and permission groups only with --identity-scope")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_smoke_admin)
 
     p = sub.add_parser("validate-app", help="Check a dashboard folder/manifest against Rejoin BI workspace compatibility rules")
@@ -8175,6 +8493,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("api-get", help="Run an authenticated GET against a platform API path")
     p.add_argument("--path", required=True)
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_api_get)
 
     p = sub.add_parser("api-send", help="Run an authenticated JSON request against a platform API path")
@@ -8184,6 +8503,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data-file")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.add_argument("--yes", action="store_true", help="Confirm the raw API mutation after manual review")
+    add_identity_scope_argument(p)
     p.set_defaults(func=cmd_api_post)
 
     return parser

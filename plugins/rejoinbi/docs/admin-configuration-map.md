@@ -11,6 +11,19 @@ This map follows the public Rejoin BI user manual and the analyzed Flask bluepri
 
 The plugin treats a successful login that does not request PIN as `Administrador Principal`. Saved sessions created through that no-PIN flow keep this profile hint so later `ensure` and administrative commands do not downgrade it to `Master`.
 
+## Identity Governance Boundary
+
+User records, departments, user-presence data, direct permissions, permission exports/pages, permission groups, and group membership are a protected identity-governance area. They are not part of a normal platform inventory, upload, deployment, workspace, page, RLS, messaging, BI, or diagnostic request.
+
+- Identity reads require an explicit user/permission/group request and `--identity-scope`.
+- Identity writes require `--identity-scope --yes` and the resolved target repeated with `--confirm-user` or `--confirm-group`.
+- An intentional empty direct-permission replacement additionally requires `--allow-empty-permissions`.
+- Recalculating all user permissions additionally requires `--confirm-all-users RECALCULATE-ALL`.
+- `smoke-admin` excludes this area by default. Include it only with `--include-identity --identity-scope` after the requester explicitly asks for that check.
+- `api-get` and `api-send` cannot bypass these rules for mapped identity endpoints.
+
+The complete boundary, including command families and non-authorizing requests, is in [command-scope-map.md](command-scope-map.md).
+
 ## Sidebar Tools
 
 | Manual tool | Primary API | Plugin command |
@@ -78,11 +91,12 @@ python .\scripts\rejoinbi.py restore-platform-config-defaults --yes
 List and export users or permissions:
 
 ```powershell
-python .\scripts\rejoinbi.py users
-python .\scripts\rejoinbi.py sectors
-python .\scripts\rejoinbi.py permission-pages --permissive
-python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx
-python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx
+# Run only after the requester explicitly asks for identity information.
+python .\scripts\rejoinbi.py users --identity-scope
+python .\scripts\rejoinbi.py sectors --identity-scope
+python .\scripts\rejoinbi.py permission-pages --permissive --identity-scope
+python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx --identity-scope
+python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx --identity-scope
 ```
 
 Check and repair menu/page configuration:
@@ -154,6 +168,8 @@ BI Studio exports may contain localized display names with non-ASCII slugs. Befo
 ## Safety Notes
 
 - Destructive commands keep explicit confirmation flags.
+- User, direct-permission, and permission-group operations are disabled until the requester explicitly names that identity area and the command includes `--identity-scope`.
+- Identity writes require `--yes` plus an exact resolved target confirmation; a broad diagnostic request never authorizes them.
 - Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided and validated by the platform first.
 - Secrets, passwords, PINs, and local session files must never be exported.
 - Use dedicated commands for supported modules; use `api-get` / `api-send` only for new endpoints that are not yet present in this map.

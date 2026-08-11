@@ -4,6 +4,14 @@ Codex plugin for Rejoin BI platform environments under `rejoinbi.com.br`.
 
 The plugin also manages persistent SQLite databases outside project workspaces through `managed-databases`. It can create visual-schema payloads for tables, views and indexes, inspect schema, query, read audit/diagnostics timelines, inspect a project's current SQLite database, reproduce tables/data/indexes/views/triggers in a new managed database, and validate counts and integrity. Remote clients use the platform HTTPS API with a scoped, rate-limited and revocable database token; they must never open the SQLite file through a network share.
 
+## Scope Isolation
+
+Normal workspace, upload, page, dashboard, BI Studio, Data Engine, messaging, branding, RLS, and diagnostic work cannot inspect or alter users, direct permissions, or permission groups. Those identity-governance commands are disabled by default, even for an authenticated administrator.
+
+Only use them when the requester explicitly names users, permissions, or groups and the exact purpose is clear. Identity reads require `--identity-scope`; identity writes also require `--yes` and an exact resolved `--confirm-user` or `--confirm-group` target. `smoke-admin` excludes all identity endpoints unless both `--include-identity --identity-scope` are supplied. Raw `api-get` and `api-send` receive the same protection, so they cannot bypass it.
+
+See [docs/command-scope-map.md](docs/command-scope-map.md) for the complete command-by-command boundary and confirmations.
+
 ## Codex Marketplace Compatibility
 
 This repository is a root plugin artifact, matching the structure used by Codex plugin ingestion:
@@ -40,6 +48,8 @@ Read `docs/admin-configuration-map.md` for the administrative configuration map.
 
 Read `docs/agent-operating-playbook.md` when another Codex agent, teammate, or new user needs to understand the platform from zero. It includes the full natural-language router, command families, safety rules, response patterns, and completion checklist.
 
+Read `docs/command-scope-map.md` before any identity-governance work. It distinguishes ordinary platform operation from protected user, permission, and group administration.
+
 ## Common Commands
 
 ```powershell
@@ -49,8 +59,6 @@ python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-s
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
-python .\scripts\rejoinbi.py users
-python .\scripts\rejoinbi.py groups
 python .\scripts\rejoinbi.py announcements
 python .\scripts\rejoinbi.py platform-config
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title
@@ -107,17 +115,18 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br connect --email 
 
 The `examples/codex-echarts-dashboard` folder is a polished single-page ECharts signal dashboard for quick upload and rendering checks. The `examples/codex-bi-studio-canvas` folder is the BI Studio/Data Engine reference for professional canvas dashboards.
 
-## Administrative Automation
+## Scoped Platform Administration
 
-The plugin maps the slow manual configuration areas into first-class commands. Read actions run directly after `ensure`; actions that change configuration or send messages require `--yes`.
+The plugin maps the slow manual configuration areas into first-class commands. Read actions run directly after `ensure`; actions that change configuration or send messages require `--yes`. User, permission, and permission-group administration is the exception: it is unavailable without an explicit identity request and `--identity-scope`; every write also requires `--yes` plus the resolved target confirmation described in the scope map.
 
 ```powershell
-python .\scripts\rejoinbi.py users
-python .\scripts\rejoinbi.py sectors
-python .\scripts\rejoinbi.py permission-pages --permissive
-python .\scripts\rejoinbi.py user-presence
-python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx
-python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx
+# These reads are available only after an explicit identity-governance request.
+python .\scripts\rejoinbi.py users --identity-scope
+python .\scripts\rejoinbi.py sectors --identity-scope
+python .\scripts\rejoinbi.py permission-pages --permissive --identity-scope
+python .\scripts\rejoinbi.py user-presence --identity-scope
+python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx --identity-scope
+python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx --identity-scope
 
 python .\scripts\rejoinbi.py menu
 python .\scripts\rejoinbi.py menu-maintenance check-duplicates
@@ -181,12 +190,13 @@ python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-rls-suite\
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file .\rls-config.json --yes
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file .\rls-page-mapping.json --yes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --permissions codex-rls-suite-visao
+# Only if the user explicitly requested this permission test.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --confirm-user usuario@example.com --permissions codex-rls-suite-visao --identity-scope --yes
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-data --data-file .\rls-data.json --yes
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-dimension --data-file .\rls-dimension.json --yes
 ```
 
-For a real standard-user test, generate the mailbox at `https://pt.emailfake.com/channel1/`, create the user with that exact address, read the welcome e-mail for the provisional password, attempt login to trigger the PIN, then read the PIN e-mail from the same mailbox. Connect only with `--allow-standard` for this negative/validation test. A correct result shows `plugin_profile_allowed: false` for the standard user, `accessible-pages` containing only the granted page, and `rls test-config` returning `allowed_values` only for that user's configured dimension values.
+For a real standard-user test, perform the user and direct-permission steps only when the requester explicitly asks for an identity/RLS access validation. Use `--identity-scope --yes` and the resolved `--confirm-user` on each identity write. Connect only with `--allow-standard` for this negative/validation test. A correct result shows `plugin_profile_allowed: false` for the standard user, `accessible-pages` containing only the granted page, and `rls test-config` returning `allowed_values` only for that user's configured dimension values.
 
 The RLS smoke dashboard intentionally uses fictitious local JSON so agents can verify menu, route, permission, PIN, and RLS configuration without touching real customer data. Do not use client-side filtering as the only protection for real datasets.
 
@@ -205,7 +215,7 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --pa
 
 If the plan shows the workspace is password-protected, deletion is blocked until the workspace password is passed through `--workspace-password` or `REJOINBI_WORKSPACE_PASSWORD` and validated by the platform. If the password is missing or invalid, no deletion is attempted and manual removal is required. If the plan shows pages linked from another workspace, deletion is blocked until `--allow-linked-pages` is provided. Fictitious pages cannot be deleted directly; delete the original page or workspace instead.
 
-Upload and export commands block common secret paths by default, including `.env`, private keys, token/password/credential files, local session folders, and unsafe ZIP entries. Use `--allow-sensitive-files` only after manually reviewing every file. Raw mutating API fallback through `api-send` also requires `--yes` so it cannot silently change the selected platform.
+Upload and export commands block common secret paths by default, including `.env`, private keys, token/password/credential files, local session folders, and unsafe ZIP entries. Use `--allow-sensitive-files` only after manually reviewing every file. Raw mutating API fallback through `api-send` also requires `--yes` so it cannot silently change the selected platform; mapped identity endpoints additionally require `--identity-scope`.
 
 ## Share Package
 

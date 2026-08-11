@@ -18,9 +18,16 @@ SPEC.loader.exec_module(plugin)
 
 
 class FakeUploadClient:
-    def __init__(self, *, base_url: str, fail_paths: set[str] | None = None):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        fail_paths: set[str] | None = None,
+        finish_status_failures: int = 0,
+    ):
         self.base_url = base_url
         self.fail_paths = fail_paths or set()
+        self.finish_status_failures = finish_status_failures
         self.calls: list[tuple[str, str, dict]] = []
         self.session_id = "c1d9cc97-02a5-470a-987f-7e911a781b9b"
 
@@ -40,7 +47,16 @@ class FakeUploadClient:
         if path == "/plataforma/api/upload-cancel":
             return {"success": True}, None
         if path == "/plataforma/api/upload-finish":
-            return {"success": True, "files": []}, None
+            return {"success": True, "status": "processing"}, None
+        if path.startswith("/plataforma/api/upload-finish-status?"):
+            if self.finish_status_failures:
+                self.finish_status_failures -= 1
+                raise plugin.RejoinBIError("GET /plataforma/api/upload-finish-status failed with HTTP 502: gateway")
+            return {
+                "success": True,
+                "status": "completed",
+                "result": {"success": True, "files": [{"path": "app.py"}]},
+            }, None
         raise AssertionError(f"Unexpected request: {method} {path}")
 
     def keep_session_alive(self, *, force: bool = False) -> None:
@@ -123,6 +139,46 @@ class UploadResilienceTests(unittest.TestCase):
             self.assertEqual(result["summary"]["skipped_files"], ["bad.txt"])
             self.assertEqual(result["summary"]["uploaded_files"], 1)
             self.assertTrue(any(path == "/plataforma/api/upload-skip-file" for _, path, _ in client.calls))
+
+    def test_waits_for_server_finalization_before_reporting_upload_complete(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "app.py"
+            path.write_text("print('ok')", encoding="utf-8")
+            client = FakeUploadClient(base_url=f"https://finish-{Path(temporary).name}.rejoinbi.com.br")
+
+            result = plugin.upload_entries_chunked(
+                client,
+                {"id": 57, "name": "test"},
+                [(path, "app.py")],
+                max_retries=1,
+                on_file_error="fail",
+            )
+
+            called_paths = [path for _, path, _ in client.calls]
+            self.assertIn("/plataforma/api/upload-finish", called_paths)
+            self.assertTrue(any(path.startswith("/plataforma/api/upload-finish-status?") for path in called_paths))
+            self.assertEqual(result["summary"]["finalization"]["files"][0]["path"], "app.py")
+
+    def test_finalization_status_retries_a_transient_gateway_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "app.py"
+            path.write_text("print('ok')", encoding="utf-8")
+            client = FakeUploadClient(
+                base_url=f"https://retry-finish-{Path(temporary).name}.rejoinbi.com.br",
+                finish_status_failures=1,
+            )
+
+            result = plugin.upload_entries_chunked(
+                client,
+                {"id": 58, "name": "test"},
+                [(path, "app.py")],
+                max_retries=1,
+                on_file_error="fail",
+            )
+
+            self.assertEqual(result["summary"]["finalization"]["files"][0]["path"], "app.py")
+            finish_status_calls = [path for _, path, _ in client.calls if path.startswith("/plataforma/api/upload-finish-status?")]
+            self.assertEqual(len(finish_status_calls), 2)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 {
   "name": "rejoinbi-platform",
-  "version": "0.4.33+codex.20260810142623",
-  "description": "Operate Rejoin BI environments, full admin configuration, workspaces, uploads, BI Studio, Data Engine, ECharts publishing, and safe production cleanup from Codex.",
+  "version": "0.4.33+codex.20260811150341",
+  "description": "Operate Rejoin BI workspaces, uploads, pages, BI Studio, Data Engine, and safely scoped platform administration from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",
     "url": "https://github.com/RonaldoSobrinhoEB"
@@ -17,14 +17,14 @@
     "data-engine",
     "bi-studio",
     "workspace",
-    "admin-automation",
+    "scoped-automation",
     "codex"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Rejoin BI",
-    "shortDescription": "Develop, publish, and administer Rejoin BI",
-    "longDescription": "Helps Codex connect to a full Rejoin BI address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, manage persistent databases, inspect and migrate project SQLite databases with schema/data validation, automate admin configuration including users, pages, permissions, RLS, announcements, branding, messaging, Codex keys, system tools, upload gateway, and safely preview cleanup using the authenticated API. Natural-language requests to create, manage, back up, query, tokenize, or migrate a database are routed to dedicated managed-databases workflows. Before any other platform action, validate a full address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
+    "shortDescription": "Develop, publish, and safely operate Rejoin BI",
+    "longDescription": "Helps Codex connect to a full Rejoin BI address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, manage persistent databases, inspect and migrate project SQLite databases with schema/data validation, and operate pages, branding, messaging, AI, system tools, and upload diagnostics through the authenticated API. User records, direct permissions, and permission groups are isolated from ordinary work: they are inaccessible unless the request explicitly concerns that exact area and the matching scope and confirmation flags are supplied. Natural-language requests to create, manage, back up, query, tokenize, or migrate a database are routed to dedicated managed-databases workflows. Before any other platform action, validate a full address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
     "developerName": "Ronaldo Sobrinho",
     "category": "Engineering",
     "capabilities": [

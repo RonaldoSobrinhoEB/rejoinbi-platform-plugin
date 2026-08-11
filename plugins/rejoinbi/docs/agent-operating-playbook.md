@@ -11,6 +11,8 @@ Rejoin BI has two sides that must not be confused:
 
 If a command changes the platform, it must use the explicit platform address such as `--tenant subdomain.rejoinbi.com.br`. Do not rely on the active cached address for writes unless the user explicitly chooses `--use-active-tenant` after checking the session.
 
+Users, direct permissions, and permission groups are a separate identity-governance scope. A valid administrative session does not authorize this scope. Never list, inspect, create, modify, test, or delete identities because a user asked for an upload, deployment, workspace/page/BI/RLS task, generic diagnosis, inventory, smoke test, or “administração” in the broad sense. See [command-scope-map.md](command-scope-map.md) before acting in that scope.
+
 ## Required First Step
 
 Before any real action, confirm a connected and allowed session:
@@ -56,9 +58,9 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "Data Engine", "datasets", "repositorio", "conexao banco" | Data Engine work | `studio-inventory`, then project-scoped `data-engine` read | `data-engine create-*`, `terminal-command`, `execute-code` | Project id/uid required; do not run code without user intent |
 | "criar/gerenciar banco", "SQLite gerenciado", "backup/token do banco" | Persistent managed database work | `managed-databases list`, then `get/schema/integrity/tokens` | `managed-databases create/update/query/download/create-token/revoke-token` | Master or Administrador Principal; use explicit tenant for writes |
 | "migrar/copiar o banco deste projeto" | Move the live project SQLite into managed storage | Inspect project references; `managed-databases inspect-sqlite --source ...` | `managed-databases migrate-sqlite --source ... --name ... --yes` | Preserve source; require matching row counts, per-table content hashes, schema objects, and destination integrity |
-| "usuarios", "cadastrar usuario", "editar usuario" | User admin | `users`, `sectors`, `user-presence` | `create-user`, `update-user`, `set-user-password`, `delete-user` | Profiles: Administrador Principal no PIN; others require PIN |
-| "permissoes", "acesso pagina" | Permissions | `permission-pages --permissive`, `user-permissions` | `set-user-permissions`, `recalculate-permissions` | Confirm target user/group and page permissions |
-| "grupos" | Permission groups | `groups`, `users-for-groups` | `create-group`, `update-group`, `assign-user-group`, `delete-group` | Confirm permissions and users before writes |
+| "usuarios", "cadastrar usuario", "editar usuario" | Explicit user administration only | `users --identity-scope`, `sectors --identity-scope`, `user-presence --identity-scope` | `create-user`, `update-user`, `set-user-password`, `delete-user` with `--identity-scope --yes` and exact `--confirm-user` when a user already exists | Confirm that the request specifically concerns the named user area; profiles: Administrador Principal no PIN, others require PIN |
+| "permissoes", "acesso pagina" | Explicit direct-permission work only | `permission-pages --permissive --identity-scope`, `user-permissions --identity-scope` | `set-user-permissions --identity-scope --yes --confirm-user ...`, `recalculate-permissions --identity-scope --yes --confirm-all-users RECALCULATE-ALL` | Confirm exact target/user and resulting page permissions; do not clear permissions without `--allow-empty-permissions` |
+| "grupos" | Explicit permission-group work only | `groups --identity-scope`, `users-for-groups --identity-scope` | `create-group --identity-scope --yes`; target changes also require exact `--confirm-group` and, for membership, `--confirm-user` | Confirm exact group, users, and intended access before writes |
 | "anuncios", "avisos" | Internal announcements | `announcements`, `announcement-groups` | `create-announcement`, `delete-announcement` | Confirm audience/all before creating |
 | "RLS" | Row-level security | `rls pages`, `rls page-config`, `rls config` | `rls set-config`, `rls create-data`, `rls delete-data` | Use JSON payload; validate page/user ids |
 | "configuracao IA", "IA da pagina" | Page AI context config | `ai-config --page-id ...` | `set-ai-config`, `delete-ai-config`, `cleanup-ai-config` | Requires page id and business context |
@@ -72,6 +74,27 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "exportar pacote do plugin" | Share plugin | local validation | `export-package` | Never include sessions/passwords/PINs |
 
 ## Command Families
+
+### Identity Governance (Protected)
+
+Only enter this family when the user specifically asks about users, direct permissions, or permission groups. “Analyze everything”, “fix the platform”, “run smoke”, RLS configuration, uploads, and deployments do not enter it. Reads require `--identity-scope`; writes require it together with `--yes`. Resolve the target first, then repeat the server-resolved id, e-mail, or group name in the confirmation option.
+
+```powershell
+# Explicit read after an identity request.
+python .\scripts\rejoinbi.py users --identity-scope
+python .\scripts\rejoinbi.py user-permissions --user pessoa@empresa.com --identity-scope
+
+# Exact, requested direct-permission change.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions `
+  --user pessoa@empresa.com --confirm-user pessoa@empresa.com `
+  --permissions painel-operacional --identity-scope --yes
+
+# Identity endpoints are absent from the ordinary smoke test.
+python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
+python .\scripts\rejoinbi.py smoke-admin --include-identity --identity-scope
+```
+
+For an identity endpoint that has no dedicated command, `api-get` and `api-send` still require `--identity-scope`; `api-send` also requires `--yes`. Never use the raw command as a workaround for a confirmation rule.
 
 ### Authentication
 
@@ -156,19 +179,21 @@ Changing title/logos/favicon/colors affects the Rejoin BI server and persists af
 
 ### Users, Groups, Permissions
 
+Run this section only after the requester explicitly asks for the named identity area. Do not use it as part of deploy, RLS, upload, page, messaging, or generic diagnostic work. Reads require `--identity-scope`; writes require it with `--yes` and the exact resolved target confirmation.
+
 ```powershell
-python .\scripts\rejoinbi.py users
-python .\scripts\rejoinbi.py sectors
-python .\scripts\rejoinbi.py user-presence
-python .\scripts\rejoinbi.py permission-pages --permissive
-python .\scripts\rejoinbi.py user-permissions --user user@example.com
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-user --email user@example.com --name "Nome" --perfil Administrador --setor Comercial
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-user --user user@example.com --name "Novo Nome" --perfil Master
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-password --user user@example.com
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user user@example.com --permissions "workspace,paginas"
-python .\scripts\rejoinbi.py groups
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-group --name Comercial --permissions "workspace,paginas"
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br assign-user-group --user user@example.com --group Comercial
+python .\scripts\rejoinbi.py users --identity-scope
+python .\scripts\rejoinbi.py sectors --identity-scope
+python .\scripts\rejoinbi.py user-presence --identity-scope
+python .\scripts\rejoinbi.py permission-pages --permissive --identity-scope
+python .\scripts\rejoinbi.py user-permissions --user user@example.com --identity-scope
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-user --email user@example.com --name "Nome" --perfil Administrador --setor Comercial --identity-scope --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-user --user user@example.com --confirm-user user@example.com --name "Novo Nome" --perfil Master --identity-scope --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-password --user user@example.com --confirm-user user@example.com --identity-scope --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user user@example.com --confirm-user user@example.com --permissions "workspace,paginas" --identity-scope --yes
+python .\scripts\rejoinbi.py groups --identity-scope
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-group --name Comercial --permissions "workspace,paginas" --identity-scope --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br assign-user-group --user user@example.com --confirm-user user@example.com --group Comercial --confirm-group Comercial --identity-scope --yes
 ```
 
 Standard `Usuario` should not be treated as an allowed plugin operator. Use standard users only for negative tests or dashboard access validation.
@@ -177,7 +202,8 @@ Standard `Usuario` should not be treated as an allowed plugin operator. Use stan
 
 ```powershell
 python .\scripts\rejoinbi.py announcements
-python .\scripts\rejoinbi.py announcement-groups
+# This needs explicit group-scope authorization.
+python .\scripts\rejoinbi.py announcement-groups --identity-scope
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-announcement --title "Aviso" --message "Mensagem" --all
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-announcement --announcement-id 1 --yes
 ```
@@ -205,12 +231,13 @@ End-to-end RLS smoke sequence:
 ```powershell
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-rls-suite\rejoinbi-app.json
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --permissions codex-rls-suite-visao
+# Only when the requester explicitly asks for the identity/permission part of the RLS test.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --confirm-user usuario@example.com --permissions codex-rls-suite-visao --identity-scope --yes
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-rls-suite\rejoinbi-app.json
 ```
 
-For realistic user/PIN validation, create the mailbox only through `https://pt.emailfake.com/channel1/`. Use the generated mailbox to create a standard `Usuario`, read the welcome e-mail for the provisional password, attempt the login to trigger a PIN e-mail, then complete the login with that PIN. Standard users are not valid plugin operators; `--allow-standard` is only for this test. After login, verify `accessible-pages` contains only the granted page and `rls test-config` contains only the allowed dimension values for that e-mail.
+For realistic user/PIN validation, perform mailbox creation, user creation, and page-permission changes only after the requester explicitly requests this identity validation. Use the generated mailbox to create a standard `Usuario` with `--identity-scope --yes`, read the welcome e-mail for the provisional password, attempt the login to trigger a PIN e-mail, then complete the login with that PIN. Standard users are not valid plugin operators; `--allow-standard` is only for this test. After login, verify `accessible-pages` contains only the granted page and `rls test-config` contains only the allowed dimension values for that e-mail.
 
 `examples/codex-rls-suite` uses fictitious bundled JSON for smoke tests only. Never treat client-side filtering of a static JSON file as production RLS for sensitive data; production dashboards must fetch data from an endpoint that applies RLS before returning rows.
 
