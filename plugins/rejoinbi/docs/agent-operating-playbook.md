@@ -158,11 +158,13 @@ Always follow this sequence:
 
 ```powershell
 python .\scripts\rejoinbi.py validate-app --manifest C:\path\rejoinbi-app.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --create-workspace --replace-pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --create-workspace --replace-pages --upload-mode full --operation-scope deployment
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest C:\path\rejoinbi-app.json
 ```
 
 The manifest should contain one HTML file per platform page. Do not create a dashboard SPA with internal page tabs or menus. The platform menu owns page navigation.
+
+For an existing workspace, do not silently resend the whole folder. Ask the requester whether to use full or changed-files. In changed-files mode, require the requester to confirm the exact list, then use deploy-manifest with --upload-mode changed-files and repeated --changed-file values. The plugin retains each selected file's project-relative path, leaves all other workspace files and page configuration untouched, and blocks local database files by default because they may be older than the remote data. Do not add --allow-database-files unless the requester explicitly named the exact database file and accepted that overwrite.
 
 ### Platform Branding
 

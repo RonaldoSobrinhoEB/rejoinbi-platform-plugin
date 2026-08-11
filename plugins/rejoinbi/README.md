@@ -77,6 +77,22 @@ python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json 
 python .\scripts\rejoinbi.py data-engine status --operation-scope data
 ```
 
+## Mandatory deployment choice
+
+Before any deploy or project update, the agent must ask whether the requester wants to upload the complete project again or only reviewed changed files. It must never infer that choice from a generic deployment request.
+
+The deploy-manifest command enforces this choice locally before it opens an authenticated client:
+
+~~~powershell
+# Complete project, only after the requester explicitly chose a full upload.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --upload-mode full --operation-scope deployment
+
+# Incremental deployment: only these reviewed files are uploaded at their project-relative paths.
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --upload-mode changed-files --changed-file static\app.js --changed-file templates\index.html --operation-scope deployment
+~~~
+
+Incremental mode preserves all unselected workspace files and page configuration, does not automatically restart or reselect the app, and blocks local database artifacts (.db, .sqlite, .sqlite3, .duckdb, WAL/SHM/journal files) unless the requester explicitly approves the exact file through --allow-database-files.
+
 ## Upload resilience
 
 `upload-folder-select` uploads a complete project in resumable bounded chunks. It preserves files that already exist in the workspace and never performs a clean replacement. If a file still fails after retries, the default behavior is to show the diagnosis and require a decision: retry, skip only that file, or cancel the temporary session.

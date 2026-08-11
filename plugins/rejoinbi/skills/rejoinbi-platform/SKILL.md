@@ -38,6 +38,20 @@ Before **every remote platform command**, identify exactly one domain and pass i
 - For `api-get` or `api-send`, derive the scope from the endpoint, repeat the exact path in `--confirm-api-path`, and never call raw API just to avoid a dedicated-command restriction.
 - Read `docs/command-scope-map.md` before choosing a scope. The command catalog there is test-checked against every parser command.
 
+## Mandatory Deployment Upload Choice
+
+Whenever the requester asks to deploy, publish, update, or upload a project, stop before any remote deployment/upload command and ask this decision in the requester's language:
+
+> Você quer reenviar o projeto inteiro ou subir somente os arquivos alterados? No modo de arquivos alterados, informe ou confirme a lista dos arquivos para preservar os demais arquivos e o banco já existente no workspace.
+
+- Never infer this answer from phrases such as “faz o deploy”, “atualiza o projeto”, “sobe de novo”, or from a local folder's contents.
+- The deploy-manifest command mechanically rejects an upload without --upload-mode full or --upload-mode changed-files. The answer must be captured in that exact flag before the command can contact the platform.
+- For full, validate the folder and use --upload-mode full. This intentionally overwrites same-named project files and can overwrite a remote database if that database exists in the local project.
+- For changed-files, require a reviewed, explicit --changed-file for every file. The plugin uses its path relative to app_root, exactly like a careful manual upload, and preserves every workspace file that was not selected.
+- Never generate the changed-file list by guesswork. A local diff may be used only to propose a list; show the list and wait for the requester to confirm it before uploading.
+- Incremental deployment blocks .db, .sqlite, .sqlite3, .duckdb, and SQLite journal/WAL/SHM files by default. Allow one only with --allow-database-files after the requester explicitly names that exact database file and accepts overwriting the remote copy.
+- Incremental deployment does not reselect the app entrypoint, restart the workspace, or alter platform pages by default. Use --restart-after-upload or --sync-pages only when the requester explicitly asks for those additional effects.
+
 ## Natural Language Intent Map
 
 Use this map before asking clarifying questions. When the request is broad, unclear, or from a user who does not know Rejoin BI, also read `docs/agent-operating-playbook.md`. When a platform address is not connected yet, run `ensure` first; if no address was provided, ask only for the full address in the format `subdomain.rejoinbi.com.br`.

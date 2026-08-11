@@ -82,6 +82,21 @@ SENSITIVE_PATH_PATTERNS = (
     "*secret*",
     "*token*",
 )
+DEPLOY_UPLOAD_MODES = ("full", "changed-files")
+DATABASE_UPLOAD_SUFFIXES = (
+    ".db",
+    ".db-journal",
+    ".db-shm",
+    ".db-wal",
+    ".db3",
+    ".duckdb",
+    ".s3db",
+    ".sqlite",
+    ".sqlite-journal",
+    ".sqlite-shm",
+    ".sqlite-wal",
+    ".sqlite3",
+)
 
 try:
     if hasattr(sys.stdout, "reconfigure"):
@@ -2864,6 +2879,105 @@ def build_individual_upload_entries(args: argparse.Namespace) -> list[tuple[Path
     return entries
 
 
+def database_upload_reason(path: Path) -> str:
+    """Identify local database artifacts that are unsafe to include by inference."""
+    filename = path.name.casefold()
+    for suffix in DATABASE_UPLOAD_SUFFIXES:
+        if filename.endswith(suffix):
+            return f"database artifact '{path.name}'"
+    return ""
+
+
+def build_deploy_changed_upload_entries(
+    args: argparse.Namespace,
+    app_root: Path,
+) -> list[tuple[Path, str]]:
+    """Resolve explicitly selected incremental deployment files inside the app root.
+
+    The default destination is always the path relative to the project root. This
+    gives the same folder-preserving behaviour as a careful manual upload while
+    keeping every other workspace file untouched.
+    """
+    raw_files = list(getattr(args, "changed_file", None) or [])
+    if not raw_files:
+        raise RejoinBIError(
+            "Incremental deployment requires one or more --changed-file values. "
+            "List only the files the user reviewed and approved for upload."
+        )
+
+    root = app_root.expanduser().resolve()
+    if not root.is_dir():
+        raise RejoinBIError(f"Folder not found: {root}")
+    target_by_source = parse_upload_path_mappings(
+        getattr(args, "changed_target_path", None),
+        label="--changed-target-path",
+        target_is_file=True,
+    )
+    entries: list[tuple[Path, str]] = []
+    seen_sources: set[Path] = set()
+    used_targets: dict[str, Path] = {}
+
+    for raw_value in raw_files:
+        raw_path = str(raw_value or "").strip()
+        if not raw_path:
+            raise RejoinBIError("--changed-file cannot be empty.")
+        supplied_path = Path(raw_path).expanduser()
+        source_path = (supplied_path if supplied_path.is_absolute() else root / supplied_path).resolve()
+        if not source_path.is_file():
+            raise RejoinBIError(f"Changed file not found: {source_path}")
+        try:
+            relative_path = source_path.relative_to(root)
+        except ValueError as exc:
+            raise RejoinBIError(
+                f"Changed file is outside the project root and cannot be deployed incrementally: {source_path}"
+            ) from exc
+        if source_path in seen_sources:
+            raise RejoinBIError(f"Changed file was selected more than once: {source_path}")
+        seen_sources.add(source_path)
+
+        sensitive_reason = sensitive_path_reason(relative_path)
+        if sensitive_reason and not getattr(args, "allow_sensitive_files", False):
+            raise RejoinBIError(
+                f"Refusing to upload sensitive-looking changed file {source_path}: {sensitive_reason}. "
+                "Use --allow-sensitive-files only after manual review."
+            )
+        database_reason = database_upload_reason(relative_path)
+        if database_reason and not getattr(args, "allow_database_files", False):
+            raise RejoinBIError(
+                f"Incremental deployment blocked {database_reason}. Local databases can be older than the "
+                "workspace copy. Do not include it unless the user explicitly approved that exact file; then "
+                "use --allow-database-files."
+            )
+
+        relative_target = normalize_upload_relative_path(
+            relative_path.as_posix(),
+            field="changed file relative path",
+        )
+        explicit_target = None
+        for candidate in (
+            raw_path,
+            raw_path.replace("\\", "/"),
+            str(source_path),
+            str(source_path).replace("\\", "/"),
+            relative_target,
+            source_path.name,
+        ):
+            if candidate in target_by_source:
+                explicit_target = target_by_source[candidate]
+                break
+        target = explicit_target or relative_target
+        target_key = target.casefold()
+        previous_source = used_targets.get(target_key)
+        if previous_source and previous_source != source_path:
+            raise RejoinBIError(
+                f"Two changed files map to the same workspace path ({target}): "
+                f"{previous_source} and {source_path}. Use --changed-target-path to choose distinct destinations."
+            )
+        used_targets[target_key] = source_path
+        entries.append((source_path, target))
+    return entries
+
+
 def upload_error_retryable(error: Exception) -> bool:
     status = _http_status_from_error(str(error))
     return status is None or status in {408, 409, 425, 429} or status >= 500
@@ -5079,6 +5193,46 @@ def require_yes(args: argparse.Namespace, message: str) -> None:
         raise RejoinBIError(message)
 
 
+def require_deploy_upload_mode(args: argparse.Namespace) -> str:
+    """Block a manifest deployment until its upload scope was explicitly chosen."""
+    if getattr(args, "skip_upload", False):
+        raise RejoinBIError(
+            "deploy-manifest cannot bypass the mandatory upload choice with --skip-upload. "
+            "Use a dedicated page command for page-only changes, or ask the user to choose "
+            "--upload-mode full or --upload-mode changed-files."
+        )
+
+    upload_mode = str(getattr(args, "upload_mode", "") or "").strip().lower()
+    if upload_mode not in DEPLOY_UPLOAD_MODES:
+        raise RejoinBIError(
+            "Deployment blocked before contacting the platform. Ask the user which upload they want, then "
+            "pass --upload-mode full to send the complete project again or --upload-mode changed-files to "
+            "send only explicitly reviewed --changed-file paths. Never infer this choice."
+        )
+
+    changed_files = list(getattr(args, "changed_file", None) or [])
+    changed_targets = list(getattr(args, "changed_target_path", None) or [])
+    if upload_mode == "full":
+        if changed_files or changed_targets or getattr(args, "allow_database_files", False):
+            raise RejoinBIError(
+                "--changed-file, --changed-target-path, and --allow-database-files are only valid with "
+                "--upload-mode changed-files."
+            )
+        return upload_mode
+
+    if not changed_files:
+        raise RejoinBIError(
+            "--upload-mode changed-files requires one or more --changed-file values. "
+            "Do not infer modified files from the whole project without the user's review."
+        )
+    if getattr(args, "replace_pages", False) and not getattr(args, "sync_pages", False):
+        raise RejoinBIError(
+            "Incremental deployment does not alter pages by default. Add --sync-pages before using "
+            "--replace-pages, or upload only the changed files."
+        )
+    return upload_mode
+
+
 def required_arg(args: argparse.Namespace, attr: str, label: str | None = None) -> str:
     value = getattr(args, attr, None)
     if value in (None, ""):
@@ -7088,6 +7242,7 @@ def create_page_from_manifest(
 
 
 def cmd_deploy_manifest(args: argparse.Namespace) -> int:
+    upload_mode = require_deploy_upload_mode(args)
     manifest, manifest_path = load_manifest(args.manifest)
     bind_manifest_tenant(args, manifest)
     text_errors = manifest_text_integrity_errors(manifest)
@@ -7107,6 +7262,16 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     workspace_password = args.workspace_password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
     create_workspace = args.create_workspace or manifest_bool(workspace_cfg, "create", False)
     replace_pages = args.replace_pages or manifest_bool(manifest, "replace_pages", False)
+    if upload_mode == "changed-files" and create_workspace:
+        raise RejoinBIError(
+            "Incremental deployment cannot create a workspace because it would contain only part of the project. "
+            "Choose --upload-mode full for a new workspace."
+        )
+    if upload_mode == "changed-files" and replace_pages and not getattr(args, "sync_pages", False):
+        raise RejoinBIError(
+            "Incremental deployment does not alter pages by default. Add --sync-pages before using "
+            "replace_pages from the command or manifest, or upload only the changed files."
+        )
 
     workspace = create_workspace_if_needed(
         client,
@@ -7119,7 +7284,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     validation = validate_workspace_if_password(client, workspace, workspace_password)
 
     upload_result = None
-    if not args.skip_upload:
+    if upload_mode == "full":
         upload_result = upload_folder_with_options(
             client,
             workspace,
@@ -7137,22 +7302,57 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             max_retries=args.max_retries,
             max_recovery_retries=args.max_recovery_retries,
         )
-
-    page_results = []
-    for page in pages:
-        if not isinstance(page, dict):
-            raise RejoinBIError(f"Invalid page entry in manifest: {page}")
-        page_results.append(create_page_from_manifest(
+        upload_result["mode"] = "full"
+        upload_result["preserved_existing_files"] = True
+    elif upload_mode == "changed-files":
+        changed_entries = build_deploy_changed_upload_entries(args, app_root)
+        changed_upload = upload_entries_chunked(
             client,
             workspace,
-            page,
-            workspace_password=workspace_password,
-            replace=replace_pages,
-        ))
+            changed_entries,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            on_file_error=args.on_file_error,
+            max_recovery_retries=args.max_recovery_retries,
+        )
+        restart = None
+        if getattr(args, "restart_after_upload", False):
+            restart, _ = client.request(
+                "POST",
+                f"/plataforma/api/containers/{workspace.get('id')}/restart",
+                timeout=args.timeout,
+            )
+        upload_result = {
+            "mode": "changed-files",
+            "manual_upload_equivalent": True,
+            "preserved_existing_files": True,
+            "selected_files": [target for _source, target in changed_entries],
+            "upload": changed_upload["summary"],
+            "restart": restart,
+            "automatic_app_reselection": False,
+            "note": (
+                "Only the explicitly selected files were added or replaced at their project-relative paths. "
+                "The workspace was not cleaned and the app entrypoint was not reselected automatically."
+            ),
+        }
 
-    menu_refresh = refresh_menu_caches(client)
+    sync_pages = upload_mode == "full" or bool(getattr(args, "sync_pages", False))
+    page_results = []
+    if sync_pages:
+        for page in pages:
+            if not isinstance(page, dict):
+                raise RejoinBIError(f"Invalid page entry in manifest: {page}")
+            page_results.append(create_page_from_manifest(
+                client,
+                workspace,
+                page,
+                workspace_password=workspace_password,
+                replace=replace_pages,
+            ))
+
+    menu_refresh = refresh_menu_caches(client) if sync_pages else None
     page_readiness = None
-    if not args.no_page_readiness:
+    if sync_pages and not args.no_page_readiness:
         page_readiness = wait_manifest_pages_ready(
             client,
             pages,
@@ -7168,6 +7368,11 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
         "tenant": tenant_host_from_base_url(client.base_url),
         "workspace": {"id": workspace.get("id"), "name": workspace.get("name"), "status": workspace.get("deploy_status")},
         "workspace_validation": validation,
+        "deployment": {
+            "upload_mode": upload_mode,
+            "pages_synchronized": sync_pages,
+            "pages_preserved": not sync_pages,
+        },
         "upload": upload_result,
         "pages": page_results,
         "menu_refresh": menu_refresh,
@@ -8675,14 +8880,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_rls_export)
 
-    p = sub.add_parser("deploy-manifest", help="Create/validate workspace, upload an app folder, and create all pages from a manifest")
+    p = sub.add_parser("deploy-manifest", help="Deploy a manifest after an explicit full-project or changed-files upload choice")
     p.add_argument("--manifest", required=True)
     p.add_argument("--path", help="App root folder. Defaults to manifest folder or manifest.app_root.")
     p.add_argument("--workspace", help="Workspace id/name override")
     p.add_argument("--workspace-password")
     p.add_argument("--create-workspace", action="store_true")
     p.add_argument("--replace-pages", action="store_true")
-    p.add_argument("--skip-upload", action="store_true")
+    p.add_argument("--skip-upload", action="store_true", help="Blocked for manifest deployment; use a dedicated page command for page-only work")
+    p.add_argument("--upload-mode", choices=DEPLOY_UPLOAD_MODES, help="Required before deployment: full uploads the project; changed-files uploads only explicit files")
+    p.add_argument("--changed-file", action="append", help="File changed under --path/app_root to upload in changed-files mode; repeat for each approved file")
+    p.add_argument("--changed-target-path", action="append", help="Optional source=workspace/path.ext override for one changed file")
+    p.add_argument("--allow-database-files", action="store_true", help="Allow explicitly selected local database files in changed-files mode after user approval")
+    p.add_argument("--restart-after-upload", action="store_true", help="Restart the existing workspace after a changed-files upload")
+    p.add_argument("--sync-pages", action="store_true", help="Also apply manifest pages after a changed-files upload; default keeps existing page configuration untouched")
     p.add_argument("--startup-mode", choices=["file", "command", "static"])
     p.add_argument("--selected-file", default="")
     p.add_argument("--startup-command", default="")
