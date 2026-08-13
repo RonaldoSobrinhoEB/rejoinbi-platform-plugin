@@ -33,6 +33,16 @@ def scoped_args(command: str, **overrides) -> argparse.Namespace:
 
 
 class IdentityGovernanceScopeTests(unittest.TestCase):
+    def test_profile_hierarchy_is_explicit_and_never_elevates_standard_user(self):
+        self.assertEqual(plugin.profile_hierarchy("Administrador Principal")["tier"], 4)
+        self.assertEqual(plugin.profile_hierarchy("Master")["tier"], 3)
+        self.assertEqual(plugin.profile_hierarchy("Administrador")["tier"], 2)
+        self.assertEqual(plugin.profile_hierarchy("Usuário")["tier"], 1)
+        self.assertTrue(plugin.is_allowed_identity({"profile": "Administrador Principal", "permissions": []}))
+        self.assertTrue(plugin.is_allowed_identity({"profile": "Master", "permissions": []}))
+        self.assertTrue(plugin.is_allowed_identity({"profile": "Administrador", "permissions": []}))
+        self.assertFalse(plugin.is_allowed_identity({"profile": "Usuário", "permissions": ["*"]}))
+
     def test_identity_reads_are_blocked_without_explicit_scope(self):
         with self.assertRaisesRegex(plugin.RejoinBIError, "Identity governance is disabled"):
             plugin.ensure_identity_scope_for_command(scoped_args("users"))

@@ -1,0 +1,25 @@
+{
+  "language": "pt-BR",
+  "workspace": {
+    "name": "codex-rls-smoke-20260522",
+    "create": true
+  },
+  "upload": {
+    "path": ".",
+    "startup_mode": "static",
+    "selected_file": "visao-rls.html",
+    "auto_start": true
+  },
+  "replace_pages": true,
+  "pages": [
+    {
+      "id": "codex-rls-suite-visao",
+      "name": "Visão RLS por Email",
+      "route": "visao-rls",
+      "file": "visao-rls.html",
+      "description": "Painel de telecom para validar Row-Level Security por email autenticado.",
+      "icon": "fas fa-shield-alt",
+      "rls": true
+    }
+  ]
+}

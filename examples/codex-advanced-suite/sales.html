@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Platform Page - Sales</title>
+  <link rel="stylesheet" href="./assets/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+</head>
+<body data-page="sales">
+  <main class="dashboard-page">
+    <header class="page-head">
+      <div class="title-block">
+        <p class="eyebrow">Commercial command</p>
+        <h1 id="pageTitle">Sales Intelligence</h1>
+        <p class="deck">Pipeline quality, opportunity focus and conversion movement for the selected business context.</p>
+      </div>
+      <section class="filters" aria-label="Filters">
+        <label><span>Period</span><select id="periodFilter"><option>2026 Q1</option><option selected>2026 Q2</option><option>2026 Q3</option></select></label>
+        <label><span>Unit</span><select id="unitFilter"><option>All units</option><option>ADN</option><option>Livon</option><option>Instituto</option></select></label>
+      </section>
+    </header>
+    <section id="metrics" class="metrics"></section>
+    <section id="view" class="view"></section>
+  </main>
+  <script src="./assets/app.js"></script>
+</body>
+</html>

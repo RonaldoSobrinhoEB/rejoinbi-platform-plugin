@@ -65,6 +65,35 @@ class DeploymentUploadChoiceTests(unittest.TestCase):
 
             self.assertEqual(entries, [(changed.resolve(), "static/app.js")])
 
+    def test_data_confirmation_distinguishes_project_config_from_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "project"
+            root.mkdir(parents=True)
+            package_json = root / "package.json"
+            package_json.write_text("{}", encoding="utf-8")
+            data_file = root / "data" / "records.json"
+            data_file.parent.mkdir(parents=True)
+            data_file.write_text("[]", encoding="utf-8")
+
+            args = deploy_args(
+                upload_mode="changed-files",
+                changed_file=["package.json"],
+            )
+            self.assertEqual(
+                plugin.confirm_sensitive_data_files(args, [(package_json, "package.json")], context="test"),
+                [],
+            )
+            with self.assertRaisesRegex(plugin.RejoinBIError, "--allow-data-files"):
+                plugin.confirm_sensitive_data_files(args, [(data_file, "data/records.json")], context="test")
+
+            args.allow_data_files = True
+            findings = plugin.confirm_sensitive_data_files(
+                args,
+                [(data_file, "data/records.json")],
+                context="test",
+            )
+            self.assertEqual(findings[0]["target"], "data/records.json")
+
     def test_incremental_files_block_database_without_explicit_opt_in(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "project"

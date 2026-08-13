@@ -1,0 +1,9 @@
+{
+  "paginas": [
+    {
+      "id": "codex-rls-suite-visao",
+      "usuario": ["email_consultor"],
+      "rls": ["regiao"]
+    }
+  ]
+}

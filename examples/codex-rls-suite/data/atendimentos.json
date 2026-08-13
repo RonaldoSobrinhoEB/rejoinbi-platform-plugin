@@ -1,0 +1,10 @@
+[
+  { "email_consultor": "norte@empresa.test", "regiao": "Norte", "plano": "Fibra 600", "clientes": 1840, "receita": 248400, "churn": 0.021, "sla": 0.982 },
+  { "email_consultor": "norte@empresa.test", "regiao": "Norte", "plano": "Empresarial", "clientes": 312, "receita": 167200, "churn": 0.018, "sla": 0.976 },
+  { "email_consultor": "sul@empresa.test", "regiao": "Sul", "plano": "Fibra 400", "clientes": 2210, "receita": 286900, "churn": 0.026, "sla": 0.971 },
+  { "email_consultor": "sul@empresa.test", "regiao": "Sul", "plano": "Fibra 800", "clientes": 940, "receita": 198700, "churn": 0.019, "sla": 0.984 },
+  { "email_consultor": "sudeste@empresa.test", "regiao": "Sudeste", "plano": "Fibra 600", "clientes": 4020, "receita": 598800, "churn": 0.017, "sla": 0.989 },
+  { "email_consultor": "sudeste@empresa.test", "regiao": "Sudeste", "plano": "Combo Premium", "clientes": 1720, "receita": 489600, "churn": 0.014, "sla": 0.991 },
+  { "email_consultor": "centro@empresa.test", "regiao": "Centro-Oeste", "plano": "Fibra 300", "clientes": 1190, "receita": 139230, "churn": 0.031, "sla": 0.963 },
+  { "email_consultor": "nordeste@empresa.test", "regiao": "Nordeste", "plano": "Fibra 500", "clientes": 2640, "receita": 329600, "churn": 0.024, "sla": 0.974 }
+]
