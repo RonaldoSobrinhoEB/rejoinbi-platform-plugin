@@ -114,10 +114,10 @@ BI Studio canvas dashboards should be built like production BI products, not qui
 - Upload the project root folder, not a nested wrapper folder.
 - Before a deploy, ask the requester to choose: resend the complete project or upload only reviewed changed files. Never infer this from “deploy”, “update”, or a local folder scan.
 - The deploy-manifest command requires --upload-mode full or --upload-mode changed-files before it contacts the platform. Full mode can overwrite remote files that have the same paths; changed-files mode sends only explicit --changed-file paths and preserves every other workspace file.
-- For changed-files mode, retain each file's path relative to the project root. Do not include a local .db, .sqlite, .sqlite3, .duckdb, journal, WAL, or SHM file unless the requester explicitly approves that exact file with --allow-database-files.
+- For changed-files mode, retain each file's path relative to the project root. The plugin applies only those selected paths after server finalization and never cleans the rest of the workspace. Do not include a local database or recognized data file unless the requester explicitly approves the exact file with `--allow-database-files` and/or `--allow-data-files`.
 - Changed-files mode does not restart the workspace, reselect app.py, or alter pages unless the requester separately confirms --restart-after-upload or --sync-pages.
 - Exclude `.git`, `venv`, `.venv`, `__pycache__`, `node_modules`, `.pytest_cache`, build folders, temporary files, and secrets.
-- For protected workspaces, request the password before every workspace-specific operation and pass it as `--workspace-password` on that same command. The plugin validates it again for that operation; a previous server-session unlock is never sufficient.
+- For protected workspaces, validate the workspace password before uploading or creating pages.
 - After upload, check workspace status and logs if the container is not running.
 
 ## Validation Commands

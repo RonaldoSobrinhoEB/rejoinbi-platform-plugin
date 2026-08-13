@@ -49,6 +49,12 @@ DEFAULT_DOMAIN = "rejoinbi.com.br"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
+PROFILE_HIERARCHY = {
+    "administrador principal": {"label": "Administrador Principal", "tier": 4},
+    "master": {"label": "Master", "tier": 3},
+    "administrador": {"label": "Administrador", "tier": 2},
+    "usuario": {"label": "Usuário", "tier": 1},
+}
 ALLOWED_PROFILE_KEYS = {"administrador principal", "master", "administrador"}
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SENSITIVE_PATH_NAMES = {
@@ -96,6 +102,28 @@ DATABASE_UPLOAD_SUFFIXES = (
     ".sqlite-shm",
     ".sqlite-wal",
     ".sqlite3",
+)
+DATA_UPLOAD_SUFFIXES = (
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".ndjson",
+    ".parquet",
+    ".feather",
+    ".arrow",
+    ".avro",
+    ".orc",
+    ".xlsx",
+    ".xls",
+    ".xlsm",
+    ".ods",
+    ".pkl",
+    ".pickle",
+    ".npy",
+    ".npz",
+    ".h5",
+    ".hdf5",
 )
 
 try:
@@ -412,41 +440,6 @@ WORKSPACE_PASSWORD_VALUE_FIELDS = (
     "password_hash",
     "senha_hash",
 )
-WORKSPACE_PASSWORD_PRECHECK_EXEMPT_COMMANDS = {
-    "connect",
-    "login",
-    "ensure",
-    "ensure-connected",
-    "tenant",
-    "auth",
-    "browser-login",
-    "status",
-    "workspaceall",
-    "validate-workspace",
-    "create-workspace",
-    "validate-app",
-    "bi-normalize-export",
-    "export-package",
-}
-# These commands have no workspace selector. They can only run while the tenant has
-# no password-protected workspace, otherwise the API call could disclose data from a
-# workspace for which the current operation did not receive a password.
-UNSCOPED_WORKSPACE_ACCESS_COMMANDS = {
-    "accessible-pages",
-    "delete-page",
-    "page-maintenance",
-    "pages",
-    "resolve-page",
-    "set-page-order",
-    "smoke-pages",
-    "workspace-stop-all",
-    "update-page",
-    "ai-config",
-    "set-ai-config",
-    "delete-ai-config",
-    "rls",
-    "rls-export",
-}
 DATA_ENGINE_PROJECT_ACTIONS = {
     "session-status",
     "db-connections",
@@ -1177,7 +1170,6 @@ def make_client(args: argparse.Namespace) -> RejoinBIClient:
     client = RejoinBIClient(base_url, operation_scope=operation_scope)
     if getattr(args, "command", "") not in SAFE_PROFILE_COMMANDS:
         require_allowed_profile(client, args)
-    enforce_workspace_password_precheck(client, args)
     return client
 
 
@@ -1194,17 +1186,6 @@ def secret_value(cli_value: str | None, env_name: str, label: str, *, required: 
     if required:
         raise RejoinBIError(f"{label} not provided. Use --{label.lower()} or set {env_name}.")
     return ""
-
-
-def explicit_workspace_password(cli_value: str | None, *, label: str = "workspace-password") -> str:
-    """Read a workspace password only from this operation, never from ambient env/session state."""
-    if cli_value:
-        return cli_value
-    if sys.stdin.isatty():
-        value = getpass.getpass(f"{label}: ")
-        if value:
-            return value
-    raise RejoinBIError(f"{label} not provided. Pass it explicitly for this operation.")
 
 
 def has_secret(cli_value: str | None, env_name: str) -> bool:
@@ -2254,7 +2235,7 @@ def response_requires_pin(payload: Any) -> bool:
 
 def extract_session_identity(payload: Any, *, admin_principal_hint: bool = False) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        return {"email": "", "profile": "", "permissions": []}
+        return {"email": "", "profile": "", "permissions": [], "profile_tier": 0, "profile_recognized": False}
     session_data = payload.get("session_data") if isinstance(payload.get("session_data"), dict) else {}
     permissions = payload.get("user_permissions") or session_data.get("user_permissions") or []
     if isinstance(permissions, str):
@@ -2269,19 +2250,27 @@ def extract_session_identity(payload: Any, *, admin_principal_hint: bool = False
     elif not profile and ("*" in permissions or "admin_principal" in permissions):
         profile = "Administrador Principal"
         profile_source = "permissions"
+    hierarchy = profile_hierarchy(profile)
     return {
         "email": payload.get("user_email") or session_data.get("user_email") or "",
         "profile": profile,
         "profile_source": profile_source,
         "permissions": permissions,
         "logged_in": bool(payload.get("logged_in", True) or session_data.get("user_email")),
+        "profile_tier": hierarchy["tier"],
+        "profile_recognized": hierarchy["recognized"],
     }
 
 
 def is_allowed_identity(identity: dict[str, Any]) -> bool:
     profile_key = normalize_text(identity.get("profile"))
+    # A permission wildcard cannot elevate a recognized lower-level profile.
+    # Only the platform profile hierarchy authorizes the plugin session; the
+    # platform API remains authoritative for each operation's actual rights.
+    if profile_key in PROFILE_HIERARCHY:
+        return profile_key in ALLOWED_PROFILE_KEYS
     permissions = [normalize_text(item) for item in identity.get("permissions") or []]
-    return profile_key in ALLOWED_PROFILE_KEYS or "*" in permissions or "admin_principal" in permissions
+    return not profile_key and ("*" in permissions or "admin_principal" in permissions)
 
 
 def require_allowed_profile(
@@ -2302,6 +2291,9 @@ def require_allowed_profile(
         if saved_admin_principal:
             identity["profile"] = "Administrador Principal"
             identity["profile_source"] = "saved_no_pin_login"
+            hierarchy = profile_hierarchy(identity["profile"])
+            identity["profile_tier"] = hierarchy["tier"]
+            identity["profile_recognized"] = hierarchy["recognized"]
     if getattr(args, "allow_standard", False):
         return identity
     if not is_allowed_identity(identity):
@@ -2309,7 +2301,8 @@ def require_allowed_profile(
         email = identity.get("email") or "unknown"
         raise RejoinBIError(
             f"Profile '{profile}' for {email} is not allowed. "
-            "This plugin accepts only Administrador Principal, Master, or Administrador."
+            "Hierarchy is enforced as Administrador Principal > Master > Administrador > Usuário; "
+            "this plugin accepts only the first three levels for administrative/platform operations."
         )
     return identity
 
@@ -2429,6 +2422,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         if saved_admin_principal:
             identity["profile"] = "Administrador Principal"
             identity["profile_source"] = "saved_no_pin_login"
+            hierarchy = profile_hierarchy(identity["profile"])
+            identity["profile_tier"] = hierarchy["tier"]
+            identity["profile_recognized"] = hierarchy["recognized"]
     if isinstance(data, dict):
         data = {
             **data,
@@ -2457,120 +2453,6 @@ def resolve_workspace(client: RejoinBIClient, selector: str) -> dict[str, Any]:
         if workspace_matches(item, selector):
             return item
     raise RejoinBIError(f"Workspace not found: {selector}")
-
-
-def workspace_selector_from_args(args: argparse.Namespace) -> str:
-    """Return the explicit workspace selector supplied to one command.
-
-    `container_id` is only accepted as a legacy selector for commands that expose
-    it. It is resolved through the same password gate as `--workspace`.
-    """
-    return safe_str(getattr(args, "workspace", None) or getattr(args, "container_id", None))
-
-
-def validate_workspace_password(
-    client: RejoinBIClient,
-    workspace: dict[str, Any],
-    password: str,
-) -> dict[str, Any]:
-    """Validate one password for this operation; never trust an old server unlock."""
-    if not password:
-        raise RejoinBIError("Workspace password was not provided for this operation.")
-    data, _ = client.request(
-        "POST",
-        "/plataforma/api/validate-container-password",
-        json={"container_id": workspace.get("id"), "password": password},
-        timeout=60,
-    )
-    result = data if isinstance(data, dict) else {"raw": data}
-    for status_field in ("success", "valid", "authorized", "validated"):
-        if status_field in result and not truthy_flag(result.get(status_field)):
-            raise RejoinBIError("Workspace password was rejected by Rejoin BI. No workspace operation was performed.")
-    client.save_session()
-    return result
-
-
-def require_workspace_access(
-    client: RejoinBIClient,
-    workspace: dict[str, Any],
-    *,
-    password: str,
-    command: str,
-) -> dict[str, Any] | None:
-    """Block protected workspaces unless this exact command supplies its password."""
-    if not workspace_password_protected(workspace):
-        return None
-    if not password:
-        workspace_name = safe_str(workspace.get("name")) or safe_str(workspace.get("id")) or "selecionado"
-        raise RejoinBIError(
-            f"Workspace protegido por senha: {workspace_name}. O comando {command} foi bloqueado antes de acessar "
-            "arquivos, logs, páginas ou configurações. Solicite a senha ao usuário e informe --workspace-password "
-            "nesta mesma operação; uma validação antiga da sessão não é reutilizada pelo plugin."
-        )
-    return validate_workspace_password(client, workspace, password)
-
-
-def block_unscoped_workspace_access(client: RejoinBIClient, command: str) -> None:
-    protected = [item for item in load_workspaces(client) if workspace_password_protected(item)]
-    if not protected:
-        return
-    labels = [safe_str(item.get("name")) or safe_str(item.get("id")) for item in protected]
-    raise RejoinBIError(
-        f"O comando global {command} foi bloqueado porque este tenant possui workspace(s) protegido(s): "
-        f"{', '.join(labels)}. Use um comando limitado a --workspace e informe --workspace-password; "
-        "o plugin não executa operações globais que possam atravessar um workspace protegido."
-    )
-
-
-def raw_api_targets_workspace_data(path: str) -> bool:
-    """Raw API calls cannot prove a workspace password, so deny workspace-capable paths."""
-    normalized = normalized_api_path(path).lower()
-    return (
-        api_path_operation_scope(normalized) in {"workspace", "upload", "pages", "rls"}
-        or normalized.startswith("/plataforma/api/ai-config")
-        or normalized.startswith("/plataforma/api/container-content")
-        or normalized.startswith("/plataforma/api/stop-all")
-    )
-
-
-def enforce_workspace_password_precheck(client: RejoinBIClient, args: argparse.Namespace) -> None:
-    """Apply the protected-workspace gate before every command handler can call an API."""
-    command = safe_str(getattr(args, "command", ""))
-    if command in WORKSPACE_PASSWORD_PRECHECK_EXEMPT_COMMANDS:
-        return
-    if command in {"api-get", "api-send"}:
-        if raw_api_targets_workspace_data(safe_str(getattr(args, "path", ""))):
-            raise RejoinBIError(
-                "Raw API access to workspace, upload, page, RLS, or AI-config routes is blocked. "
-                "Use the dedicated command with --workspace and --workspace-password so Rejoin BI validates "
-                "the protected workspace for this operation."
-            )
-        return
-    selector = workspace_selector_from_args(args)
-    if selector:
-        workspace = resolve_workspace(client, selector)
-        require_workspace_access(
-            client,
-            workspace,
-            password=safe_str(getattr(args, "workspace_password", "")),
-            command=command,
-        )
-        if command == "delete-workspace":
-            other_protected = [
-                item
-                for item in load_workspaces(client)
-                if not same_id(item.get("id"), workspace.get("id")) and workspace_password_protected(item)
-            ]
-            if other_protected:
-                labels = [safe_str(item.get("name")) or safe_str(item.get("id")) for item in other_protected]
-                raise RejoinBIError(
-                    "delete-workspace was blocked before its cross-workspace page analysis because other password-protected "
-                    f"workspaces exist: {', '.join(labels)}. Remove the workspace manually in Rejoin BI after reviewing links."
-                )
-        setattr(args, "_resolved_workspace", workspace)
-        return
-    if command in UNSCOPED_WORKSPACE_ACCESS_COMMANDS:
-        block_unscoped_workspace_access(client, command)
 
 
 def safe_str(value: Any) -> str:
@@ -2753,7 +2635,7 @@ def workspace_delete_plan(client: RejoinBIClient, workspace: dict[str, Any]) -> 
         "manual_deletion_required": False,
         "security_message": (
             "Workspace protegido por senha detectado. O plugin so remove apos validar a senha do workspace; "
-            "informe --workspace-password nesta mesma operação. Sem senha validada, remova manualmente."
+            "informe --workspace-password ou REJOINBI_WORKSPACE_PASSWORD. Sem senha validada, remova manualmente."
             if password_protected
             else ""
         ),
@@ -2849,8 +2731,14 @@ def cmd_workspaceall(args: argparse.Namespace) -> int:
 def cmd_validate_workspace(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
-    password = explicit_workspace_password(args.password, label="password")
-    data = validate_workspace_password(client, workspace, password)
+    password = secret_value(args.password, "REJOINBI_WORKSPACE_PASSWORD", "password")
+    data, _ = client.request(
+        "POST",
+        "/plataforma/api/validate-container-password",
+        json={"container_id": workspace.get("id"), "password": password},
+        timeout=60,
+    )
+    client.save_session()
     print_payload(data, as_json=args.json)
     return 0
 
@@ -2878,6 +2766,33 @@ def open_upload_files(paths: list[str], stack: ExitStack, *, allow_sensitive: bo
     return result
 
 
+def apply_selected_upload_files(
+    client: RejoinBIClient,
+    workspace: dict[str, Any],
+    session_id: str,
+    targets: list[str],
+    *,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Commit selected resumable files without replacing the workspace tree."""
+    if not session_id:
+        raise RejoinBIError("The resumable upload did not return a session id for incremental apply.")
+    payload, _ = client.request(
+        "POST",
+        "/plataforma/api/upload-apply-files",
+        json={
+            "session_id": session_id,
+            "container_id": workspace.get("id"),
+            "files": [normalize_upload_relative_path(target, field="selected target") for target in targets],
+        },
+        timeout=max(120, int(timeout)),
+    )
+    result = payload if isinstance(payload, dict) else {"raw": payload}
+    if not result.get("success"):
+        raise RejoinBIError(result.get("message") or "The platform did not apply the selected files.")
+    return result
+
+
 def cmd_upload_files(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
@@ -2889,6 +2804,7 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
             timeout=60,
         )
     entries = build_individual_upload_entries(args)
+    data_findings = confirm_sensitive_data_files(args, entries, context="Upload de arquivos selecionados")
     upload = upload_entries_chunked(
         client,
         workspace,
@@ -2897,6 +2813,13 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         max_retries=args.max_retries,
         on_file_error=args.on_file_error,
         max_recovery_retries=args.max_recovery_retries,
+    )
+    apply_result = apply_selected_upload_files(
+        client,
+        workspace,
+        upload["summary"].get("session_id"),
+        [target for _source, target in entries],
+        timeout=args.timeout,
     )
     restart = None
     if args.restart:
@@ -2909,6 +2832,8 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         "success": True,
         "workspace": {"id": workspace.get("id"), "name": workspace.get("name")},
         "upload": upload,
+        "apply": apply_result,
+        "data_file_confirmation": data_findings,
         "restart": restart,
         "preserved_existing_files": True,
     }, as_json=args.json)
@@ -3043,6 +2968,103 @@ def database_upload_reason(path: Path) -> str:
     return ""
 
 
+def data_upload_reason(path: Path) -> str:
+    """Identify common data artifacts that can invalidate a live workspace."""
+    filename = path.name.casefold()
+    for suffix in DATA_UPLOAD_SUFFIXES:
+        if filename.endswith(suffix):
+            # JSON is also used for application manifests and tool configs.
+            # Only classify it as data when its name/location makes that
+            # intent clear; JSONL/NDJSON and tabular/binary data formats remain
+            # data unconditionally.
+            if suffix == ".json":
+                relative_parts = {part.casefold() for part in path.parts}
+                data_names = {
+                    "data.json", "dados.json", "dataset.json", "datasets.json",
+                    "records.json", "export.json", "exported.json",
+                }
+                data_directories = {"data", "dados", "dataset", "datasets", "exports", "export"}
+                if filename not in data_names and not relative_parts.intersection(data_directories):
+                    continue
+            return f"data artifact '{path.name}'"
+    return ""
+
+
+def profile_hierarchy(profile: Any) -> dict[str, Any]:
+    """Return the immutable four-level authority classification."""
+    key = normalize_text(profile)
+    entry = PROFILE_HIERARCHY.get(key)
+    if not entry:
+        return {"key": key, "label": str(profile or ""), "tier": 0, "recognized": False}
+    return {"key": key, **entry, "recognized": True}
+
+
+def sensitive_data_upload_reason(path: Path) -> str:
+    """Return the strongest safety classification for a project data file."""
+    return database_upload_reason(path) or data_upload_reason(path)
+
+
+def confirm_sensitive_data_files(args: argparse.Namespace, entries: list[tuple[Path, str]], *, context: str) -> list[dict[str, str]]:
+    """Require an explicit user confirmation before data files can change a workspace.
+
+    The flags are deliberately separate so an agent cannot silently turn a
+    database overwrite into a generic file upload. In an interactive terminal,
+    the user may confirm the exact list once; non-interactive runs must carry
+    the explicit flags in the command invocation.
+    """
+    findings = []
+    for source, target in entries:
+        reason = sensitive_data_upload_reason(source)
+        if reason:
+            findings.append({"source": str(source), "target": target, "reason": reason})
+    if not findings:
+        return []
+
+    has_database = any(item["reason"].startswith("database artifact") for item in findings)
+    has_data = any(item["reason"].startswith("data artifact") for item in findings)
+    database_allowed = bool(getattr(args, "allow_database_files", False))
+    data_allowed = bool(getattr(args, "allow_data_files", False))
+    if (has_database and not database_allowed) or (has_data and not data_allowed):
+        print(
+            f"\n[DATA-SAFETY] {context} identificou arquivos de banco/dados que podem substituir o estado atual:",
+            file=sys.stderr,
+        )
+        print(json.dumps(findings, ensure_ascii=False, indent=2), file=sys.stderr)
+        required_flags = []
+        if has_database and not database_allowed:
+            required_flags.append("--allow-database-files")
+        if has_data and not data_allowed:
+            required_flags.append("--allow-data-files")
+        interactive_confirmation = False
+        if sys.stdin.isatty():
+            try:
+                confirmation = input(
+                    "Digite CONFIRMAR DADOS para substituir/adicionar exatamente esses arquivos, ou qualquer outra coisa para cancelar: "
+                ).strip()
+            except EOFError:
+                prefix = f"{context} bloqueado antes de alterar o workspace."
+                if context == "Incremental deployment" and has_database:
+                    prefix = "Incremental deployment blocked database artifact(s) before changing the workspace."
+                raise RejoinBIError(prefix + " Confirme exatamente esses arquivos e repita com " + " e ".join(required_flags) + ".")
+            if confirmation != "CONFIRMAR DADOS":
+                raise RejoinBIError("Upload cancelado: a confirmação dos arquivos de banco/dados não foi fornecida.")
+            if has_database:
+                args.allow_database_files = True
+            if has_data:
+                args.allow_data_files = True
+        else:
+            required_flags = []
+            if has_database and not database_allowed:
+                required_flags.append("--allow-database-files")
+            if has_data and not data_allowed:
+                required_flags.append("--allow-data-files")
+            prefix = f"{context} bloqueado antes de alterar o workspace."
+            if context == "Incremental deployment" and has_database:
+                prefix = "Incremental deployment blocked database artifact(s) before changing the workspace."
+            raise RejoinBIError(prefix + " Confirme exatamente esses arquivos e repita com " + " e ".join(required_flags) + ".")
+    return findings
+
+
 def build_deploy_changed_upload_entries(
     args: argparse.Namespace,
     app_root: Path,
@@ -3096,14 +3118,6 @@ def build_deploy_changed_upload_entries(
                 f"Refusing to upload sensitive-looking changed file {source_path}: {sensitive_reason}. "
                 "Use --allow-sensitive-files only after manual review."
             )
-        database_reason = database_upload_reason(relative_path)
-        if database_reason and not getattr(args, "allow_database_files", False):
-            raise RejoinBIError(
-                f"Incremental deployment blocked {database_reason}. Local databases can be older than the "
-                "workspace copy. Do not include it unless the user explicitly approved that exact file; then "
-                "use --allow-database-files."
-            )
-
         relative_target = normalize_upload_relative_path(
             relative_path.as_posix(),
             field="changed file relative path",
@@ -3130,6 +3144,7 @@ def build_deploy_changed_upload_entries(
             )
         used_targets[target_key] = source_path
         entries.append((source_path, target))
+    confirm_sensitive_data_files(args, entries, context="Incremental deployment")
     return entries
 
 
@@ -3534,6 +3549,8 @@ def upload_folder_chunked(
     max_retries: int = 5,
     on_file_error: str = "ask",
     max_recovery_retries: int = 1,
+    allow_database_files: bool = False,
+    allow_data_files: bool = False,
 ) -> dict[str, Any]:
     """Upload one complete folder in bounded, resumable parts."""
     if not root.is_dir():
@@ -3546,6 +3563,11 @@ def upload_folder_chunked(
     if not paths:
         raise RejoinBIError("No files found to upload.")
     entries = [(path, path.relative_to(root).as_posix()) for path in paths]
+    safety_args = argparse.Namespace(
+        allow_database_files=allow_database_files,
+        allow_data_files=allow_data_files,
+    )
+    confirm_sensitive_data_files(safety_args, entries, context="Upload da pasta do projeto")
     return upload_entries_chunked(
         client,
         workspace,
@@ -3580,9 +3602,23 @@ def poll_upload(client: RejoinBIClient, payload: dict[str, Any], timeout: int, i
     poll_url = payload.get("poll_url") or f"/plataforma/api/upload-status/{payload.get('process_id')}"
     deadline = time.time() + timeout
     last_payload = payload
+    status_failures = 0
     while time.time() < deadline:
         time.sleep(interval)
-        status_payload, _ = client.request("GET", poll_url, timeout=60)
+        try:
+            status_payload, _ = client.request("GET", poll_url, timeout=60)
+            status_failures = 0
+        except RejoinBIError as exc:
+            if not upload_error_retryable(exc):
+                raise
+            status_failures += 1
+            retry_delay = min(10.0, max(1.0, float(interval)) * status_failures)
+            print(
+                f"[upload-process] Status indisponível; nova tentativa em {retry_delay:.1f}s: {compact_response_message(str(exc))}",
+                file=sys.stderr,
+            )
+            time.sleep(retry_delay)
+            continue
         last_payload = status_payload if isinstance(status_payload, dict) else {"raw": status_payload}
         status = str(last_payload.get("status") or "").lower()
         if status in {"completed", "error", "not_found"}:
@@ -3609,7 +3645,25 @@ def select_app_file(
         "github_url": workspace.get("github_url"),
         "railway_internal_url": workspace.get("railway_internal_url") or "",
     }
-    data, _ = client.request("POST", "/plataforma/api/select-app-file", json=request_data, timeout=120)
+    data = None
+    last_error = None
+    for attempt in range(1, 13):
+        try:
+            data, _ = client.request("POST", "/plataforma/api/select-app-file", json=request_data, timeout=120)
+            break
+        except RejoinBIError as exc:
+            last_error = exc
+            if not upload_error_retryable(exc) or attempt >= 12:
+                raise
+            retry_delay = min(8.0, 1.5 + (attempt - 1) * 0.75)
+            print(
+                f"[upload-process] O servidor ainda não reconheceu o arquivo principal; "
+                f"nova tentativa em {retry_delay:.1f}s ({attempt}/12): {compact_response_message(str(exc))}",
+                file=sys.stderr,
+            )
+            time.sleep(retry_delay)
+    if data is None:
+        raise last_error or RejoinBIError("The platform did not return a response when selecting the app file.")
     payload = data if isinstance(data, dict) else {"raw": data}
     result = poll_upload(client, payload, args.timeout, args.interval)
     return {
@@ -3639,6 +3693,8 @@ def cmd_upload_folder_select(args: argparse.Namespace) -> int:
         max_retries=args.max_retries,
         on_file_error=args.on_file_error,
         max_recovery_retries=args.max_recovery_retries,
+        allow_database_files=bool(args.allow_database_files),
+        allow_data_files=bool(args.allow_data_files),
     )
     result = select_app_file(client, workspace, upload["files"], args)
     result["upload"] = upload["summary"]
@@ -4187,7 +4243,7 @@ def cmd_publish_bi(args: argparse.Namespace) -> int:
         }, as_json=args.json)
         return 1
     workspace = resolve_workspace(client, args.workspace)
-    password = args.workspace_password or ""
+    password = args.workspace_password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
     payload = {
         "container_id": workspace.get("id"),
         "password": password,
@@ -5368,9 +5424,9 @@ def require_deploy_upload_mode(args: argparse.Namespace) -> str:
     changed_files = list(getattr(args, "changed_file", None) or [])
     changed_targets = list(getattr(args, "changed_target_path", None) or [])
     if upload_mode == "full":
-        if changed_files or changed_targets or getattr(args, "allow_database_files", False):
+        if changed_files or changed_targets or getattr(args, "allow_database_files", False) or getattr(args, "allow_data_files", False):
             raise RejoinBIError(
-                "--changed-file, --changed-target-path, and --allow-database-files are only valid with "
+                "--changed-file, --changed-target-path, and data-file approval flags are only valid with "
                 "--upload-mode changed-files."
             )
         return upload_mode
@@ -6761,7 +6817,7 @@ def cmd_accessible_pages(args: argparse.Namespace) -> int:
 
 def cmd_create_workspace(args: argparse.Namespace) -> int:
     client = make_client(args)
-    password = args.password or ""
+    password = args.password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
     payload = {
         "name": args.name,
         "password": password,
@@ -6797,14 +6853,15 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
     if args.confirm_id and safe_str(args.confirm_id) != workspace_id:
         errors.append(f"--confirm-id must exactly match resolved workspace id: {workspace_id}")
     if password_protected:
-        if not getattr(args, "workspace_password", None):
+        if not has_secret(getattr(args, "workspace_password", None), "REJOINBI_WORKSPACE_PASSWORD"):
             errors.append(
                 "Workspace protegido por senha detectado. Para remover pelo plugin, informe --workspace-password "
-                "nesta mesma operação. Sem senha validada, remova manualmente pela plataforma."
+                "ou defina REJOINBI_WORKSPACE_PASSWORD. Sem senha validada, remova manualmente pela plataforma."
             )
         else:
             try:
-                validation = validate_workspace_password(client, workspace, args.workspace_password)
+                workspace_password = secret_value(args.workspace_password, "REJOINBI_WORKSPACE_PASSWORD", "workspace-password")
+                validation = validate_workspace_if_password(client, workspace, workspace_password)
                 validation_success = bool(validation and validation.get("success", True))
                 plan["workspace_password_validation"] = {
                     "success": validation_success,
@@ -6853,7 +6910,7 @@ def cmd_delete_workspace(args: argparse.Namespace) -> int:
 def cmd_set_workspace_password(args: argparse.Namespace) -> int:
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
-    password = args.password or ""
+    password = args.password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
     data, _ = client.request(
         "PUT",
         f"/plataforma/api/containers/{workspace.get('id')}/password",
@@ -6961,14 +7018,7 @@ def cmd_delete_page(args: argparse.Namespace) -> int:
 
 def cmd_update_page(args: argparse.Namespace) -> int:
     client = make_client(args)
-    workspace = resolve_workspace(client, args.workspace) if args.workspace else None
-    current_pages = list_pages(
-        client,
-        workspace_id=workspace.get("id") if workspace else None,
-        all_containers=workspace is None,
-        include_inactive=True,
-        exclude_fictitious=False,
-    )
+    current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
     current_page = resolve_page_from_pages(current_pages, args.page_id)
     if current_page is None:
         raise RejoinBIError(f"Page not found: {args.page_id}")
@@ -6985,7 +7035,8 @@ def cmd_update_page(args: argparse.Namespace) -> int:
         payload["descricao"] = args.description
     if args.parent is not None:
         payload["pai"] = args.parent
-    if workspace:
+    if args.workspace:
+        workspace = resolve_workspace(client, args.workspace)
         payload["container_id"] = workspace.get("id")
     elif current_page.get("container_id") is not None:
         payload["container_id"] = current_page.get("container_id")
@@ -7105,6 +7156,19 @@ def create_workspace_if_needed(
     return resolve_workspace(client, name)
 
 
+def validate_workspace_if_password(client: RejoinBIClient, workspace: dict[str, Any], password: str = "") -> dict[str, Any] | None:
+    if not password:
+        return None
+    data, _ = client.request(
+        "POST",
+        "/plataforma/api/validate-container-password",
+        json={"container_id": workspace.get("id"), "password": password},
+        timeout=60,
+    )
+    client.save_session()
+    return data if isinstance(data, dict) else {"raw": data}
+
+
 def upload_folder_with_options(
     client: RejoinBIClient,
     workspace: dict[str, Any],
@@ -7122,6 +7186,8 @@ def upload_folder_with_options(
     on_file_error: str = "ask",
     max_retries: int = 5,
     max_recovery_retries: int = 1,
+    allow_database_files: bool = False,
+    allow_data_files: bool = False,
 ) -> dict[str, Any]:
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
@@ -7134,6 +7200,8 @@ def upload_folder_with_options(
         max_retries=max_retries,
         on_file_error=on_file_error,
         max_recovery_retries=max_recovery_retries,
+        allow_database_files=allow_database_files,
+        allow_data_files=allow_data_files,
     )
     options = argparse.Namespace(
         startup_mode=startup_mode,
@@ -7406,7 +7474,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     workspace_name = args.workspace or workspace_cfg.get("name") or manifest.get("workspace_name")
     if not workspace_name:
         raise RejoinBIError("Workspace name not provided. Use --workspace or manifest.workspace.name.")
-    workspace_password = args.workspace_password or ""
+    workspace_password = args.workspace_password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
     create_workspace = args.create_workspace or manifest_bool(workspace_cfg, "create", False)
     replace_pages = args.replace_pages or manifest_bool(manifest, "replace_pages", False)
     if upload_mode == "changed-files" and create_workspace:
@@ -7420,6 +7488,27 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             "replace_pages from the command or manifest, or upload only the changed files."
         )
 
+    if upload_mode == "full":
+        # Review database/data artifacts before create-workspace or any other
+        # remote mutation. The upload helper repeats this check immediately
+        # before sending, so a changed local tree cannot bypass the guard.
+        preflight_exclude = set(
+            str(item).casefold()
+            for item in (upload_cfg.get("exclude") or [
+                ".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache",
+            ])
+        )
+        preflight_paths = iter_folder_files(
+            app_root,
+            preflight_exclude,
+            allow_sensitive=bool(getattr(args, "allow_sensitive_files", False)),
+        )
+        confirm_sensitive_data_files(
+            args,
+            [(path, path.relative_to(app_root).as_posix()) for path in preflight_paths],
+            context="Full deployment preflight",
+        )
+
     workspace = create_workspace_if_needed(
         client,
         workspace_name,
@@ -7428,12 +7517,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
         create=create_workspace,
         timeout=args.timeout,
     )
-    validation = require_workspace_access(
-        client,
-        workspace,
-        password=workspace_password,
-        command="deploy-manifest",
-    )
+    validation = validate_workspace_if_password(client, workspace, workspace_password)
 
     upload_result = None
     if upload_mode == "full":
@@ -7453,6 +7537,8 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             on_file_error=args.on_file_error,
             max_retries=args.max_retries,
             max_recovery_retries=args.max_recovery_retries,
+            allow_database_files=bool(args.allow_database_files),
+            allow_data_files=bool(args.allow_data_files),
         )
         upload_result["mode"] = "full"
         upload_result["preserved_existing_files"] = True
@@ -7467,6 +7553,13 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             on_file_error=args.on_file_error,
             max_recovery_retries=args.max_recovery_retries,
         )
+        changed_apply = apply_selected_upload_files(
+            client,
+            workspace,
+            changed_upload["summary"].get("session_id"),
+            [target for _source, target in changed_entries],
+            timeout=args.timeout,
+        )
         restart = None
         if getattr(args, "restart_after_upload", False):
             restart, _ = client.request(
@@ -7480,6 +7573,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             "preserved_existing_files": True,
             "selected_files": [target for _source, target in changed_entries],
             "upload": changed_upload["summary"],
+            "apply": changed_apply,
             "restart": restart,
             "automatic_app_reselection": False,
             "note": (
@@ -8269,6 +8363,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--restart", action="store_true")
     p.add_argument("--workspace-password")
     p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--allow-database-files", action="store_true", help="After explicit review, allow selected database files to replace/add the remote copy")
+    p.add_argument("--allow-data-files", action="store_true", help="After explicit review, allow selected data files to replace/add the remote copy")
     p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
     p.add_argument("--max-retries", type=int, default=5, help="Bounded retries for each failed chunk")
     p.add_argument("--max-recovery-retries", type=int, default=1, help="Extra retry cycles when --on-file-error retry is selected")
@@ -8280,6 +8376,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--path", required=True)
     p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
     p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--allow-database-files", action="store_true", help="After explicit review, allow database files in this project upload")
+    p.add_argument("--allow-data-files", action="store_true", help="After explicit review, allow data files in this project upload")
     p.add_argument("--selected-file", default="")
     p.add_argument("--startup-mode", choices=["file", "command", "static"], default="file")
     p.add_argument("--startup-command", default="")
@@ -9044,6 +9142,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--changed-file", action="append", help="File changed under --path/app_root to upload in changed-files mode; repeat for each approved file")
     p.add_argument("--changed-target-path", action="append", help="Optional source=workspace/path.ext override for one changed file")
     p.add_argument("--allow-database-files", action="store_true", help="Allow explicitly selected local database files in changed-files mode after user approval")
+    p.add_argument("--allow-data-files", action="store_true", help="Allow explicitly selected local data files after user approval")
     p.add_argument("--restart-after-upload", action="store_true", help="Restart the existing workspace after a changed-files upload")
     p.add_argument("--sync-pages", action="store_true", help="Also apply manifest pages after a changed-files upload; default keeps existing page configuration untouched")
     p.add_argument("--startup-mode", choices=["file", "command", "static"])
@@ -9120,11 +9219,6 @@ def build_parser() -> argparse.ArgumentParser:
             choices=OPERATION_SCOPE_CHOICES,
             help="Required exact operation domain before any remote platform request.",
         )
-        if "--workspace-password" not in command_parser._option_string_actions:
-            command_parser.add_argument(
-                "--workspace-password",
-                help="Required on this same command when the selected workspace is password-protected; prior session unlocks are not reused.",
-            )
 
     return parser
 

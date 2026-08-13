@@ -38,17 +38,6 @@ Before **every remote platform command**, identify exactly one domain and pass i
 - For `api-get` or `api-send`, derive the scope from the endpoint, repeat the exact path in `--confirm-api-path`, and never call raw API just to avoid a dedicated-command restriction.
 - Read `docs/command-scope-map.md` before choosing a scope. The command catalog there is test-checked against every parser command.
 
-## Mandatory Protected-Workspace Boundary
-
-`workspaceall` may show only workspace metadata and whether a workspace is locked. It never authorizes access to a locked workspace.
-
-- Before any command that reads or changes a selected workspace, its files, logs, versions, pages, RLS, AI configuration, schedules, notifications, runtime, or deployment, inspect the selected workspace metadata first.
-- If it is password-protected, stop and ask the requester for that workspace password before any further platform call. Pass it only as `--workspace-password` on the exact command being run.
-- The CLI validates that password through `validate-container-password` for **every** protected-workspace operation. Never rely on a previous `validate-workspace` call, a persisted browser/session cookie, or `REJOINBI_WORKSPACE_PASSWORD` to skip this question.
-- Never use `api-get` or `api-send` for workspace, upload, page, RLS, or AI-config endpoints. Those raw routes are blocked because they cannot safely bind a password to one workspace.
-- Do not run a global page, RLS, smoke, route, or stop-all operation while the tenant contains a password-protected workspace. Use a workspace-specific command with its password, or tell the requester to perform that global action manually in Rejoin BI.
-- Never print, store in a manifest, copy to a file, or repeat the workspace password in the final response. If it is invalid, report only that validation failed and do not retry without a new user-provided value.
-
 ## Mandatory Deployment Upload Choice
 
 Whenever the requester asks to deploy, publish, update, or upload a project, stop before any remote deployment/upload command and ask this decision in the requester's language:
@@ -57,11 +46,15 @@ Whenever the requester asks to deploy, publish, update, or upload a project, sto
 
 - Never infer this answer from phrases such as “faz o deploy”, “atualiza o projeto”, “sobe de novo”, or from a local folder's contents.
 - The deploy-manifest command mechanically rejects an upload without --upload-mode full or --upload-mode changed-files. The answer must be captured in that exact flag before the command can contact the platform.
-- For full, validate the folder and use --upload-mode full. This intentionally overwrites same-named project files and can overwrite a remote database if that database exists in the local project.
-- For changed-files, require a reviewed, explicit --changed-file for every file. The plugin uses its path relative to app_root, exactly like a careful manual upload, and preserves every workspace file that was not selected.
+- For full, validate the folder and use --upload-mode full. This intentionally overwrites same-named project files. Before any database or data artifact is sent, the plugin must show the exact list and receive the requester's confirmation (interactive `CONFIRMAR DADOS`, or the matching explicit approval flag in a non-interactive run).
+- For changed-files, require a reviewed, explicit --changed-file for every file. The plugin uses its path relative to app_root, sends the resumable session, then calls the selected-files apply endpoint. That commit replaces only those exact paths and adds new ones; it never clears, renames, or archives any other workspace file.
 - Never generate the changed-file list by guesswork. A local diff may be used only to propose a list; show the list and wait for the requester to confirm it before uploading.
-- Incremental deployment blocks .db, .sqlite, .sqlite3, .duckdb, and SQLite journal/WAL/SHM files by default. Allow one only with --allow-database-files after the requester explicitly names that exact database file and accepts overwriting the remote copy.
+- Both full and changed-files modes block database artifacts and recognized data artifacts by default. Databases include SQLite/DB/DuckDB and journal/WAL/SHM variants; data includes tabular/binary datasets and clearly data-oriented JSON files. Allow each class only after the requester explicitly names the exact files and accepts replacing/adding them, using `--allow-database-files` and/or `--allow-data-files` as appropriate.
 - Incremental deployment does not reselect the app entrypoint, restart the workspace, or alter platform pages by default. Use --restart-after-upload or --sync-pages only when the requester explicitly asks for those additional effects.
+
+### Mandatory role hierarchy
+
+The plugin recognizes exactly four platform profile levels, in descending authority: `Administrador Principal` (tier 4), `Master` (tier 3), `Administrador` (tier 2), and `Usuário` (tier 1). The plugin may operate platform administration/upload/deployment sessions only for the first three levels; a `Usuário` session is never elevated by a wildcard permission. The platform's own endpoint permissions remain authoritative for the allowed actions of each administrator level. Identity operations remain a separate `identity` scope and are never inferred from upload, deployment, workspace, page, or configuration requests.
 
 ## Natural Language Intent Map
 
@@ -71,7 +64,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "mudar o titulo", "qual titulo atual", "trocar nome da aba", "titulo da plataforma": this means the platform browser title in Configuracao Plataforma. Use `platform-title` to read the current title. Use `platform-title --title "Novo titulo"` to change only the title with automatic backup. Do not ask whether it is a workspace/dashboard title unless the user explicitly says workspace, pagina, dashboard, or projeto.
 - "mudar logo", "favicon", "icone", "imagem do menu", "cores", "identidade visual": use `backup-platform-branding` first, then `set-platform-branding` with the relevant image/color files. Mention the restore command from the tool output.
 - "restaurar padrao", "voltar como estava", "desfazer visual": use `restore-platform-branding --backup <backup> --yes` when a backup exists. Use `restore-platform-config-defaults --yes` only when the user specifically wants platform defaults.
-- "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a locked workspace, first request its password and use `workspace-content` or `page-files` with `--workspace-password` in that same operation.
+- "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
 - "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with the explicit platform address in `--tenant`. For files selected from an existing project, pass `--source-root <project-root>` so their relative folders are preserved; use `--target-path <source>=<target/path.ext>` for an exact destination.
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
 - "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
@@ -138,7 +131,7 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Persistent managed SQLite databases: `/plataforma/api/managed-databases/*` is available through `managed-databases`. These files live in the platform data directory, outside workspaces. Remote applications must use the generated HTTPS API token; never instruct a client to open the SQLite file over a network share.
 - BI Studio + Data Engine inventory: `studio-inventory` joins BI projects with Data Engine status, sessions, DB connections, repository, datasets, and files.
 
-The plugin client enforces the operational rule for this platform: persisted sessions and privileged commands are allowed only for `Administrador Principal`, `Master`, or `Administrador`. A standard `Usuario` login is rejected by default. Use `--allow-standard` only for an intentional negative test.
+The plugin client enforces the operational rule for this platform: the four levels are `Administrador Principal` (tier 4), `Master` (tier 3), `Administrador` (tier 2), and `Usuário` (tier 1). Persisted sessions and privileged commands are allowed only for the first three; a standard `Usuario` login is rejected by default and cannot be elevated by a wildcard permission. Use `--allow-standard` only for an intentional negative test.
 
 ## Default Auth Flow
 
@@ -308,11 +301,12 @@ List workspaces:
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" workspaceall
 ```
 
-List pages only from one selected workspace; list users only after an explicit identity-governance request:
+List pages; list users only after an explicit identity-governance request:
 
 ```powershell
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" users --operation-scope identity --identity-scope
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" pages --workspace codex-test-dashboard
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" pages --all-containers
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" accessible-pages
 ```
 
 Create test users and set passwords only when the user explicitly asked for an identity/PIN test:
@@ -333,7 +327,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 Update, delete, or resolve pages:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-page --workspace codex-test-dashboard --page-id codex-test-dashboard --name "Painel Atualizado" --route painel-atualizado
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br update-page --page-id codex-test-dashboard --name "Painel Atualizado" --route painel-atualizado
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br resolve-page --page-ref painel-atualizado
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-test-dashboard-v2
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-test-dashboard-v2 --yes --confirm-page-id codex-test-dashboard-v2 --cascade
@@ -346,7 +340,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-test-dashboard --yes --confirm-name codex-test-dashboard --confirm-id 12
 ```
 
-For destructive commands, never skip the preview. Confirm exact resolved ids/names, check parent-child-grandchild trees, and block cross-workspace linked pages unless the user explicitly intends that with `--allow-linked-pages`. For a password-protected workspace, require `--workspace-password` in the same command and let the plugin validate it through `validate-container-password`; a prior unlock does not count. Otherwise tell the user the plugin cannot remove it and manual removal in Rejoin BI is required.
+For destructive commands, never skip the preview. Confirm exact resolved ids/names, check parent-child-grandchild trees, and block cross-workspace linked pages unless the user explicitly intends that with `--allow-linked-pages`. For a password-protected workspace, only delete through the plugin when the user provides the workspace password and the platform validates it through `validate-container-password`; otherwise tell the user the plugin cannot remove it and manual removal in Rejoin BI is required.
 
 Unlock a protected workspace:
 
@@ -357,7 +351,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 Upload a folder like the UI and choose startup options:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start --workspace-password "..."
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start
 ```
 
 Project upload is folder-only and resumable; ZIP project uploads are disabled. For selected files, use `upload-files` with the project root so paths are preserved:
@@ -368,7 +362,7 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 
 ## Resilient Upload Rules
 
-- Use `upload-folder-select` for a complete project directory. It sends one bounded chunk at a time, resumes the same server session after a network loss, and never requests a clean upload (`force_clean` is always false). Files already present in the workspace but absent from the selected folder are preserved.
+- Use `upload-folder-select` for a complete project directory only after the requester chose full-project mode. It sends one bounded chunk at a time, resumes the same server session after a network loss, and never requests destructive cleanup of the temporary upload session (`force_clean` is always false); the final full publication versions/replaces the current `app/` tree with the uploaded folder.
 - Use `upload-files` for selected files only. With `--source-root C:\path\project`, files such as `C:\path\project\static\app.js` keep the `static/app.js` destination. `--folder assets` prefixes a destination folder, and repeated `--target-path <source>=<target/path.ext>` gives an exact individual destination without collisions between same-named files.
 - Every upload retries each failed part a bounded number of times. After those retries, the default `--on-file-error ask` must present the file path, chunk position, HTTP diagnosis, and the choices **retry**, **skip only this file**, or **cancel**. Never skip a file silently.
 - When an agent is running non-interactively and a file needs a decision, it must stop before finalization, report the structured diagnostic to the user, ask which of the three actions to take, then rerun using `--on-file-error retry`, `--on-file-error skip`, or `--on-file-error cancel`. `skip` calls the dedicated session endpoint and continues with the remaining files; it never removes any existing workspace file. `cancel` discards only the temporary upload session, before it can change the project.
@@ -377,16 +371,16 @@ python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.
 
 ```powershell
 # Full project: resume safely and ask before discarding any failed file.
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --workspace-password "..."
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file
 
 # Selected files: preserve the original project folders and leave other workspace files untouched.
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-files --workspace 12 --files C:\path\dashboard\static\app.js C:\path\dashboard\templates\index.html --source-root C:\path\dashboard --workspace-password "..."
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-files --workspace 12 --files C:\path\dashboard\static\app.js C:\path\dashboard\templates\index.html --source-root C:\path\dashboard
 ```
 
 Publish a BI Studio project to a workspace:
 
 ```powershell
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br publish-bi --project-id vendas-2026 --workspace 12 --workspace-password "..."
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br publish-bi --project-id vendas-2026 --workspace 12
 ```
 
 ## Manifest Deployment
@@ -399,7 +393,8 @@ Minimal manifest:
 {
   "language": "pt-BR",
   "workspace": {
-    "name": "codex-suite"
+    "name": "codex-suite",
+    "password_env": "REJOINBI_WORKSPACE_PASSWORD"
   },
   "upload": {
     "path": ".",
@@ -433,8 +428,9 @@ When generating manifests on Windows, write `rejoinbi-app.json` as a UTF-8 file 
 Deploy, replace existing page definitions if needed, then smoke test every route:
 
 ```powershell
+$env:REJOINBI_WORKSPACE_PASSWORD = "..."
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" validate-app --manifest C:\path\rejoinbi-app.json
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --create-workspace --replace-pages --workspace-password "..."
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --create-workspace --replace-pages
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br smoke-pages --manifest C:\path\rejoinbi-app.json
 ```
 
@@ -454,9 +450,9 @@ Use `examples/codex-rls-suite` whenever you need to verify RLS, page permissions
 ```powershell
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" validate-app --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file C:\path\rls-config.json --yes --workspace-password "..."
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file C:\path\rls-page-mapping.json --yes --workspace-password "..."
-python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12 --workspace-password "..."
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file C:\path\rls-config.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file C:\path\rls-page-mapping.json --yes
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12
 ```
 
 For end-to-end standard-user tests, open `https://pt.emailfake.com/channel1/` first and copy the generated mailbox. Create the Rejoin BI user with that exact address, then read the welcome e-mail in that same mailbox to get the provisional password. The first login for non-Administrador-Principal users must trigger a PIN e-mail; read that PIN from the mailbox and complete the login. Use `--allow-standard` only in this test. Expected security result: `status` shows `profile: Usuário` and `plugin_profile_allowed: false`, admin commands are rejected by the plugin, `accessible-pages` returns only explicitly granted pages, and `rls test-config` returns only that user's allowed dimension values.
@@ -476,7 +472,7 @@ When building a dashboard for upload:
 - Before upload, run the dashboard locally when possible and verify the first screen renders.
 - After upload, run `smoke-pages` and then use browser automation for visual checks of charts, filters, forms, responsive layout, and route navigation.
 - For BI Studio projects, prefer the platform publish API over raw file upload.
-- For endpoint coverage that is not yet modeled as a first-class command, use `api-get` or `api-send` only for non-workspace routes. They are never allowed for workspace, upload, page, RLS, or AI-config access because those routes require a workspace-specific password check.
+- For endpoint coverage that is not yet modeled as a first-class command, use `api-get` or `api-send` with authenticated JSON requests. Keep this for admin workflows and do not use it to bypass the profile restriction.
 
 ## Workspace Compatibility Rules
 

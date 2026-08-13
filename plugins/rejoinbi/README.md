@@ -91,11 +91,11 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest 
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --upload-mode changed-files --changed-file static\app.js --changed-file templates\index.html --operation-scope deployment
 ~~~
 
-Incremental mode preserves all unselected workspace files and page configuration, does not automatically restart or reselect the app, and blocks local database artifacts (.db, .sqlite, .sqlite3, .duckdb, WAL/SHM/journal files) unless the requester explicitly approves the exact file through --allow-database-files.
+Incremental mode preserves all unselected workspace files and page configuration, applies only the reviewed paths after finalization, does not automatically restart or reselect the app, and blocks database/data artifacts unless the requester explicitly approves the exact files through `--allow-database-files` and/or `--allow-data-files`.
 
 ## Upload resilience
 
-`upload-folder-select` uploads a complete project in resumable bounded chunks. It preserves files that already exist in the workspace and never performs a clean replacement. If a file still fails after retries, the default behavior is to show the diagnosis and require a decision: retry, skip only that file, or cancel the temporary session.
+`upload-folder-select` uploads a complete project in resumable bounded chunks. Its final publication is full-project mode: the platform versions/replaces the current `app/` tree with the uploaded folder, so use it only when the requester chose to resend the complete project. If a file still fails after retries, the default behavior is to show the diagnosis and require a decision: retry, skip only that file, or cancel the temporary session.
 
 `upload-files` uses the same resumable flow for selected files. Use `--source-root` to preserve the project's relative folders and `--target-path source=target/path.ext` for an exact destination. This lets same-named files go to distinct workspace folders without an accidental overwrite.
 
@@ -109,7 +109,7 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-files --w
 
 `ensure` first checks whether the Rejoin BI platform address already has a valid saved session with an allowed profile. If not, it opens a local browser login wizard. The user enters email, password, and PIN there; secrets do not need to go into chat, environment variables, or copied PowerShell snippets. The plugin saves only the resulting session cookies.
 
-The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
+The enforced hierarchy is `Administrador Principal` (4) > `Master` (3) > `Administrador` (2) > `Usuário` (1). Only the first three levels may use privileged platform/upload/deployment commands; a wildcard permission cannot elevate a recognized `Usuário`. The public manual defines Administrador Principal as the top level and the only login that does not request PIN. The plugin preserves that no-PIN login as `Administrador Principal` so the profile is not downgraded to `Master` by later session checks.
 
 ## Assistant Intent Shortcuts
 

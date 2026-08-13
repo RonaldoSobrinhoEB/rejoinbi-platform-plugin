@@ -4,10 +4,12 @@ This map follows the public Rejoin BI user manual and the analyzed Flask bluepri
 
 ## Permission Levels
 
-- Administrador Principal: highest access level, full platform/user control, no PIN during login.
-- Master: global management and workspace visibility, requires PIN.
-- Administrador: operational management for users, groups, permissions, and granted tools, requires PIN.
-- Usuario: dashboard/report access and own account changes, requires PIN.
+- Administrador Principal (tier 4): highest access level, full platform/user control, no PIN during login.
+- Master (tier 3): global management and workspace visibility, requires PIN; the platform still decides which endpoints this account may use.
+- Administrador (tier 2): operational management for users, groups, permissions, and granted tools, requires PIN; the platform still decides which endpoints this account may use.
+- Usuario (tier 1): dashboard/report access and own account changes, requires PIN. The plugin never elevates this level to perform administrative, upload, or deployment actions.
+
+The plugin preserves this hierarchy explicitly as `Administrador Principal > Master > Administrador > Usuário`. A wildcard permission cannot elevate a recognized lower-level profile, and identity-governance actions remain separately locked to the `identity` scope.
 
 The plugin treats a successful login that does not request PIN as `Administrador Principal`. Saved sessions created through that no-PIN flow keep this profile hint so later `ensure` and administrative commands do not downgrade it to `Master`.
 
@@ -33,7 +35,7 @@ The complete boundary, including command families and non-authorizing requests, 
 | Editar Usuarios | `GET /plataforma/api/users`, `GET /plataforma/api/setores`, `GET /plataforma/api/users-presence`, `GET /plataforma/api/download-users`, `POST /plataforma/api/update-user`, `POST /plataforma/api/change-user-password`, `POST /plataforma/api/delete-user` | `users`, `sectors`, `user-presence`, `download-users`, `update-user`, `set-user-password`, `delete-user` |
 | Gerenciar Permissoes | `GET /plataforma/api/pages`, `GET /plataforma/api/permissive-pages`, `GET /plataforma/api/user-permissions/<id>`, `GET /plataforma/api/download-permissions`, `POST /plataforma/api/update-permissions`, `POST /plataforma/api/recalcular-permissoes` | `permission-pages`, `user-permissions`, `download-permissions`, `set-user-permissions`, `recalculate-permissions` |
 | Gerenciar Grupos | `GET /plataforma/api/groups`, `POST /plataforma/api/create-group`, `POST /plataforma/api/update-group`, `POST /plataforma/api/delete-group`, `POST /plataforma/api/assign-user-to-group` | `groups`, `create-group`, `update-group`, `delete-group`, `assign-user-group` |
-| Upload de Arquivos | `POST /plataforma/api/upload-init`, `POST /plataforma/api/upload-chunk`, `POST /plataforma/api/upload-finish`, `POST /plataforma/api/select-app-file`, `POST /plataforma/api/upload-multiple-files` | `upload-folder-select`, `upload-files` |
+| Upload de Arquivos | `POST /plataforma/api/upload-init`, `POST /plataforma/api/upload-chunk`, `POST /plataforma/api/upload-finish`, `GET /plataforma/api/upload-finish-status`, `POST /plataforma/api/upload-apply-files`, `POST /plataforma/api/select-app-file`, `POST /plataforma/api/upload-multiple-files` | `upload-folder-select`, `upload-files` |
 | Anuncios Internos | `GET /plataforma/api/anuncios/historico`, `GET /plataforma/api/anuncios/ativos`, `POST /plataforma/api/anuncios`, `DELETE /plataforma/api/anuncios/<id>` | `announcements`, `create-announcement`, `delete-announcement`, `announcement-groups` |
 | Configuracao WhatsApp | `/plataforma/api/whatsapp/*` | `whatsapp sessions`, `whatsapp groups`, `whatsapp create-group`, `whatsapp broadcast`, `whatsapp schedules`, `whatsapp pause-schedule`, `whatsapp resume-schedule`, `whatsapp diagnostics`, `whatsapp restart-service` |
 | Gestao de E-mails | `/plataforma/api/email/*` | `email sessions`, `email create-session`, `email groups`, `email create-group`, `email broadcast`, `email schedules`, `email pause-schedule`, `email resume-schedule`, `email external-contacts` |
@@ -171,6 +173,6 @@ BI Studio exports may contain localized display names with non-ASCII slugs. Befo
 - Destructive commands keep explicit confirmation flags.
 - User, direct-permission, and permission-group operations are disabled until the requester explicitly names that identity area and the command includes `--operation-scope identity --identity-scope`.
 - Identity writes require `--yes` plus an exact resolved target confirmation; a broad diagnostic request never authorizes them.
-- Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided as `--workspace-password` for that exact command and validated by the platform; a prior session unlock is not reused.
+- Workspace deletion remains blocked for password-protected workspaces unless the workspace password is provided and validated by the platform first.
 - Secrets, passwords, PINs, and local session files must never be exported.
 - Use dedicated commands for supported modules; use `api-get` / `api-send` only for new endpoints that are not yet present in this map, with the endpoint-derived scope and exact `--confirm-api-path`.
