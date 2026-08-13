@@ -235,6 +235,23 @@ If the plan shows the workspace is password-protected, deletion is blocked until
 
 Upload and export commands block common secret paths by default, including `.env`, private keys, token/password/credential files, local session folders, and unsafe ZIP entries. Use `--allow-sensitive-files` only after manually reviewing every file. Raw API access requires the endpoint-derived `--operation-scope` and exact `--confirm-api-path`; `api-send` also requires `--yes`, while mapped identity endpoints additionally require `--identity-scope`.
 
+## User registration and PIN
+
+`create-user` requires a login PIN by default. Use `--no-pin` only when the
+request explicitly says that the user may log in with e-mail and password;
+`--pin-required` makes the default explicit. To prepare a standard workbook,
+run:
+
+```powershell
+python .\scripts\rejoinbi.py create-user-template --output .\usuarios-template.xlsx
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-users-file --file .\usuarios-preenchidos.xlsx --confirm-count 3 --operation-scope identity --identity-scope --yes
+```
+
+The XLSX columns are `email`, `nome`, `matricula`, `setor`, `contato`, `perfil`,
+and `pin`. In `pin`, use `sim/obrigatório/com pin` or `não/sem pin/dispensado`;
+an empty value means PIN required. Batch creation reports each row and never
+changes groups or permissions as a side effect.
+
 ## Share Package
 
 ```powershell
