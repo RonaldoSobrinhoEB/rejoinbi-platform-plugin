@@ -64,6 +64,24 @@ class FakeUploadClient:
 
 
 class UploadResilienceTests(unittest.TestCase):
+    def test_folder_upload_keeps_hidden_cache_compiled_and_archive_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "project"
+            (root / "__pycache__").mkdir(parents=True)
+            (root / ".hidden").mkdir(parents=True)
+            (root / ".git" / "objects").mkdir(parents=True)
+            (root / ".env").write_text("TOKEN=local", encoding="utf-8")
+            (root / "__pycache__" / "module.pyc").write_bytes(b"compiled")
+            (root / ".hidden" / "bundle.zip").write_bytes(b"archive")
+            (root / ".git" / "objects" / "pack.bin").write_bytes(b"git")
+
+            files = plugin.iter_folder_files(root, {".git", "__pycache__", ".hidden"})
+
+            self.assertEqual(
+                {path.relative_to(root).as_posix() for path in files},
+                {".env", "__pycache__/module.pyc", ".hidden/bundle.zip", ".git/objects/pack.bin"},
+            )
+
     def test_selected_files_preserve_relative_folders(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "project"

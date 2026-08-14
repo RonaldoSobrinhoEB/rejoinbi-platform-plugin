@@ -11,7 +11,7 @@
   "upload": {
     "startup_mode": "static",
     "auto_start": true,
-    "exclude": [".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"]
+    "exclude": []
   },
   "pages": [
     {

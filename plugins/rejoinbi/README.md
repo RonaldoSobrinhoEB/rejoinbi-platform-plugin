@@ -42,7 +42,7 @@ Correct pattern:
 
 See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For BI Studio canvas work, use `examples/codex-bi-studio-canvas`; it documents the professional canvas standard, Data Engine binding, Rejoin BI theme, export normalization, and Flask manifest shape for BI Studio exports. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`Visão RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
 
-Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and folder exclusions.
+Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and the explicit upload-safety boundaries.
 
 Read `docs/page-routing-map.md` for the platform route/menu contract. It maps `accessible-pages`, `container_name`, `arquivo`, `rota`, and the `/plataforma/<container_name>/client/<route>` tunnel so generated pages do not fall back to `container_<id>`.
 
@@ -95,7 +95,7 @@ Incremental mode preserves all unselected workspace files and page configuration
 
 ## Upload resilience
 
-`upload-folder-select` uploads a complete project in resumable bounded chunks. Its final publication is full-project mode: the platform versions/replaces the current `app/` tree with the uploaded folder, so use it only when the requester chose to resend the complete project. If a file still fails after retries, the default behavior is to show the diagnosis and require a decision: retry, skip only that file, or cancel the temporary session.
+`upload-folder-select` uploads a complete project in resumable bounded chunks. Its final publication is full-project mode: the platform versions/replaces the current `app/` tree with the uploaded folder, so use it only when the requester chose to resend the complete project. It accepts all selected file names and extensions, including hidden files, `.env`, `.pyc`, `__pycache__`, and archives. If a file is in use locally or still fails after retries, the default behavior is to show the diagnosis and require a decision: retry, skip only that file, or cancel the temporary session.
 
 `upload-files` uses the same resumable flow for selected files. Use `--source-root` to preserve the project's relative folders and `--target-path source=target/path.ext` for an exact destination. This lets same-named files go to distinct workspace folders without an accidental overwrite.
 
@@ -234,6 +234,23 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --pa
 If the plan shows the workspace is password-protected, deletion is blocked until the workspace password is passed through `--workspace-password` or `REJOINBI_WORKSPACE_PASSWORD` and validated by the platform. If the password is missing or invalid, no deletion is attempted and manual removal is required. If the plan shows pages linked from another workspace, deletion is blocked until `--allow-linked-pages` is provided. Fictitious pages cannot be deleted directly; delete the original page or workspace instead.
 
 Upload and export commands block common secret paths by default, including `.env`, private keys, token/password/credential files, local session folders, and unsafe ZIP entries. Use `--allow-sensitive-files` only after manually reviewing every file. Raw API access requires the endpoint-derived `--operation-scope` and exact `--confirm-api-path`; `api-send` also requires `--yes`, while mapped identity endpoints additionally require `--identity-scope`.
+
+## User registration and PIN
+
+`create-user` requires a login PIN by default. Use `--no-pin` only when the
+request explicitly says that the user may log in with e-mail and password;
+`--pin-required` makes the default explicit. To prepare a standard workbook,
+run:
+
+```powershell
+python .\scripts\rejoinbi.py create-user-template --output .\usuarios-template.xlsx
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-users-file --file .\usuarios-preenchidos.xlsx --confirm-count 3 --operation-scope identity --identity-scope --yes
+```
+
+The XLSX columns are `email`, `nome`, `matricula`, `setor`, `contato`, `perfil`,
+and `pin`. In `pin`, use `sim/obrigatório/com pin` or `não/sem pin/dispensado`;
+an empty value means PIN required. Batch creation reports each row and never
+changes groups or permissions as a side effect.
 
 ## Share Package
 

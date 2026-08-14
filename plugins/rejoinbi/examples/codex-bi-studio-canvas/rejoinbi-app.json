@@ -11,14 +11,7 @@
     "startup_mode": "file",
     "selected_file": "app.py",
     "auto_start": true,
-    "exclude": [
-      ".git",
-      "venv",
-      ".venv",
-      "__pycache__",
-      "node_modules",
-      ".pytest_cache"
-    ]
+    "exclude": []
   },
   "pages": [
     {

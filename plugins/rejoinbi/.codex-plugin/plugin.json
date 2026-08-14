@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi",
-  "version": "0.4.33+codex.20260813082108",
+  "version": "0.4.33+codex.20260813130645",
   "description": "Operate Rejoin BI workspaces, uploads, pages, BI Studio, Data Engine, and safely scoped platform administration from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",

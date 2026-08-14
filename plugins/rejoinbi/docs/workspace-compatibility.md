@@ -116,7 +116,7 @@ BI Studio canvas dashboards should be built like production BI products, not qui
 - The deploy-manifest command requires --upload-mode full or --upload-mode changed-files before it contacts the platform. Full mode can overwrite remote files that have the same paths; changed-files mode sends only explicit --changed-file paths and preserves every other workspace file.
 - For changed-files mode, retain each file's path relative to the project root. The plugin applies only those selected paths after server finalization and never cleans the rest of the workspace. Do not include a local database or recognized data file unless the requester explicitly approves the exact file with `--allow-database-files` and/or `--allow-data-files`.
 - Changed-files mode does not restart the workspace, reselect app.py, or alter pages unless the requester separately confirms --restart-after-upload or --sync-pages.
-- Exclude `.git`, `venv`, `.venv`, `__pycache__`, `node_modules`, `.pytest_cache`, build folders, temporary files, and secrets.
+- Uploads include every selected project file, including dot-files, `.env`, `.pyc`, `__pycache__`, virtual environments, `node_modules`, archives, build output, and temporary files. The platform only reserves its own resumable-session metadata and rejects unsafe paths; database/data artifacts still require the explicit confirmation described above.
 - For protected workspaces, validate the workspace password before uploading or creating pages.
 - After upload, check workspace status and logs if the container is not running.
 
@@ -140,3 +140,70 @@ python .\scripts\rejoinbi.py page-files --workspace <workspace-name>
 
 Use `--strict` with `validate-app` when warnings should block the publish.
 Use `page-maintenance audit-encoding --strict` when existing page labels and descriptions must be free of mojibake or `?` replacement before considering a platform production-ready.
+## Transfer Limits and Download Streaming
+
+Rejoin BI streams downloads and other binary artifacts through a per-workspace transfer
+gateway with a bounded number of concurrent in-flight streams. JSON, text, HTML pages,
+JavaScript, and CSS are proxied normally and do not consume transfer slots. The
+following contract explains which responses are treated as downloads and how to avoid
+or diagnose `HTTP 429` "O limite de transferências deste workspace foi atingido".
+
+### Download detection
+
+A response is classified as a download when at least one of these is true:
+
+- Path matches a transfer route: `/download`, `/export`, `/attachment`, `/blob`, `/files/`.
+- Header `Content-Disposition` contains `attachment`.
+- Header `Content-Length` is present and larger than `8 MB` (binary streams are chunked;
+  JSON/text responses are not eligible even at large sizes).
+- MIME type is binary or file-like: `application/pdf`, `application/octet-stream`,
+  `application/zip`, `application/x-7z-compressed`, `application/vnd.*` (for example
+  `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` for XLSX),
+  other `application/*` non-`json`/`xml` types, `text/csv`, `image/*`, `audio/*`,
+  `video/*`, `font/*`, `multipart/*`, `text/calendar`, or `text/plain` with attachment
+  disposition. `application/json`, `application/*+json`, `text/html`, `text/css`, and
+  `text/javascript` are proxied through the normal cached/rewrite flow and never count
+  as transfers.
+
+### Per-workspace transfer slots
+
+- Each workspace keeps its own semaphore of in-flight transfer streams
+  (`PROXY_STREAM_MAX_INFLIGHT_PER_CONTAINER`, default `8`).
+- Every acquired slot is registered as a lease with a grace period
+  (`PROXY_STREAM_LEASE_GRACE_SECONDS`, default `120`); a background guardian
+  (`PROXY_STREAM_LEASE_SWEEP_SECONDS`, default `10`) releases expired leases so slots
+  cannot stay stuck after a cancelled download, a browser abort, a client disconnect,
+  or a waitress/WSGI interruption.
+- When all slots are busy, the gateway answers `429` with
+  `O limite de transferências deste workspace foi atingido. Tente novamente em alguns segundos.`
+  and `Retry-After: 2`.
+
+### Correct app behavior
+
+- Serve generated files with explicit `Content-Type` and `Content-Disposition`; use
+  `send_file`/`send_from_directory` (Flask) or equivalent so the runtime can set
+  `Content-Length` and stream the body instead of buffering it.
+- Downloads must not be wrapped by RLS or rewrite logic; JSON APIs used by pages
+  continue through the normal flow.
+- Test large and binary endpoints from an authenticated client after deploy and
+  confirm `200` plus the download header; do not treat `429` as an app bug.
+- If `429` persists on a single request, the transfer semaphore for that workspace is
+  exhausted or a lease is stuck. Wait `~130 s` (grace period) or ask the platform
+  operator to restart the gateway service for that workspace.
+
+### Response headers to expect
+
+- Gateway stream responses include `X-Rejoin-Proxy-Transfer: stream` and
+  `Cache-Control: no-store`, and appear with `X-Rejoin-Gateway: page` plus
+  `X-Rejoin-Gateway-Upstream: 127.0.0.1:<workspace-port>`.
+- A `429` with that message and `Retry-After: 2` means the per-workspace slot pool is
+  busy; it is a transfer-limit response from the gateway, not an app error.
+- An intermittent `HTTP 500` from waitress on the same URL usually means the upstream
+  stream was aborted while the slot remains leased; the lease guardian releases it at
+  the end of the grace period.
+
+### Plan status
+
+- `subscription-status` returning `trial_undefined` has no relation to this limit:
+  the 429 message is emitted only by the transfer-slot semaphore, not by the plan or
+  subscription configuration.

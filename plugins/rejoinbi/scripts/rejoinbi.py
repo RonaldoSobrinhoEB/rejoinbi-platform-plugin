@@ -142,6 +142,7 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "create-group",
     "create-page",
     "create-user",
+    "create-users-file",
     "create-workspace",
     "delete-ai-config",
     "delete-announcement",
@@ -205,6 +206,7 @@ IDENTITY_GOVERNANCE_COMMANDS = {
     "download-users",
     "download-permissions",
     "create-user",
+    "create-users-file",
     "update-user",
     "set-user-password",
     "delete-user",
@@ -221,6 +223,7 @@ IDENTITY_GOVERNANCE_COMMANDS = {
 }
 IDENTITY_GOVERNANCE_MUTATING_COMMANDS = {
     "create-user",
+    "create-users-file",
     "update-user",
     "set-user-password",
     "delete-user",
@@ -335,6 +338,9 @@ COMMAND_OPERATION_SCOPES = {
     "assign-user-group": "identity",
     "create-group": "identity",
     "create-user": "identity",
+    "create-user-template": "local",
+    "user-template": "local",
+    "create-users-file": "identity",
     "delete-group": "identity",
     "delete-user": "identity",
     "download-permissions": "identity",
@@ -2758,9 +2764,6 @@ def open_upload_files(paths: list[str], stack: ExitStack, *, allow_sensitive: bo
         path = Path(raw_path).expanduser().resolve()
         if not path.is_file():
             raise RejoinBIError(f"File not found: {path}")
-        reason = sensitive_path_reason(path)
-        if reason and not allow_sensitive:
-            raise RejoinBIError(f"Refusing to upload sensitive-looking file {path}: {reason}. Use --allow-sensitive-files only after manual review.")
         mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         result.append(("files", (path.name, stack.enter_context(path.open("rb")), mime)))
     return result
@@ -2841,16 +2844,27 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
 
 
 def iter_folder_files(root: Path, exclude_names: set[str], *, allow_sensitive: bool = False) -> list[Path]:
-    files = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        rel_parts = {part.lower() for part in path.relative_to(root).parts}
-        if rel_parts.intersection(exclude_names):
-            continue
-        if sensitive_path_reason(path.relative_to(root)) and not allow_sensitive:
-            continue
-        files.append(path)
+    """Return every regular file in *root*.
+
+    Upload selection deliberately does not classify or exclude any project
+    content: dot-files, ``.git``, caches, virtual environments, archives and
+    secret-looking names all remain eligible. The legacy ``exclude_names``
+    parameter is intentionally ignored so an old manifest cannot silently
+    omit files. ``os.walk`` is used instead of ``Path.rglob`` so an unreadable
+    directory fails visibly instead of silently disappearing from a large
+    deployment.
+    """
+    files: list[Path] = []
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    for folder, dir_names, file_names in os.walk(root, topdown=True, onerror=raise_walk_error):
+        current = Path(folder)
+        for name in file_names:
+            path = current / name
+            if path.is_file():
+                files.append(path)
     return sorted(files, key=lambda item: item.relative_to(root).as_posix().lower())
 
 
@@ -2909,12 +2923,6 @@ def build_individual_upload_entries(args: argparse.Namespace) -> list[tuple[Path
         path = Path(raw_path).expanduser().resolve()
         if not path.is_file():
             raise RejoinBIError(f"File not found: {path}")
-        reason = sensitive_path_reason(path)
-        if reason and not args.allow_sensitive_files:
-            raise RejoinBIError(
-                f"Refusing to upload sensitive-looking file {path}: {reason}. "
-                "Use --allow-sensitive-files only after manual review."
-            )
         paths.append(path)
 
     source_root = Path(args.source_root).expanduser().resolve() if args.source_root else None
@@ -3112,12 +3120,6 @@ def build_deploy_changed_upload_entries(
             raise RejoinBIError(f"Changed file was selected more than once: {source_path}")
         seen_sources.add(source_path)
 
-        sensitive_reason = sensitive_path_reason(relative_path)
-        if sensitive_reason and not getattr(args, "allow_sensitive_files", False):
-            raise RejoinBIError(
-                f"Refusing to upload sensitive-looking changed file {source_path}: {sensitive_reason}. "
-                "Use --allow-sensitive-files only after manual review."
-            )
         relative_target = normalize_upload_relative_path(
             relative_path.as_posix(),
             field="changed file relative path",
@@ -3151,6 +3153,50 @@ def build_deploy_changed_upload_entries(
 def upload_error_retryable(error: Exception) -> bool:
     status = _http_status_from_error(str(error))
     return status is None or status in {408, 409, 425, 429} or status >= 500
+
+
+def read_upload_chunk_with_recovery(path: Path, offset: int, length: int) -> bytes:
+    """Read a stable chunk while another Windows process may have the file open.
+
+    A local application can keep a database, log, cache, or compiled file open
+    while the platform is being deployed.  We wait and retry the read itself,
+    rather than forcing the user to close the application or restart the whole
+    upload.  A changed file is retried as well so a partially-written snapshot
+    is never sent as if it were complete.
+    """
+    attempts = max(1, int(os.getenv("REJOINBI_LOCAL_FILE_READ_ATTEMPTS", "10")))
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            before = path.stat()
+            if before.st_size < offset + length:
+                raise RejoinBIError(
+                    f"The local file changed while it was being read (expected {offset + length} bytes, "
+                    f"found {before.st_size}): {path}"
+                )
+            with path.open("rb") as handle:
+                handle.seek(offset)
+                data = handle.read(length)
+            after = path.stat()
+            if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+                raise RejoinBIError(f"The local file changed while it was being read: {path}")
+            if len(data) != length:
+                raise RejoinBIError(f"Could not read the expected bytes from {path}")
+            return data
+        except (OSError, RejoinBIError) as exc:
+            last_error = exc
+            if attempt < attempts:
+                delay = min(5.0, 0.5 * (2 ** min(attempt - 1, 3)))
+                print(
+                    f"[upload] Arquivo em uso ou sendo alterado; nova tentativa em {delay:.1f}s: {path}",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+    raise RejoinBIError(
+        f"Não foi possível ler o arquivo local após {attempts} tentativas: {path}. "
+        f"O arquivo pode estar bloqueado por outro processo ou ainda sendo alterado. "
+        f"Último erro: {last_error}"
+    )
 
 
 def upload_diagnostic(*, relative: str, file_size: int, chunk_index: int, total_chunks: int, error: Exception) -> dict[str, Any]:
@@ -3412,11 +3458,7 @@ def upload_entries_chunked(
                 last_error: Exception | None = None
                 for attempt in range(1, max_retries + 1):
                     try:
-                        with path.open("rb") as handle:
-                            handle.seek(offset)
-                            chunk_bytes = handle.read(length)
-                        if len(chunk_bytes) != length:
-                            raise RejoinBIError(f"Could not read the expected bytes from {path}")
+                        chunk_bytes = read_upload_chunk_with_recovery(path, offset, length)
                         mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
                         client.request(
                             "POST",
@@ -3555,11 +3597,8 @@ def upload_folder_chunked(
     """Upload one complete folder in bounded, resumable parts."""
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    exclude_names = {item.lower() for item in (exclude or [
-        ".git", ".hg", ".svn", "venv", ".venv", "env", "__pycache__",
-        "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
-    ])}
-    paths = iter_folder_files(root, exclude_names, allow_sensitive=allow_sensitive)
+    # Keep the compatibility argument but never let it omit project content.
+    paths = iter_folder_files(root, set(), allow_sensitive=allow_sensitive)
     if not paths:
         raise RejoinBIError("No files found to upload.")
     entries = [(path, path.relative_to(root).as_posix()) for path in paths]
@@ -4484,10 +4523,266 @@ def cmd_users(args: argparse.Namespace) -> int:
             ("email", "Email"),
             ("nome", "Name"),
             ("perfil", "Profile"),
+            ("pin_required", "PIN"),
             ("setor", "Department"),
             ("ultimo_acesso", "Last access"),
         ]))
     return 0
+
+
+USER_TEMPLATE_COLUMNS = (
+    "email",
+    "nome",
+    "matricula",
+    "setor",
+    "contato",
+    "perfil",
+    "pin",
+)
+
+USER_TEMPLATE_INSTRUCTIONS = (
+    ("email", "Obrigatório. E-mail único do usuário."),
+    ("nome", "Obrigatório. Nome completo do usuário."),
+    ("matricula", "Opcional. Matrícula funcional."),
+    ("setor", "Obrigatório. Departamento/setor do usuário."),
+    ("contato", "Opcional. Telefone/WhatsApp; não é usado para autenticação."),
+    ("perfil", "Opcional. Administrador Principal, Master, Administrador ou Usuário. Padrão: Usuário."),
+    ("pin", "Opcional. Use sim/obrigatório/com pin para exigir PIN ou não/sem pin/dispensado para liberar o login sem PIN. Padrão: obrigatório."),
+)
+
+
+def _xlsx_inline_cell(reference: str, value: Any) -> str:
+    text_value = "" if value is None else str(value)
+    escaped = html.escape(text_value, quote=False)
+    return (
+        f'<c r="{reference}" t="inlineStr"><is><t xml:space="preserve">'
+        f'{escaped}</t></is></c>'
+    )
+
+
+def _xlsx_column_name(index: int) -> str:
+    result = ""
+    current = int(index)
+    while current:
+        current, remainder = divmod(current - 1, 26)
+        result = chr(65 + remainder) + result
+    return result or "A"
+
+
+def _xlsx_sheet_xml(rows: list[list[Any]]) -> str:
+    rendered_rows = []
+    for row_index, values in enumerate(rows, start=1):
+        cells = "".join(
+            _xlsx_inline_cell(f"{_xlsx_column_name(column_index)}{row_index}", value)
+            for column_index, value in enumerate(values, start=1)
+            if value is not None and str(value) != ""
+        )
+        rendered_rows.append(f'<row r="{row_index}">{cells}</row>')
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(rendered_rows)}</sheetData></worksheet>'
+    )
+
+
+def write_user_template(output: str | None = None) -> Path:
+    destination = Path(output or "usuarios-template.xlsx").expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    users_sheet = _xlsx_sheet_xml([list(USER_TEMPLATE_COLUMNS)])
+    instructions_sheet = _xlsx_sheet_xml(
+        [["campo", "instrução"]] + [[field, instruction] for field, instruction in USER_TEMPLATE_INSTRUCTIONS]
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    root_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+    workbook = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Usuarios" sheetId="1" r:id="rId1"/>'
+        '<sheet name="Instruções" sheetId="2" r:id="rId2"/></sheets></workbook>'
+    )
+    workbook_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>'
+        '</Relationships>'
+    )
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", root_rels)
+        archive.writestr("xl/workbook.xml", workbook)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+        archive.writestr("xl/worksheets/sheet1.xml", users_sheet)
+        archive.writestr("xl/worksheets/sheet2.xml", instructions_sheet)
+    return destination
+
+
+def _xlsx_text(element: Any) -> str:
+    return "".join(str(node.text or "") for node in element.iter() if node.tag.rsplit("}", 1)[-1] == "t")
+
+
+def read_user_xlsx_rows(path: str) -> list[dict[str, str]]:
+    source = Path(path).expanduser().resolve()
+    if source.suffix.lower() != ".xlsx":
+        raise RejoinBIError("O arquivo de cadastro precisa estar no formato .xlsx.")
+    if not source.is_file():
+        raise RejoinBIError(f"Arquivo XLSX não encontrado: {source}")
+    from xml.etree import ElementTree as ElementTree
+
+    ns = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main", "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
+    rel_ns = {"rel": "http://schemas.openxmlformats.org/package/2006/relationships"}
+    with zipfile.ZipFile(source, "r") as archive:
+        names = set(archive.namelist())
+        try:
+            workbook_root = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+        except Exception as exc:
+            raise RejoinBIError(f"Não foi possível ler o workbook XLSX: {exc}") from exc
+        relationships = {}
+        if "xl/_rels/workbook.xml.rels" in names:
+            rel_root = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            relationships = {
+                rel.attrib.get("Id"): rel.attrib.get("Target", "")
+                for rel in rel_root.findall("rel:Relationship", rel_ns)
+            }
+        sheet_element = None
+        for candidate in workbook_root.findall("main:sheets/main:sheet", ns):
+            if candidate.attrib.get("name") == "Usuarios" or sheet_element is None:
+                sheet_element = candidate
+                if candidate.attrib.get("name") == "Usuarios":
+                    break
+        if sheet_element is None:
+            raise RejoinBIError("O XLSX não contém uma planilha de usuários.")
+        target = relationships.get(sheet_element.attrib.get("{%s}id" % ns["rel"]), "")
+        target = target.lstrip("/")
+        sheet_path = target if target.startswith("xl/") else f"xl/{target}"
+        if sheet_path not in names:
+            raise RejoinBIError(f"A planilha do XLSX não foi encontrada: {sheet_path}")
+        shared_strings = []
+        if "xl/sharedStrings.xml" in names:
+            shared_root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+            shared_strings = [_xlsx_text(item) for item in shared_root.findall("main:si", ns)]
+        root = ElementTree.fromstring(archive.read(sheet_path))
+        raw_rows: dict[int, dict[int, str]] = {}
+        for row in root.findall("main:sheetData/main:row", ns):
+            row_index = int(row.attrib.get("r") or len(raw_rows) + 1)
+            values: dict[int, str] = {}
+            for cell in row.findall("main:c", ns):
+                match = re.match(r"([A-Z]+)", str(cell.attrib.get("r") or "").upper())
+                if not match:
+                    continue
+                column_index = 0
+                for char in match.group(1):
+                    column_index = column_index * 26 + ord(char) - 64
+                cell_type = cell.attrib.get("t")
+                if cell_type == "inlineStr":
+                    value = _xlsx_text(cell.find("main:is", ns)) if cell.find("main:is", ns) is not None else ""
+                else:
+                    raw_value = cell.findtext("main:v", default="", namespaces=ns)
+                    value = shared_strings[int(raw_value)] if cell_type == "s" and raw_value.isdigit() and int(raw_value) < len(shared_strings) else raw_value
+                values[column_index] = str(value or "").strip()
+            raw_rows[row_index] = values
+    if not raw_rows:
+        return []
+    header_row = raw_rows[min(raw_rows)]
+    headers = {column: _normalize_user_field_name(value) for column, value in header_row.items() if value}
+    if not headers:
+        raise RejoinBIError("A primeira linha do XLSX precisa conter os nomes das colunas.")
+    rows = []
+    for row_index in sorted(raw_rows):
+        if row_index == min(raw_rows):
+            continue
+        row = {headers[column]: value for column, value in raw_rows[row_index].items() if column in headers and value}
+        if any(row.values()):
+            rows.append(row)
+    return rows
+
+
+def _normalize_user_field_name(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+
+
+def _parse_user_pin_required(value: Any, *, default: bool = True) -> bool:
+    normalized = _normalize_user_field_name(value)
+    if not normalized:
+        return bool(default)
+    if normalized in {"nao", "no", "false", "0", "sem_pin", "dispensado", "desativado", "optional", "opcional"}:
+        return False
+    if normalized in {"sim", "yes", "true", "1", "pin", "com_pin", "obrigatorio", "required", "exigido"}:
+        return True
+    raise RejoinBIError(f"Valor de PIN inválido: {value!r}. Use sim/obrigatório ou não/sem pin.")
+
+
+def _user_payload_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = {_normalize_user_field_name(key): value for key, value in row.items()}
+    email = str(normalized.get("email") or "").strip().lower()
+    name = str(normalized.get("nome") or normalized.get("name") or normalized.get("nome_completo") or "").strip()
+    sector = str(normalized.get("setor") or normalized.get("departamento") or normalized.get("department") or "").strip()
+    if not email or not name or not sector:
+        raise RejoinBIError("Cada linha precisa preencher email, nome e setor.")
+    return {
+        "email": email,
+        "nome": name,
+        "matricula": str(normalized.get("matricula") or "").strip(),
+        "setor": sector,
+        "contato": str(normalized.get("contato") or normalized.get("whatsapp") or normalized.get("telefone") or "").strip(),
+        "perfil": str(normalized.get("perfil") or normalized.get("profile") or "Usuário").strip() or "Usuário",
+        "pin_required": _parse_user_pin_required(normalized.get("pin") or normalized.get("pin_required") or normalized.get("pin_obrigatorio"), default=True),
+    }
+
+
+def cmd_create_user_template(args: argparse.Namespace) -> int:
+    output = write_user_template(args.output)
+    print_payload({
+        "success": True,
+        "template": str(output),
+        "columns": list(USER_TEMPLATE_COLUMNS),
+        "pin_values": ["sim/obrigatório/com pin", "não/sem pin/dispensado"],
+    }, as_json=args.json)
+    return 0
+
+
+def cmd_create_users_file(args: argparse.Namespace) -> int:
+    rows = read_user_xlsx_rows(args.file)
+    if not rows:
+        raise RejoinBIError("O XLSX não contém linhas de usuários para cadastrar.")
+    if args.confirm_count is None or int(args.confirm_count) != len(rows):
+        raise RejoinBIError(
+            f"Cadastro em lote bloqueado: confirme a quantidade exata com --confirm-count {len(rows)} antes de usar --yes."
+        )
+    client = make_client(args)
+    results = []
+    for index, row in enumerate(rows, start=2):
+        try:
+            payload = _user_payload_from_row(row)
+            data, _ = client.request("POST", "/plataforma/api/register", json=payload, timeout=60)
+            results.append({"row": index, "email": payload["email"], "success": True, "response": data})
+        except Exception as exc:
+            results.append({"row": index, "success": False, "error": str(exc)})
+    failed = [item for item in results if not item.get("success")]
+    print_payload({
+        "success": not failed,
+        "file": str(Path(args.file).expanduser().resolve()),
+        "created": len(results) - len(failed),
+        "failed": len(failed),
+        "results": results,
+    }, as_json=args.json)
+    return 1 if failed else 0
 
 
 def cmd_create_user(args: argparse.Namespace) -> int:
@@ -4499,6 +4794,7 @@ def cmd_create_user(args: argparse.Namespace) -> int:
         "setor": args.setor or "Codex",
         "contato": args.contato or "",
         "perfil": args.perfil,
+        "pin_required": bool(args.pin_required),
     }
     data, _ = client.request("POST", "/plataforma/api/register", json=payload, timeout=60)
     result = data if isinstance(data, dict) else {"raw": data}
@@ -4633,7 +4929,7 @@ def save_platform_config_backup(client: RejoinBIClient, output: str | None = Non
 def cmd_update_user(args: argparse.Namespace) -> int:
     client = make_client(args)
     user = resolve_user(client, args.user)
-    if all(getattr(args, field, None) is None for field in ("name", "perfil", "setor", "matricula", "contato")):
+    if all(getattr(args, field, None) is None for field in ("name", "perfil", "setor", "matricula", "contato", "pin_required")):
         raise RejoinBIError("update-user requires at least one field to change.")
     require_identity_target_confirmation(
         args,
@@ -4650,6 +4946,8 @@ def cmd_update_user(args: argparse.Namespace) -> int:
         "perfil": args.perfil if args.perfil is not None else user.get("perfil", "Usuario"),
         "contato": args.contato if args.contato is not None else user.get("contato", ""),
     }
+    if args.pin_required is not None:
+        payload["pin_required"] = bool(args.pin_required)
     data, _ = client.request("POST", "/plataforma/api/update-user", json=payload, timeout=60)
     result = data if isinstance(data, dict) else {"raw": data}
     try:
@@ -7492,12 +7790,11 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
         # Review database/data artifacts before create-workspace or any other
         # remote mutation. The upload helper repeats this check immediately
         # before sending, so a changed local tree cannot bypass the guard.
-        preflight_exclude = set(
+        preflight_exclude = {
             str(item).casefold()
-            for item in (upload_cfg.get("exclude") or [
-                ".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache",
-            ])
-        )
+            for item in (upload_cfg.get("exclude") or [])
+            if str(item).strip()
+        }
         preflight_paths = iter_folder_files(
             app_root,
             preflight_exclude,
@@ -7533,7 +7830,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             rpa_support=manifest_bool(upload_cfg, "rpa_support", False),
             timeout=args.timeout,
             interval=args.interval,
-            exclude=list(upload_cfg.get("exclude") or [".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"]),
+            exclude=list(upload_cfg.get("exclude") or []),
             on_file_error=args.on_file_error,
             max_retries=args.max_retries,
             max_recovery_retries=args.max_recovery_retries,
@@ -7996,10 +8293,6 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
                 if item.get("level") == "warning":
                     warnings.append(f"{py_file.name} route {item.get('route')}: {item.get('message')}")
 
-    noisy_dirs = [name for name in (".git", "venv", ".venv", "node_modules", "__pycache__", ".pytest_cache") if (app_root / name).exists()]
-    if noisy_dirs:
-        warnings.append(f"Folder contains upload-noise directories that should be excluded: {', '.join(noisy_dirs)}")
-
     workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
     workspace_name = str(workspace_cfg.get("name") or "").strip()
     if workspace_name and not re.match(r"^[A-Za-z0-9_-]+$", workspace_name):
@@ -8021,7 +8314,7 @@ def cmd_validate_app(args: argparse.Namespace) -> int:
             "Do not create internal page menus, sidebars, or SPA route switchers inside dashboard files.",
             "Use Gerenciar Paginas for menu hierarchy, icon, permission, route, parent page, and active status.",
             "For Flask data endpoints, use /api/ routes to avoid platform proxy conflicts.",
-            "Upload the project root and exclude virtualenv/cache/node_modules/temp folders.",
+            "Upload the complete project root; no extension, hidden-file, or cache-folder filter is applied.",
             "Use static startup mode for HTML/ECharts-only dashboards.",
         ],
     }, as_json=args.json)
@@ -8374,8 +8667,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("upload-folder-select", help="Upload a project folder in resumable chunks, then choose startup options like the UI")
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--path", required=True)
-    p.add_argument("--exclude", action="append", default=[".git", "venv", ".venv", "__pycache__", "node_modules", ".pytest_cache"])
-    p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--exclude", action="append", default=[], help="Deprecated compatibility option; project uploads always include every file in the selected folder")
+    p.add_argument("--allow-sensitive-files", action="store_true", help="Deprecated compatibility flag; all file names and extensions are accepted")
     p.add_argument("--allow-database-files", action="store_true", help="After explicit review, allow database files in this project upload")
     p.add_argument("--allow-data-files", action="store_true", help="After explicit review, allow data files in this project upload")
     p.add_argument("--selected-file", default="")
@@ -8588,9 +8881,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--setor", default="Codex")
     p.add_argument("--matricula", default="")
     p.add_argument("--contato", default="")
+    pin_group = p.add_mutually_exclusive_group()
+    pin_group.add_argument("--pin-required", dest="pin_required", action="store_true", help="Require PIN at login (default)")
+    pin_group.add_argument("--no-pin", dest="pin_required", action="store_false", help="Allow login with email and password only")
+    p.set_defaults(pin_required=True)
     p.add_argument("--yes", action="store_true", help="Confirm creation of this user")
     add_identity_scope_argument(p)
     p.set_defaults(func=cmd_create_user)
+
+    p = sub.add_parser("create-user-template", aliases=["user-template"], help="Create a standard XLSX user-registration template")
+    p.add_argument("--output", default="usuarios-template.xlsx")
+    p.set_defaults(func=cmd_create_user_template)
+
+    p = sub.add_parser("create-users-file", help="Create users from the standard XLSX template")
+    p.add_argument("--file", required=True)
+    p.add_argument("--confirm-count", type=int, help="Exact number of rows confirmed for creation")
+    p.add_argument("--yes", action="store_true", help="Confirm creation of all rows")
+    add_identity_scope_argument(p)
+    p.set_defaults(func=cmd_create_users_file)
 
     p = sub.add_parser("update-user", help="Edit a user profile")
     p.add_argument("--user", required=True, help="User id or email")
@@ -8599,6 +8907,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--setor")
     p.add_argument("--matricula")
     p.add_argument("--contato")
+    pin_group = p.add_mutually_exclusive_group()
+    pin_group.add_argument("--pin-required", dest="pin_required", action="store_true", help="Require PIN at login")
+    pin_group.add_argument("--no-pin", dest="pin_required", action="store_false", help="Disable PIN requirement for this user")
+    p.set_defaults(pin_required=None)
     p.add_argument("--confirm-user", help="Exact resolved user id or email required for the update")
     p.add_argument("--yes", action="store_true", help="Confirm the user change")
     add_identity_scope_argument(p)
