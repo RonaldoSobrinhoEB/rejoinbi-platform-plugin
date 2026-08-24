@@ -35,7 +35,7 @@ The complete boundary, including command families and non-authorizing requests, 
 | Editar Usuarios | `GET /plataforma/api/users`, `GET /plataforma/api/setores`, `GET /plataforma/api/users-presence`, `GET /plataforma/api/download-users`, `POST /plataforma/api/update-user`, `POST /plataforma/api/change-user-password`, `POST /plataforma/api/delete-user` | `users`, `sectors`, `user-presence`, `download-users`, `update-user`, `set-user-password`, `delete-user` |
 | Gerenciar Permissoes | `GET /plataforma/api/pages`, `GET /plataforma/api/permissive-pages`, `GET /plataforma/api/user-permissions/<id>`, `GET /plataforma/api/download-permissions`, `POST /plataforma/api/update-permissions`, `POST /plataforma/api/recalcular-permissoes` | `permission-pages`, `user-permissions`, `download-permissions`, `set-user-permissions`, `recalculate-permissions` |
 | Gerenciar Grupos | `GET /plataforma/api/groups`, `POST /plataforma/api/create-group`, `POST /plataforma/api/update-group`, `POST /plataforma/api/delete-group`, `POST /plataforma/api/assign-user-to-group` | `groups`, `create-group`, `update-group`, `delete-group`, `assign-user-group` |
-| Upload de Arquivos | `POST /plataforma/api/upload-init`, `POST /plataforma/api/upload-chunk`, `POST /plataforma/api/upload-finish`, `GET /plataforma/api/upload-finish-status`, `POST /plataforma/api/upload-apply-files`, `POST /plataforma/api/select-app-file`, `POST /plataforma/api/upload-multiple-files` | `upload-folder-select`, `upload-files` |
+| Upload de Arquivos | `POST /plataforma/api/upload-init`, `POST /plataforma/api/upload-chunk`, `POST /plataforma/api/upload-session-status`, `POST /plataforma/api/upload-skip-file`, `POST /plataforma/api/upload-cancel`, `POST /plataforma/api/upload-finish`, `GET /plataforma/api/upload-finish-status`, `GET /plataforma/api/upload-active-processes`, `POST /plataforma/api/upload-apply-files`, `POST /plataforma/api/select-app-file`, `POST /plataforma/api/upload-multiple-files` | `upload-folder-select`, `upload-files`. Recuperacao por arquivo: `--on-file-error {ask,retry,skip,cancel,fail}` + `--max-recovery-retries` |
 | Anuncios Internos | `GET /plataforma/api/anuncios/historico`, `GET /plataforma/api/anuncios/ativos`, `POST /plataforma/api/anuncios`, `DELETE /plataforma/api/anuncios/<id>` | `announcements`, `create-announcement`, `delete-announcement`, `announcement-groups` |
 | Configuracao WhatsApp | `/plataforma/api/whatsapp/*` | `whatsapp sessions`, `whatsapp groups`, `whatsapp create-group`, `whatsapp broadcast`, `whatsapp schedules`, `whatsapp pause-schedule`, `whatsapp resume-schedule`, `whatsapp diagnostics`, `whatsapp restart-service` |
 | Gestao de E-mails | `/plataforma/api/email/*` | `email sessions`, `email create-session`, `email groups`, `email create-group`, `email broadcast`, `email schedules`, `email pause-schedule`, `email resume-schedule`, `email external-contacts` |
@@ -46,10 +46,10 @@ The complete boundary, including command families and non-authorizing requests, 
 | Configuracao IA | `GET/POST/DELETE /plataforma/api/ai-config`, `POST /plataforma/api/ai-config/cleanup` | `ai-config`, `set-ai-config`, `delete-ai-config`, `cleanup-ai-config` |
 | Chaves Codex/IA | `/plataforma/api/codex/keys*`, `/plataforma/api/codex/auth-*` | `codex-keys stats`, `codex-keys list`, `codex-keys create`, `codex-keys update`, `codex-keys delete`, `codex-keys usage` |
 | Sistema de Auditoria | `GET /plataforma/api/audit/*`, `GET /plataforma/api/audit/export`, `POST /plataforma/api/audit-cleanup` | `audit logs`, `audit dashboard`, `audit health`, `audit log`, `audit cleanup`, `audit-export` |
-| Gateway/Upload | `/plataforma/api/python-versions`, `/upload-capabilities`, `/gateway/*`, `/upload-status/<id>`, `/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
+| Gateway/Upload | `/plataforma/api/python-versions`, `/plataforma/api/upload-capabilities`, `/plataforma/api/gateway/*`, `/plataforma/api/upload-status/<id>`, `/plataforma/api/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
 | Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
 | Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `studio-inventory`, `data-engine inventory`, `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
-| Bancos gerenciados | `/plataforma/api/managed-databases/*` | `managed-databases list/get/create/update/schema/query/integrity/download/tokens/create-token/revoke-token/audit/diagnostics/create-table/create-view/create-index/delete-object/inspect-sqlite/migrate-sqlite` |
+| Bancos gerenciados | `/plataforma/api/managed-databases/*` | `managed-databases list/get/create/update/delete/schema/query/integrity/download/tokens/create-token/revoke-token/audit/diagnostics/create-table/create-view/create-index/delete-object/inspect-sqlite/migrate-sqlite` |
 | BI Studio | `/plataforma/api/bi/*` | `studio-inventory`, `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
 
 ## Fast Platform Branding
@@ -57,16 +57,16 @@ The complete boundary, including command families and non-authorizing requests, 
 Export current branding:
 
 ```powershell
-python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --title "Minha Plataforma BI"
+python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --title "Minha Plataforma BI" --operation-scope platform
 ```
 
 Apply title, logos, favicon, and images with an automatic rollback backup:
 
 ```powershell
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding `
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding --operation-scope platform `
   --browser-title "Minha Plataforma BI" `
   --logo-image-file .\logo.png `
   --logo-menu-image-file .\logo-menu.png `
@@ -79,14 +79,14 @@ The command prints `backup_output` and a ready restore command. Keep that JSON w
 Apply a saved config:
 
 ```powershell
-python .\scripts\rejoinbi.py set-platform-config --data-file .\platform-config.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes
+python .\scripts\rejoinbi.py set-platform-config --data-file .\platform-config.json --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes --operation-scope platform
 ```
 
 Reset colors only:
 
 ```powershell
-python .\scripts\rejoinbi.py restore-platform-config-defaults --yes
+python .\scripts\rejoinbi.py restore-platform-config-defaults --yes --operation-scope platform
 ```
 
 ## Fast Admin Operations
@@ -105,22 +105,22 @@ python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx --o
 Check and repair menu/page configuration:
 
 ```powershell
-python .\scripts\rejoinbi.py menu-maintenance check-duplicates
-python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
-python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
+python .\scripts\rejoinbi.py menu-maintenance check-duplicates --operation-scope platform
+python .\scripts\rejoinbi.py page-maintenance verify-hierarchy --operation-scope pages
+python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes --operation-scope pages
 ```
 
 Use JSON payloads for high-variation screens:
 
 ```powershell
-python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
-python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
-python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
-python .\scripts\rejoinbi.py email pause-schedule --schedule-id 12 --yes
-python .\scripts\rejoinbi.py email resume-schedule --schedule-id 12 --yes
-python .\scripts\rejoinbi.py whatsapp pause-schedule --schedule-id 27 --yes
+python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes --operation-scope messaging
+python .\scripts\rejoinbi.py email pause-schedule --schedule-id 12 --yes --operation-scope messaging
+python .\scripts\rejoinbi.py email resume-schedule --schedule-id 12 --yes --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp pause-schedule --schedule-id 27 --yes --operation-scope messaging
 python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config.json --yes
-python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
+python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes --operation-scope ai
 python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes
 ```
 

@@ -110,26 +110,26 @@ Use terminal auth only for automation. Prefer browser auth for humans.
 ### Workspaces
 
 ```powershell
-python .\scripts\rejoinbi.py workspaceall
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-workspace --name workspace-name
-python .\scripts\rejoinbi.py workspace-content --workspace workspace-name
-python .\scripts\rejoinbi.py page-files --workspace workspace-name
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-workspace --workspace workspace-name --name new-name
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-workspace-password --workspace workspace-name --password "..."
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br workspace-start --workspace workspace-name
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br workspace-stop --workspace workspace-name
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br workspace-restart --workspace workspace-name
-python .\scripts\rejoinbi.py workspace-status --workspace workspace-name
-python .\scripts\rejoinbi.py workspace-logs --workspace workspace-name
-python .\scripts\rejoinbi.py workspace-versions --workspace workspace-name
+python .\scripts\rejoinbi.py workspaceall --operation-scope workspace
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-workspace --name workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py workspace-content --workspace workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py page-files --workspace workspace-name --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-workspace --workspace workspace-name --name new-name --operation-scope workspace
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-workspace-password --workspace workspace-name --password "..." --operation-scope workspace
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br workspace-start --workspace workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br workspace-stop --workspace workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br workspace-restart --workspace workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py workspace-status --workspace workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py workspace-logs --workspace workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py workspace-versions --workspace workspace-name --operation-scope workspace
 ```
 
 ### Uploads
 
 ```powershell
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-files --workspace workspace-name --files C:\path\file.html --folder relatorios
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file app.py --startup-mode file --auto-start
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file index.html --startup-mode static --auto-start
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-files --workspace workspace-name --files C:\path\file.html --folder relatorios --operation-scope upload
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file app.py --startup-mode file --auto-start --operation-scope upload
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\path\app --selected-file index.html --startup-mode static --auto-start --operation-scope upload
 ```
 
 After upload, list files or smoke pages. Do not assume production is ready just because upload returned success.
@@ -138,13 +138,13 @@ After upload, list files or smoke pages. Do not assume production is ready just 
 
 ```powershell
 python .\scripts\rejoinbi.py pages --all-containers
-python .\scripts\rejoinbi.py accessible-pages
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Visão Geral" --file visao-geral.html --route visao-geral
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-page --page-id page-id --name "Operações" --route operacoes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-page-order --page-id child-id --parent parent-id --position 20
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br resolve-page --page-ref page-id
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance verify-hierarchy
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance audit-encoding
+python .\scripts\rejoinbi.py accessible-pages --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-page --workspace workspace-name --name "Visão Geral" --file visao-geral.html --route visao-geral --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-page --page-id page-id --name "Operações" --route operacoes --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-page-order --page-id child-id --parent parent-id --position 20 --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br resolve-page --page-ref page-id --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance verify-hierarchy --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br page-maintenance audit-encoding --operation-scope pages
 ```
 
 Visible page names should match the user's language and may include accents. Technical page ids, routes, and filenames should stay ASCII and stable.
@@ -159,7 +159,7 @@ Always follow this sequence:
 ```powershell
 python .\scripts\rejoinbi.py validate-app --manifest C:\path\rejoinbi-app.json
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest C:\path\rejoinbi-app.json --create-workspace --replace-pages --upload-mode full --operation-scope deployment
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest C:\path\rejoinbi-app.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest C:\path\rejoinbi-app.json --operation-scope pages
 ```
 
 The manifest should contain one HTML file per platform page. Do not create a dashboard SPA with internal page tabs or menus. The platform menu owns page navigation.
@@ -169,13 +169,13 @@ For an existing workspace, do not silently resend the whole folder. Ask the requ
 ### Platform Branding
 
 ```powershell
-python .\scripts\rejoinbi.py platform-config
-python .\scripts\rejoinbi.py colors-config
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --title "Minha BI"
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file C:\logo.png --logo-menu-image-file C:\menu.png --favicon-image-file C:\favicon.png
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup C:\backup.json --yes
+python .\scripts\rejoinbi.py platform-config --operation-scope platform
+python .\scripts\rejoinbi.py colors-config --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --title "Minha BI" --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding --browser-title "Minha BI" --logo-image-file C:\logo.png --logo-menu-image-file C:\menu.png --favicon-image-file C:\favicon.png --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup C:\backup.json --yes --operation-scope platform
 ```
 
 Changing title/logos/favicon/colors affects the Rejoin BI server and persists after the local computer is formatted. Backups are local files and should be preserved if rollback matters.
@@ -204,11 +204,11 @@ Standard `Usuario` should not be treated as an allowed plugin operator. Use stan
 ### Announcements
 
 ```powershell
-python .\scripts\rejoinbi.py announcements
+python .\scripts\rejoinbi.py announcements --operation-scope messaging
 # This needs explicit group-scope authorization.
 python .\scripts\rejoinbi.py announcement-groups --operation-scope identity --identity-scope
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-announcement --title "Aviso" --message "Mensagem" --all
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-announcement --announcement-id 1 --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-announcement --title "Aviso" --message "Mensagem" --all --operation-scope messaging
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-announcement --announcement-id 1 --yes --operation-scope messaging
 ```
 
 Confirm audience before creating announcements.
@@ -216,15 +216,15 @@ Confirm audience before creating announcements.
 ### RLS
 
 ```powershell
-python .\scripts\rejoinbi.py rls pages
-python .\scripts\rejoinbi.py rls page-info --page-id page-id
-python .\scripts\rejoinbi.py rls page-config --page-id page-id --container-id 12
-python .\scripts\rejoinbi.py rls config --page-id page-id --container-id 12
-python .\scripts\rejoinbi.py rls data --container-id 12
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --data-file C:\rls-config.json --yes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --data-file C:\rls-page-mapping.json --yes
-python .\scripts\rejoinbi.py rls test-config --page-id page-id --container-id 12
-python .\scripts\rejoinbi.py rls-export --output C:\rls.xlsx
+python .\scripts\rejoinbi.py rls pages --operation-scope rls
+python .\scripts\rejoinbi.py rls page-info --page-id page-id --operation-scope rls
+python .\scripts\rejoinbi.py rls page-config --page-id page-id --container-id 12 --operation-scope rls
+python .\scripts\rejoinbi.py rls config --page-id page-id --container-id 12 --operation-scope rls
+python .\scripts\rejoinbi.py rls data --container-id 12 --operation-scope rls
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --data-file C:\rls-config.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --data-file C:\rls-page-mapping.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py rls test-config --page-id page-id --container-id 12 --operation-scope rls
+python .\scripts\rejoinbi.py rls-export --output C:\rls.xlsx --operation-scope rls
 ```
 
 Use JSON files for complex RLS payloads. RLS is page and workspace/container scoped; always pass `container_id` when a page lives in a workspace, because the same page id/route pattern can exist in different contexts during tests. For N-cardinality tests, configure `coluna_usuario_1` as the user column, `coluna_dim_n` as the dimension column, create the user row with `rls create-data`, then add explicit allowed values with `rls create-dimension`.
@@ -233,11 +233,11 @@ End-to-end RLS smoke sequence:
 
 ```powershell
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-rls-suite\rejoinbi-app.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages --operation-scope deployment
 # Only when the requester explicitly asks for the identity/permission part of the RLS test.
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --confirm-user usuario@example.com --permissions codex-rls-suite-visao --operation-scope identity --identity-scope --yes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-rls-suite\rejoinbi-app.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls test-config --page-id codex-rls-suite-visao --container-id 12 --operation-scope rls
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-rls-suite\rejoinbi-app.json --operation-scope pages
 ```
 
 For realistic user/PIN validation, perform mailbox creation, user creation, and page-permission changes only after the requester explicitly requests this identity validation. Use the generated mailbox to create a standard `Usuario` with `--operation-scope identity --identity-scope --yes`, read the welcome e-mail for the provisional password, attempt the login to trigger a PIN e-mail, then complete the login with that PIN. Standard users are not valid plugin operators; `--allow-standard` is only for this test. After login, verify `accessible-pages` contains only the granted page and `rls test-config` contains only the allowed dimension values for that e-mail.
@@ -247,19 +247,19 @@ For realistic user/PIN validation, perform mailbox creation, user creation, and 
 ### Email And WhatsApp
 
 ```powershell
-python .\scripts\rejoinbi.py email sessions
-python .\scripts\rejoinbi.py email groups
-python .\scripts\rejoinbi.py email history --limit 20
-python .\scripts\rejoinbi.py email queue-status
-python .\scripts\rejoinbi.py email external-contacts
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br email create-group --data-file C:\email-group.json --yes
+python .\scripts\rejoinbi.py email sessions --operation-scope messaging
+python .\scripts\rejoinbi.py email groups --operation-scope messaging
+python .\scripts\rejoinbi.py email history --limit 20 --operation-scope messaging
+python .\scripts\rejoinbi.py email queue-status --operation-scope messaging
+python .\scripts\rejoinbi.py email external-contacts --operation-scope messaging
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br email create-group --data-file C:\email-group.json --yes --operation-scope messaging
 
-python .\scripts\rejoinbi.py whatsapp sessions
-python .\scripts\rejoinbi.py whatsapp groups
-python .\scripts\rejoinbi.py whatsapp diagnostics
-python .\scripts\rejoinbi.py whatsapp history --limit 20
-python .\scripts\rejoinbi.py whatsapp queue-status
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br whatsapp create-group --data-file C:\whatsapp-group.json --yes
+python .\scripts\rejoinbi.py whatsapp sessions --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp groups --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp diagnostics --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp history --limit 20 --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp queue-status --operation-scope messaging
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br whatsapp create-group --data-file C:\whatsapp-group.json --yes --operation-scope messaging
 ```
 
 Broadcasts and schedules can affect real recipients. Do not send messages unless the user provides explicit target, payload, and confirmation.
@@ -325,18 +325,18 @@ BI Studio tab display names may be localized with accents, but the exported slug
 ### System, Audit, Upload Gateway, Codex Keys
 
 ```powershell
-python .\scripts\rejoinbi.py audit dashboard
-python .\scripts\rejoinbi.py audit logs --per-page 50
-python .\scripts\rejoinbi.py audit-export --output C:\auditoria.xlsx
+python .\scripts\rejoinbi.py audit dashboard --operation-scope diagnostics
+python .\scripts\rejoinbi.py audit logs --per-page 50 --operation-scope diagnostics
+python .\scripts\rejoinbi.py audit-export --output C:\auditoria.xlsx --operation-scope diagnostics
 python .\scripts\rejoinbi.py sleep-manager status
-python .\scripts\rejoinbi.py route-map routes
-python .\scripts\rejoinbi.py system-admin database-status
-python .\scripts\rejoinbi.py system-admin runtime-readiness
-python .\scripts\rejoinbi.py upload-admin capabilities
-python .\scripts\rejoinbi.py upload-admin gateway-pairings
-python .\scripts\rejoinbi.py codex-keys stats
-python .\scripts\rejoinbi.py codex-keys list
-python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50
+python .\scripts\rejoinbi.py route-map routes --operation-scope system
+python .\scripts\rejoinbi.py system-admin database-status --operation-scope system
+python .\scripts\rejoinbi.py system-admin runtime-readiness --operation-scope system
+python .\scripts\rejoinbi.py upload-admin capabilities --operation-scope system
+python .\scripts\rejoinbi.py upload-admin gateway-pairings --operation-scope system
+python .\scripts\rejoinbi.py codex-keys stats --operation-scope ai
+python .\scripts\rejoinbi.py codex-keys list --operation-scope ai
+python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50 --operation-scope ai
 ```
 
 Treat system errors as platform/backend diagnostics unless required checks fail.

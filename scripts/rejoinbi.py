@@ -46,6 +46,8 @@ APP_HOME = Path(os.environ.get("REJOINBI_PLUGIN_HOME") or (Path.home() / ".rejoi
 SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
+# Mantenha em sincronia com .codex-plugin/plugin.json (version).
+PLUGIN_VERSION = "0.4.34"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
@@ -1011,7 +1013,7 @@ class RejoinBIClient:
         self.operation_scope = str(operation_scope or "").strip().lower()
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "rejoinbi-platform-plugin/0.1.0",
+            "User-Agent": f"rejoinbi-platform-plugin/{PLUGIN_VERSION}",
             "X-RejoinBI-Client": "rejoinbi-platform-plugin",
         })
         self.session_path = SESSION_DIR / f"{session_slug(self.base_url)}.json"
@@ -3448,6 +3450,8 @@ def upload_entries_chunked(
         total_chunks = max(1, (file_size + chunk_size - 1) // chunk_size)
         completed_chunks = completed_by_file.setdefault(relative, set())
         recovery_retries = 0
+        shrink_attempts = 0
+        restart_file = False
         while True:
             failure: tuple[int, Exception] | None = None
             for chunk_index in range(total_chunks):
@@ -3479,12 +3483,44 @@ def upload_entries_chunked(
                         break
                     except (OSError, RejoinBIError) as exc:
                         last_error = exc
+                        if (
+                            _http_status_from_error(str(exc)) == 413
+                            and chunk_size > 1024 * 1024
+                            and shrink_attempts < 6
+                        ):
+                            # Servidor rejeitou o tamanho da parte. Reduza o chunk,
+                            # descarte as partes ja aceitas deste arquivo (os indices
+                            # mudam) e reenvie o arquivo inteiro do inicio; a
+                            # plataforma sobrescreve partes por indice de forma
+                            # idempotente.
+                            shrink_attempts += 1
+                            chunk_size = max(1024 * 1024, chunk_size // 2)
+                            total_chunks = max(1, (file_size + chunk_size - 1) // chunk_size)
+                            completed_by_file[relative] = set()
+                            completed_chunks = completed_by_file[relative]
+                            state["chunk_size"] = chunk_size
+                            record_completed_chunks(state, completed_by_file)
+                            persist_upload_state(state_path, state)
+                            restart_file = True
+                            last_error = None
+                            print(
+                                f"HTTP 413: reduzindo o chunk para "
+                                f"{chunk_size // (1024 * 1024)} MB e reenviando "
+                                f"{relative} do inicio."
+                            )
+                            break
                         if attempt < max_retries:
                             time.sleep(min(15, 2 ** (attempt - 1)))
+                if restart_file:
+                    failure = None
+                    break
                 if last_error is not None:
                     failure = (chunk_index, last_error)
                     break
             if failure is None:
+                if restart_file:
+                    restart_file = False
+                    continue
                 uploaded_files.append({"path": relative, "size": file_size, "is_binary": False})
                 break
 
@@ -8341,7 +8377,7 @@ def cmd_api_post(args: argparse.Namespace) -> int:
     require_yes(args, "api-send can mutate the selected platform and requires --yes after reviewing the target path and payload.")
     method = args.method.upper()
     path_only = urlparse(args.path).path or args.path
-    if method == "DELETE" and re.match(r"^/plataforma/api/containers/[^/]+/?$", path_only):
+    if method == "DELETE" and re.match(r"^/plataforma/api/containers/[^/]+(/|$)", path_only):
         raise RejoinBIError(
             "api-send cannot delete workspaces directly. Use delete-workspace so the official plugin preserves "
             "dry-run output, workspace password validation, and explicit name/id confirmation."

@@ -55,7 +55,7 @@ This is why a route can appear to work after a delay but fail immediately throug
 ## Plugin Safeguards
 
 - `deploy-manifest` refreshes menu caches and waits for page readiness after creating pages.
-- `smoke-pages` now fails with exit code 1 if `container_name`, `browser_route_ok`, or `menu_safe` is false.
+- `smoke-pages` now fails with exit code 1 if `html_ok`, `browser_route_ok`, or `menu_safe` is false. The `menu_safe` gate depends on the page's `container_name` being present in `accessible-pages` (otherwise the browser menu could fall back to a broken `container_<id>` URL).
 - Mutating commands require `--tenant subdomain.rejoinbi.com.br` unless `--use-active-tenant` is explicitly passed.
 - `validate-app` warns when pt-BR display names look unaccented and warns when a static page route differs from the HTML file route.
 - `bi-normalize-export` normalizes extracted BI Studio export folders to ASCII technical slugs and adds a parquet engine dependency when needed.

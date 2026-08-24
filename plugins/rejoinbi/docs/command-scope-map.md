@@ -78,7 +78,7 @@ Identity raw paths additionally require `--identity-scope`; raw writes also requ
 
 ```powershell
 # Deployment cannot access identity APIs.
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest `
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --operation-scope deployment `
   --manifest .\rejoinbi-app.json --operation-scope deployment
 
 # Explicit identity read.

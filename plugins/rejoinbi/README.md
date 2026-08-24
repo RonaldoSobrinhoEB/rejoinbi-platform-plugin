@@ -146,43 +146,43 @@ python .\scripts\rejoinbi.py user-presence --operation-scope identity --identity
 python .\scripts\rejoinbi.py download-users --output .\usuarios.xlsx --operation-scope identity --identity-scope
 python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx --operation-scope identity --identity-scope
 
-python .\scripts\rejoinbi.py menu
-python .\scripts\rejoinbi.py menu-maintenance check-duplicates
-python .\scripts\rejoinbi.py menu-maintenance reload
+python .\scripts\rejoinbi.py menu --operation-scope platform
+python .\scripts\rejoinbi.py menu-maintenance check-duplicates --operation-scope platform
+python .\scripts\rejoinbi.py menu-maintenance reload --operation-scope platform
 
-python .\scripts\rejoinbi.py page-files --workspace codex-suite
-python .\scripts\rejoinbi.py page-maintenance verify-orphan-permissions
-python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
-python .\scripts\rejoinbi.py set-page-order --page-id pagina-id --parent pagina-pai --position 20
+python .\scripts\rejoinbi.py page-files --workspace codex-suite --operation-scope pages
+python .\scripts\rejoinbi.py page-maintenance verify-orphan-permissions --operation-scope pages
+python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes --operation-scope pages
+python .\scripts\rejoinbi.py set-page-order --page-id pagina-id --parent pagina-pai --position 20 --operation-scope pages
 
-python .\scripts\rejoinbi.py rls pages
-python .\scripts\rejoinbi.py rls page-config --page-id pagina-id --container-id 12
-python .\scripts\rejoinbi.py rls test-config --page-id pagina-id --container-id 12
-python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
-python .\scripts\rejoinbi.py rls set-page-mapping --data-file .\rls-page-mapping.json --yes
-python .\scripts\rejoinbi.py rls-export --output .\rls.xlsx
+python .\scripts\rejoinbi.py rls pages --operation-scope rls
+python .\scripts\rejoinbi.py rls page-config --page-id pagina-id --container-id 12 --operation-scope rls
+python .\scripts\rejoinbi.py rls test-config --page-id pagina-id --container-id 12 --operation-scope rls
+python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py rls set-page-mapping --data-file .\rls-page-mapping.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py rls-export --output .\rls.xlsx --operation-scope rls
 
-python .\scripts\rejoinbi.py audit logs --per-page 50
-python .\scripts\rejoinbi.py audit-export --output .\auditoria.xlsx
+python .\scripts\rejoinbi.py audit logs --per-page 50 --operation-scope diagnostics
+python .\scripts\rejoinbi.py audit-export --output .\auditoria.xlsx --operation-scope diagnostics
 python .\scripts\rejoinbi.py sleep-manager status
 
-python .\scripts\rejoinbi.py email sessions
-python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
-python .\scripts\rejoinbi.py whatsapp sessions
-python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
+python .\scripts\rejoinbi.py email sessions --operation-scope messaging
+python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp sessions --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes --operation-scope messaging
 
-python .\scripts\rejoinbi.py codex-keys list
-python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
-python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50
+python .\scripts\rejoinbi.py codex-keys list --operation-scope ai
+python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes --operation-scope ai
+python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50 --operation-scope ai
 
-python .\scripts\rejoinbi.py upload-admin capabilities
-python .\scripts\rejoinbi.py upload-admin gateway-pairings
-python .\scripts\rejoinbi.py route-map routes
-python .\scripts\rejoinbi.py system-admin database-status
+python .\scripts\rejoinbi.py upload-admin capabilities --operation-scope system
+python .\scripts\rejoinbi.py upload-admin gateway-pairings --operation-scope system
+python .\scripts\rejoinbi.py route-map routes --operation-scope system
+python .\scripts\rejoinbi.py system-admin database-status --operation-scope system
 
 python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
 python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
-python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin
+python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin --operation-scope diagnostics
 python .\scripts\rejoinbi.py data-engine db-connections --project-id 1
 python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file .\dados.xlsx
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file .\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
@@ -205,13 +205,13 @@ Use this when changing RLS logic, page routing, permissions, or user/PIN handlin
 
 ```powershell
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-rls-suite\rejoinbi-app.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file .\rls-config.json --yes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file .\rls-page-mapping.json --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages --operation-scope deployment
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file .\rls-config.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file .\rls-page-mapping.json --yes --operation-scope rls
 # Only if the user explicitly requested this permission test.
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permissions --user usuario@example.com --confirm-user usuario@example.com --permissions codex-rls-suite-visao --operation-scope identity --identity-scope --yes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-data --data-file .\rls-data.json --yes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-dimension --data-file .\rls-dimension.json --yes
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-data --data-file .\rls-data.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls create-dimension --data-file .\rls-dimension.json --yes --operation-scope rls
 ```
 
 For a real standard-user test, perform the user and direct-permission steps only when the requester explicitly asks for an identity/RLS access validation. Use `--operation-scope identity --identity-scope --yes` and the resolved `--confirm-user` on each identity write. Connect only with `--allow-standard` for this negative/validation test. A correct result shows `plugin_profile_allowed: false` for the standard user, `accessible-pages` containing only the granted page, and `rls test-config` returning `allowed_values` only for that user's configured dimension values.
@@ -223,12 +223,12 @@ The RLS smoke dashboard intentionally uses fictitious local JSON so agents can v
 Workspace and page removal always starts as a dry-run plan. The plan includes the resolved workspace/page, parent-child-grandchild page tree, linked fictitious/hierarchy references, and verification guards. Destructive, upload, publish, and configuration commands require the explicit platform address with `--tenant subdomain.rejoinbi.com.br` unless you intentionally pass `--use-active-tenant`.
 
 ```powershell
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12 --workspace-password "senha-do-workspace"
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --operation-scope workspace
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12 --operation-scope workspace
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-workspace --workspace codex-suite --yes --confirm-name codex-suite --confirm-id 12 --workspace-password "senha-do-workspace" --operation-scope workspace
 
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview --yes --confirm-page-id codex-suite-overview --cascade
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview --operation-scope pages
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br delete-page --page-id codex-suite-overview --yes --confirm-page-id codex-suite-overview --cascade --operation-scope pages
 ```
 
 If the plan shows the workspace is password-protected, deletion is blocked until the workspace password is passed through `--workspace-password` or `REJOINBI_WORKSPACE_PASSWORD` and validated by the platform. If the password is missing or invalid, no deletion is attempted and manual removal is required. If the plan shows pages linked from another workspace, deletion is blocked until `--allow-linked-pages` is provided. Fictitious pages cannot be deleted directly; delete the original page or workspace instead.

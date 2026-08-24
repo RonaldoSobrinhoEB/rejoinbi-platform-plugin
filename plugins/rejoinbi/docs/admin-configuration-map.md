@@ -57,16 +57,16 @@ The complete boundary, including command families and non-authorizing requests, 
 Export current branding:
 
 ```powershell
-python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --title "Minha Plataforma BI"
+python .\scripts\rejoinbi.py export-platform-config --output .\platform-config.json --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br backup-platform-branding --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br platform-title --title "Minha Plataforma BI" --operation-scope platform
 ```
 
 Apply title, logos, favicon, and images with an automatic rollback backup:
 
 ```powershell
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding `
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-platform-branding --operation-scope platform `
   --browser-title "Minha Plataforma BI" `
   --logo-image-file .\logo.png `
   --logo-menu-image-file .\logo-menu.png `
@@ -79,14 +79,14 @@ The command prints `backup_output` and a ready restore command. Keep that JSON w
 Apply a saved config:
 
 ```powershell
-python .\scripts\rejoinbi.py set-platform-config --data-file .\platform-config.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes
+python .\scripts\rejoinbi.py set-platform-config --data-file .\platform-config.json --operation-scope platform
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br restore-platform-branding --backup .\platform-config.json --yes --operation-scope platform
 ```
 
 Reset colors only:
 
 ```powershell
-python .\scripts\rejoinbi.py restore-platform-config-defaults --yes
+python .\scripts\rejoinbi.py restore-platform-config-defaults --yes --operation-scope platform
 ```
 
 ## Fast Admin Operations
@@ -105,22 +105,22 @@ python .\scripts\rejoinbi.py download-permissions --output .\permissoes.xlsx --o
 Check and repair menu/page configuration:
 
 ```powershell
-python .\scripts\rejoinbi.py menu-maintenance check-duplicates
-python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
-python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes
+python .\scripts\rejoinbi.py menu-maintenance check-duplicates --operation-scope platform
+python .\scripts\rejoinbi.py page-maintenance verify-hierarchy --operation-scope pages
+python .\scripts\rejoinbi.py page-maintenance fix-hierarchy --yes --operation-scope pages
 ```
 
 Use JSON payloads for high-variation screens:
 
 ```powershell
-python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes
-python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes
-python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes
-python .\scripts\rejoinbi.py email pause-schedule --schedule-id 12 --yes
-python .\scripts\rejoinbi.py email resume-schedule --schedule-id 12 --yes
-python .\scripts\rejoinbi.py whatsapp pause-schedule --schedule-id 27 --yes
+python .\scripts\rejoinbi.py rls set-config --data-file .\rls-config.json --yes --operation-scope rls
+python .\scripts\rejoinbi.py email create-group --data-file .\email-group.json --yes --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp create-group --data-file .\whatsapp-group.json --yes --operation-scope messaging
+python .\scripts\rejoinbi.py email pause-schedule --schedule-id 12 --yes --operation-scope messaging
+python .\scripts\rejoinbi.py email resume-schedule --schedule-id 12 --yes --operation-scope messaging
+python .\scripts\rejoinbi.py whatsapp pause-schedule --schedule-id 27 --yes --operation-scope messaging
 python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config.json --yes
-python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes
+python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes --operation-scope ai
 python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes
 ```
 

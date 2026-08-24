@@ -54,8 +54,8 @@ python .\scripts\rejoinbi.py bi-export --project-id "Canvas Executivo Pro" --out
 Expand-Archive .\canvas-export.zip .\canvas-export
 python .\scripts\rejoinbi.py bi-normalize-export --path .\canvas-export --remove-old
 python .\scripts\rejoinbi.py validate-app --manifest .\canvas-export\rejoinbi-app.json --strict
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\canvas-export\rejoinbi-app.json --create-workspace --replace-pages
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\canvas-export\rejoinbi-app.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\canvas-export\rejoinbi-app.json --create-workspace --replace-pages --operation-scope deployment
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\canvas-export\rejoinbi-app.json --operation-scope pages
 ```
 
 ## Production Checks

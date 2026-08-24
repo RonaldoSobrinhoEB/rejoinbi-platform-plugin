@@ -78,7 +78,7 @@ python .\scripts\rejoinbi.py bi-export --project-id "Projeto BI" --output C:\tmp
 Expand-Archive C:\tmp\bi.zip C:\tmp\bi-export
 python .\scripts\rejoinbi.py bi-normalize-export --path C:\tmp\bi-export --remove-old
 python .\scripts\rejoinbi.py validate-app --manifest C:\tmp\bi-export\rejoinbi-app.json --strict
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\tmp\bi-export --selected-file app.py --startup-mode file --auto-start
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace workspace-name --path C:\tmp\bi-export --selected-file app.py --startup-mode file --auto-start --operation-scope upload
 ```
 
 After normalization and upload, update Gerenciar Paginas so visible names keep accents, but `arquivo` and `rota` are ASCII. Example: name `Visão 360`, file `visao-geral`, route `visao-geral`.
@@ -131,11 +131,11 @@ python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-s
 After publishing:
 
 ```powershell
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --operation-scope pages
 python .\scripts\rejoinbi.py pages --workspace <workspace-name>
-python .\scripts\rejoinbi.py page-maintenance verify-hierarchy
-python .\scripts\rejoinbi.py page-maintenance audit-encoding
-python .\scripts\rejoinbi.py page-files --workspace <workspace-name>
+python .\scripts\rejoinbi.py page-maintenance verify-hierarchy --operation-scope pages
+python .\scripts\rejoinbi.py page-maintenance audit-encoding --operation-scope pages
+python .\scripts\rejoinbi.py page-files --workspace <workspace-name> --operation-scope pages
 ```
 
 Use `--strict` with `validate-app` when warnings should block the publish.

@@ -39,7 +39,7 @@ The following groups are registered in `COMMAND_OPERATION_SCOPES`. Automated tes
 
 | Scope | Registered commands |
 | --- | --- |
-| Authentication/local | `auth`, `browser-login`, `connect`, `ensure`, `ensure-connected`, `login`, `status`, `tenant`, `validate-app`, `bi-normalize-export`, `export-package` |
+| Authentication/local | `auth`, `browser-login`, `connect`, `ensure`, `ensure-connected`, `login`, `status`, `tenant`, `validate-app`, `bi-normalize-export`, `export-package`, `create-user-template`, `user-template` |
 | Workspace | `workspaceall`, `validate-workspace`, `workspace-content`, `create-workspace`, `update-workspace`, `delete-workspace`, `workspace-delete`, `set-workspace-password`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-version-export`, `workspace-version-restore`, `workspace-version-delete`, `workspace-schedule`, `workspace-notification`, `workspace-input`, `workspace-build`, `workspace-stop-all` |
 | Upload/deployment | `upload-files`, `upload-folder-select`, `deploy-manifest` |
 | BI | `bi-projects`, `studio-inventory`, `bi-inventory`, `bi-data-inventory`, `bi-create-project`, `bi-init-canvas`, `bi-tabs`, `bi-tab-content`, `bi-create-tab`, `bi-duplicate-tab`, `bi-rename-tab`, `bi-delete-tab`, `bi-reorder-tabs`, `bi-load-layout`, `bi-save-layout`, `bi-themes`, `bi-save-theme`, `bi-delete-theme`, `bi-export`, `publish-bi`, `echarts-template` |
@@ -78,7 +78,7 @@ Identity raw paths additionally require `--identity-scope`; raw writes also requ
 
 ```powershell
 # Deployment cannot access identity APIs.
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest `
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --operation-scope deployment `
   --manifest .\rejoinbi-app.json --operation-scope deployment
 
 # Explicit identity read.
