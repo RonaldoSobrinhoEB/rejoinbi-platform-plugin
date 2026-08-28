@@ -2,7 +2,7 @@
 
 Codex plugin for Rejoin BI platform environments under `rejoinbi.com.br`.
 
-The plugin also manages persistent SQLite databases outside project workspaces through `managed-databases`. It can create visual-schema payloads for tables, views and indexes, inspect schema, query, read audit/diagnostics timelines, inspect a project's current SQLite database, reproduce tables/data/indexes/views/triggers in a new managed database, and validate counts and integrity. Remote clients use the platform HTTPS API with a scoped, rate-limited and revocable database token; they must never open the SQLite file through a network share.
+The plugin also manages persistent SQLite databases outside project workspaces through `managed-databases`. It can create visual-schema payloads for tables, views and indexes, inspect schema, query, read audit/diagnostics timelines, inspect a project's current SQLite database, reproduce tables/data/indexes/views/triggers in a new managed database, and validate counts and integrity. Remote clients use the platform HTTPS API with a scoped, rate-limited and revocable database token; they must never open the SQLite file through a network share. For high-volume RPA/agent loads, use the atomic `bulk_insert` and transactional `statements` write modes with a keep-alive session and the real limits from `/limits` — see `docs/managed-database-external-api.md`; never one request per row. Multiple subdomains (projects) can be stored and switched without losing sessions: `tenants list`, `tenants current`, `tenants use <subdomain>`, `tenants rm <subdomain> --yes` — see `docs/multi-subdomain-conversations.md`.
 
 ## Scope Isolation
 

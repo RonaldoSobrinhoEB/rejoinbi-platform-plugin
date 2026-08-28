@@ -16,7 +16,7 @@ The only deliberate multi-area transaction is `deploy-manifest`, which is locked
 
 | Scope value | Area | Main commands |
 | --- | --- | --- |
-| `auth` | Local authentication/session handling | `connect`, `login`, `ensure`, `status`, `tenant` |
+| `auth` | Local authentication/session handling | `connect`, `login`, `ensure`, `status`, `tenant`, `tenants` |
 | `local` | Local-only tools | `validate-app`, `bi-normalize-export`, `export-package` |
 | `workspace` | Workspace lifecycle and configuration | `workspace*`, `create-workspace`, `update-workspace`, `delete-workspace`, `validate-workspace` |
 | `upload` | Direct project/file transfer | `upload-folder-select`, `upload-files` |
@@ -39,7 +39,7 @@ The following groups are registered in `COMMAND_OPERATION_SCOPES`. Automated tes
 
 | Scope | Registered commands |
 | --- | --- |
-| Authentication/local | `auth`, `browser-login`, `connect`, `ensure`, `ensure-connected`, `login`, `status`, `tenant`, `validate-app`, `bi-normalize-export`, `export-package` |
+| Authentication/local | `auth`, `browser-login`, `connect`, `ensure`, `ensure-connected`, `login`, `status`, `tenant`, `tenants`, `validate-app`, `bi-normalize-export`, `export-package` |
 | Workspace | `workspaceall`, `validate-workspace`, `workspace-content`, `create-workspace`, `update-workspace`, `delete-workspace`, `workspace-delete`, `set-workspace-password`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-version-export`, `workspace-version-restore`, `workspace-version-delete`, `workspace-schedule`, `workspace-notification`, `workspace-input`, `workspace-build`, `workspace-stop-all` |
 | Upload/deployment | `upload-files`, `upload-folder-select`, `deploy-manifest` |
 | BI | `bi-projects`, `studio-inventory`, `bi-inventory`, `bi-data-inventory`, `bi-create-project`, `bi-init-canvas`, `bi-tabs`, `bi-tab-content`, `bi-create-tab`, `bi-duplicate-tab`, `bi-rename-tab`, `bi-delete-tab`, `bi-reorder-tabs`, `bi-load-layout`, `bi-save-layout`, `bi-themes`, `bi-save-theme`, `bi-delete-theme`, `bi-export`, `publish-bi`, `echarts-template` |

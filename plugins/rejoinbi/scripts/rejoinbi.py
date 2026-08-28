@@ -50,7 +50,7 @@ DEFAULT_DOMAIN = "rejoinbi.com.br"
 PLUGIN_VERSION = "0.4.34"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
-SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant"}
+SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant", "tenants"}
 PROFILE_HIERARCHY = {
     "administrador principal": {"label": "Administrador Principal", "tier": 4},
     "master": {"label": "Master", "tier": 3},
@@ -284,6 +284,7 @@ COMMAND_OPERATION_SCOPES = {
     "login": "auth",
     "status": "auth",
     "tenant": "auth",
+    "tenants": "auth",
     "validate-app": "local",
     # Workspace lifecycle.
     "create-workspace": "workspace",
@@ -2441,6 +2442,131 @@ def cmd_status(args: argparse.Namespace) -> int:
         }
     print_payload(data, as_json=args.json)
     return 0
+
+
+# ---------------------------------------------------------------------------
+# tenants: manage multiple saved Rejoin BI subdomains (one session per subdomain)
+# ---------------------------------------------------------------------------
+def _list_known_tenants() -> list[dict[str, Any]]:
+    """All subdomains with a saved session, plus the active one."""
+    entries: list[dict[str, Any]] = []
+    if SESSION_DIR.exists():
+        for path in sorted(SESSION_DIR.glob("*.json")):
+            data = read_json(path, {})
+            if not isinstance(data, dict):
+                continue
+            base_url = str(data.get("base_url") or "").strip()
+            if not base_url:
+                continue
+            identity = data.get("identity") if isinstance(data.get("identity"), dict) else {}
+            entries.append({
+                "subdomain": tenant_host_from_base_url(base_url),
+                "base_url": base_url,
+                "saved_at": str(data.get("saved_at") or ""),
+                "email": str(identity.get("email") or ""),
+            })
+    active = ""
+    if CONFIG_PATH.exists():
+        cfg = read_json(CONFIG_PATH, {})
+        if isinstance(cfg, dict):
+            active = str(cfg.get("active_base_url") or "").strip()
+    active_host = tenant_host_from_base_url(active) if active else ""
+    for entry in entries:
+        entry["active"] = bool(active_host and entry["subdomain"] == active_host)
+    return entries
+
+
+def cmd_tenants(args: argparse.Namespace) -> int:
+    """Local multi-tenant store: list, current, use, rm."""
+    action = str(getattr(args, "tenants_action", "list") or "list").strip().lower()
+    if action == "list":
+        entries = _list_known_tenants()
+        active = ""
+        if CONFIG_PATH.exists():
+            cfg = read_json(CONFIG_PATH, {})
+            active = str(cfg.get("active_base_url") or "").strip() if isinstance(cfg, dict) else ""
+        print_payload({"tenants": entries, "count": len(entries), "active": active}, as_json=args.json)
+        return 0
+
+    target = str(getattr(args, "target", "") or "").strip()
+    if action in ("use", "rm") and not target:
+        raise RejoinBIError("Informe o subdominio/URL: tenants " + action + " <subdomain>")
+
+    base_url = resolve_base_url(
+        subdomain=target,
+        domain=getattr(args, "domain", DEFAULT_DOMAIN) or DEFAULT_DOMAIN,
+        base_url="",
+    )
+    slug = session_slug(base_url)
+    session_file = SESSION_DIR / f"{slug}.json"
+    host = tenant_host_from_base_url(base_url)
+
+    if action == "current":
+        active = ""
+        if CONFIG_PATH.exists():
+            cfg = read_json(CONFIG_PATH, {})
+            active = str(cfg.get("active_base_url") or "").strip() if isinstance(cfg, dict) else ""
+        cur = None
+        if active:
+            cur_host = tenant_host_from_base_url(active)
+            for e in _list_known_tenants():
+                if e["subdomain"] == cur_host:
+                    cur = e
+                    break
+        print_payload({
+            "current": tenant_host_from_base_url(active) if active else None,
+            "base_url": active or None,
+            "has_session": bool(cur),
+            "saved_at": (cur or {}).get("saved_at"),
+            "email": (cur or {}).get("email"),
+            "hint": "Use 'tenants list' para ver todos e 'tenants use <subdomain>' para trocar.",
+        }, as_json=args.json)
+        return 0 if active else 2
+
+    if action == "use":
+        if not session_file.exists():
+            raise RejoinBIError(
+                "Sem sessao salva para " + host +
+                ". Rode: python scripts/rejoinbi.py --tenant " + host + " ensure",
+            )
+        config = read_json(CONFIG_PATH, {})
+        if not isinstance(config, dict):
+            config = {}
+        config["active_base_url"] = base_url
+        config["updated_at"] = utc_now()
+        write_json(CONFIG_PATH, config)
+        print_payload({
+            "success": True,
+            "active": host,
+            "base_url": base_url,
+            "note": "Comandos mutantes exigem --tenant; use --use-active-tenant somente apos confirmar este subdominio.",
+        }, as_json=args.json)
+        return 0
+
+    if action == "rm":
+        require_yes(args, "Removing the saved session for this subdomain requires --yes.")
+        was_active = False
+        active = ""
+        if CONFIG_PATH.exists():
+            cfg = read_json(CONFIG_PATH, {})
+            if isinstance(cfg, dict):
+                active = str(cfg.get("active_base_url") or "").strip()
+        if active:
+            was_active = tenant_host_from_base_url(active) == host
+        removed = False
+        if session_file.exists():
+            session_file.unlink()
+            removed = True
+        print_payload({
+            "success": True,
+            "removed": removed,
+            "subdomain": host,
+            "was_active": was_active,
+            "note": "Use 'tenants list' para conferir as sessoes restantes.",
+        }, as_json=args.json)
+        return 0
+
+    raise RejoinBIError("Acao desconhecida de tenants: " + action)
 
 
 def load_workspaces(client: RejoinBIClient) -> list[dict[str, Any]]:
@@ -8566,6 +8692,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("status", help="Check current session")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("tenants", help="Manage multiple saved Rejoin BI subdomains (sessions). Acoes: list, current, use <sub>, rm <sub>")
+    p.add_argument("tenants_action", nargs="?", default="list", choices=["list", "current", "use", "rm"], help="list | current | use <subdomain> | rm <subdomain>")
+    p.add_argument("target", nargs="?", default="", help="Subdominio ou URL completa (use/rm)")
+    p.add_argument("--yes", action="store_true", help="Confirmar remocao (rm)")
+    p.set_defaults(func=cmd_tenants, password=None, pin=None, terminal=False)
 
     p = sub.add_parser("workspaceall", help="List all workspaces/containers")
     p.set_defaults(func=cmd_workspaceall)
