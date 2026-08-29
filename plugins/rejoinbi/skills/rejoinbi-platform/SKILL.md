@@ -66,6 +66,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "restaurar padrao", "voltar como estava", "desfazer visual": use `restore-platform-branding --backup <backup> --yes` when a backup exists. Use `restore-platform-config-defaults --yes` only when the user specifically wants platform defaults.
 - "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
 - "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with the explicit platform address in `--tenant`. For files selected from an existing project, pass `--source-root <project-root>` so their relative folders are preserved; use `--target-path <source>=<target/path.ext>` for an exact destination.
+- "remover arquivo avulso", "apagar arquivo solto", "remover arquivo da pasta X", "delete esse arquivo do workspace": use `remove-file --workspace <workspace> --path <rel/path> --type file` — always show the plan first with `--dry-run`, then run for real with `--yes` and `--confirm-path` exactly matching `--path`. Use `--type folder` only when the user asked to delete a folder. Never delete a file that a page/route depends on without the user confirming that exact path.
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
 - "criar pagina", "rota", "pai/filho/neto": use `create-page`, `update-page`, `set-page-order`, `page-maintenance`, and `resolve-page`. Keep visible names localized with accents, but keep `id`, `route`, and filenames ASCII. Run `page-maintenance audit-encoding` after manual or generated page changes when there is any risk of mojibake or `?` replacing accents.
 - "remover workspace": run `delete-workspace` first as a dry-run. If it has a password, block deletion unless the user provides the workspace password and validation succeeds.
@@ -372,6 +373,25 @@ Project upload is folder-only and resumable; ZIP project uploads are disabled. F
 ```powershell
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start --operation-scope upload
 ```
+
+
+
+## Remove Loose Files (arquivo avulso)
+
+Remove one file/folder left loose in the workspace content (outside a managed page tree). The CLI calls
+`POST /plataforma/api/delete-individual-item`; `--path` is the relative path inside the workspace content
+and `--confirm-path` must match it exactly.
+
+```
+# Preview only:
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br --operation-scope workspace remove-file --workspace 12 --path legado/antigo.html --type file --dry-run
+
+# Real removal:
+python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br --operation-scope workspace remove-file --workspace 12 --path legado/antigo.html --type file --confirm-path legado/antigo.html --yes
+```
+
+Use `--restart` to restart the container after removal. Removal without `--yes`/matching `--confirm-path`
+is blocked; a page-managed file should never be removed without the user naming that exact path.
 
 ## Resilient Upload Rules
 

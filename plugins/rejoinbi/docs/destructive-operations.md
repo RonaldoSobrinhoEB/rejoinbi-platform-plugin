@@ -68,3 +68,29 @@ Deletion is blocked when:
 ## Verification
 
 After a destructive API call, the CLI reloads workspaces/pages and reports whether the target still exists and whether any planned page ids remain. Treat any remaining planned page as a failed cleanup that needs manual inspection in Gerenciar Paginas.
+
+## Remove File (arquivo avulso)
+
+Removes a single loose file/folder (arquivo avulso) from a workspace container via
+`POST /plataforma/api/delete-individual-item`. This targets files uploaded outside the
+managed page tree — e.g. stray assets left in the workspace content.
+
+Dry run:
+
+```
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br remove-file --workspace codex-suite --path legado/antigo.html --type file --dry-run
+```
+
+Actual removal (requires the workspace operation scope and explicit confirmation):
+
+```
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br --operation-scope workspace remove-file --workspace codex-suite --path legado/antigo.html --type file --confirm-path legado/antigo.html --yes
+```
+
+Notes:
+
+- `--path` is the relative path inside the workspace content; `--confirm-path` must exactly match it.
+- `--type` is `file` (default) or `folder`.
+- `--restart` restarts the container after removal (default: no).
+- Removal is blocked when `--yes` is absent or `--confirm-path` does not match `--path`.
+

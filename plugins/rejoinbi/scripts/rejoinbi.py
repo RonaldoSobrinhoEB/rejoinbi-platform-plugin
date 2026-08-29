@@ -47,7 +47,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 # Mantenha em sincronia com .codex-plugin/plugin.json (version).
-PLUGIN_VERSION = "0.4.34"
+PLUGIN_VERSION = "0.4.35"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant", "tenants"}
@@ -167,6 +167,7 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "page-maintenance",
     "publish-bi",
     "recalculate-permissions",
+    "remove-file",
     "restore-platform-config-defaults",
     "restore-platform-branding",
     "rls",
@@ -309,6 +310,7 @@ COMMAND_OPERATION_SCOPES = {
     "workspace-version-export": "workspace",
     "workspace-version-restore": "workspace",
     "workspace-versions": "workspace",
+    "remove-file": "workspace",
     # Uploads and deployment.
     "deploy-manifest": "deployment",
     "upload-files": "upload",
@@ -806,7 +808,10 @@ def api_path_operation_scope(path: str) -> str:
         return "ai"
     if lowered.startswith(("/plataforma/api/upload", "/plataforma/api/select-app-file", "/plataforma/api/python-versions")):
         return "upload"
-    if lowered.startswith("/plataforma/api/containers"):
+    if lowered.startswith((
+        "/plataforma/api/delete-individual-item",
+        "/plataforma/api/containers",
+    )):
         return "workspace"
     if lowered.startswith((
         "/plataforma/api/platform-config",
@@ -7476,6 +7481,68 @@ def cmd_delete_page(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def build_remove_file_plan(args: argparse.Namespace, workspace: dict[str, Any]) -> dict[str, Any]:
+    """Plan a workspace content removal (arquivo avulso) without calling the platform."""
+    item_type = str(getattr(args, "type", "") or "").strip().lower()
+    if item_type not in ("file", "folder"):
+        raise RejoinBIError("--type must be 'file' or 'folder'.")
+    target_path = str(getattr(args, "path", "") or "").strip()
+    if not target_path:
+        raise RejoinBIError("--path is required and must be a relative path inside the workspace content.")
+    return {
+        "container_id": safe_str(workspace.get("id")),
+        "container_name": safe_str(workspace.get("nome") or workspace.get("name") or getattr(args, "workspace", "")),
+        "item_type": item_type,
+        "file_path": target_path,
+        "item_name": str(getattr(args, "name", "") or "").strip() or target_path.rsplit("/", 1)[-1],
+        "restart_container": bool(getattr(args, "restart", False)),
+    }
+
+
+def cmd_remove_file(args: argparse.Namespace) -> int:
+    """Remove a loose file/folder (arquivo avulso) from a workspace container."""
+    client = make_client(args)
+    if not safe_str(getattr(args, "workspace", "")):
+        raise RejoinBIError("--workspace is required (name, slug or id).")
+    workspace = resolve_workspace(client, getattr(args, "workspace", ""))
+    plan = build_remove_file_plan(args, workspace)
+    if args.dry_run or not args.yes:
+        print_payload({
+            "success": True,
+            "dry_run": True,
+            "message": "Remoção não executada. Re-execute com --yes e --confirm-path exato para remover o item.",
+            "plan": plan,
+        }, as_json=args.json)
+        return 0
+    if safe_str(getattr(args, "confirm_path", "")) != safe_str(plan["file_path"]):
+        print_payload({
+            "success": False,
+            "errors": ["--confirm-path deve ser EXATAMENTE igual a --path."],
+            "plan": plan,
+        }, as_json=args.json)
+        return 2
+    data, _ = client.request(
+        "POST",
+        "/plataforma/api/delete-individual-item",
+        json={
+            "container_id": plan["container_id"],
+            "file_path": plan["file_path"],
+            "item_type": plan["item_type"],
+            "item_name": plan["item_name"],
+            "restart_container": plan["restart_container"],
+        },
+        timeout=120,
+    )
+    if not isinstance(data, dict):
+        print_payload({"success": False, "message": f"Resposta inesperada do servidor: {data!r}", "plan": plan}, as_json=args.json)
+        return 1
+    if not data.get("success"):
+        print_payload({"success": False, "message": data.get("message") or "Falha ao remover o item.", "plan": plan}, as_json=args.json)
+        return 1
+    print_payload({"success": True, "message": data.get("message") or "Item removido.", "response": data, "plan": plan}, as_json=args.json)
+    return 0
+
 def cmd_update_page(args: argparse.Namespace) -> int:
     client = make_client(args)
     current_pages = list_pages(client, all_containers=True, include_inactive=True, exclude_fictitious=False)
@@ -9578,6 +9645,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--missing-ok", action="store_true")
     p.set_defaults(func=cmd_delete_page)
+
+    p = sub.add_parser("remove-file", help="Delete a loose file/folder (arquivo avulso) from a workspace container")
+    p.add_argument("--workspace", required=True, help="Workspace/container name, slug or id")
+    p.add_argument("--path", required=True, help="Relative path to the file/folder inside the workspace content")
+    p.add_argument("--type", choices=["file", "folder"], default="file", help="Item type to remove (default: file)")
+    p.add_argument("--name", help="Optional item name for logs")
+    p.add_argument("--confirm-path", help="Required with --yes. Must exactly match --path.")
+    p.add_argument("--restart", action="store_true", help="Restart the container after removal")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_remove_file)
+
 
     p = sub.add_parser("resolve-page", help="Resolve a page id or route to a platform URL")
     p.add_argument("--page-ref", required=True)
