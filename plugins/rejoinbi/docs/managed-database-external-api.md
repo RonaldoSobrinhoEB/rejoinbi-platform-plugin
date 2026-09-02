@@ -14,14 +14,15 @@ Todos os acessos externos usam **HTTPS**, um token revogável com escopo (`rjdb_
 |---|---|---|
 | `GET` | `/plataforma/api/managed-databases/external/<database_id>/limits` | Limites reais do servidor (bulk_max_rows, batch_rows, timeouts, concorrência, etc.) |
 | `POST` | `/plataforma/api/managed-databases/external/<database_id>/query` | Executa SQL legado, carga em lote atômica ou bloco transacional |
+| `POST` | `/plataforma/api/managed-databases/external/<database_id>/csv-import` | **Importação CSV** (multipart/form-data) — streaming parse C, até 1M linhas por request |
 
 ### `GET /limits` — exemplo de resposta
 ```json
 {
   "limits": {
-    "bulk_max_rows": 50000,
-    "bulk_max_rows_limit": 200000,
-    "batch_rows": 5000,
+    "bulk_max_rows": 200000,
+    "bulk_max_rows_limit": 1000000,
+    "batch_rows": 50000,
     "max_result_rows": 100000,
     "query_timeout_ms": 30000,
     "max_concurrent_queries": 4,
@@ -52,8 +53,8 @@ Clientes antigos continuam funcionando **sem nenhuma mudança**. As novidades s�
   "bulk_max_rows": 50000
 }
 ```
-- **Atômico**: 1 banco recebe tudo ou nada; internamente o servidor insere em lotes de `batch_rows` (5.000) dentro de uma única transação.
-- `bulk_max_rows` é `opcional` (padrão 50.000; teto 200.000). Acima do teto → erro `400` `bulk_max_exceeded`: **divida em mais de uma chamada**.
+- **Atômico**: 1 banco recebe tudo ou nada; internamente o servidor insere em lotes de `batch_rows` (50.000) dentro de uma única transação.
+- `bulk_max_rows` é `opcional` (padrão 200.000; teto 1.000.000). Acima do teto → erro `400` `bulk_max_exceeded`: **divida em mais de uma chamada**.
 - Escopo do token exigido: `data_write` ou `schema_admin`.
 
 ### 2.3 Bloco transacional — `statements` (recomendado para ciclos com DDL)
@@ -80,6 +81,37 @@ Clientes antigos continuam funcionando **sem nenhuma mudança**. As novidades s�
   - blocos de só leitura também são rejeitados em tokens de leitura pura.
 - Falha na instrução N → `400` com mensagem clara `Falha na instrução N do bloco transacional: ...` (não vira `503`).
 
+### 2.4 Importação CSV — `csv-import` (recomendado para volumetria extrema)
+
+Para transferências acima de ~50 mil linhas, o **CSV é o caminho mais rápido**: o servidor faz o parse em C (`csv.reader`) direto do stream do arquivo, sem materializar o payload inteiro em memória como o JSON bulk faz. Aceita até **1.000.000 de linhas por request**.
+
+```bash
+# HTTP multipart/form-data com um Bearer token de escrita
+curl -X POST "https://subdomain.rejoinbi.com.br/plataforma/api/managed-databases/external/<database_id>/csv-import" \
+  -H "Authorization: Bearer rjdb_..." \
+  -F "file=@dados.csv" \
+  -F "table=minha_tabela" \
+  -F "header=1"
+```
+
+**Parâmetros (multipart/form-data):**
+| Campo | Obrigatório | Descrição |
+|---|---|---|
+| `file` | sim | Arquivo `.csv` (UTF-8; BOM aceito) |
+| `table` | sim | Nome da tabela de destino |
+| `header` | não (default `1`) | `1`/`0` — primeira linha é cabeçalho? |
+| `columns` | não | Lista de colunas separada por vírgula; se ausente, usa o cabeçalho |
+
+- O arquivo é lido **em streaming** e inserido em lotes de `batch_rows` dentro de uma única transação atômica.
+- Linhas vazias são puladas; linhas com nº de valores diferente do esperado → `400` com o nº da linha.
+- Após o commit, o servidor faz `wal_checkpoint(PASSIVE)` (sem reescrever o WAL inteiro).
+- Escopo do token exigido: `data_write` ou `schema_admin`.
+
+**Resposta:**
+```json
+{ "success": true, "mode": "csv_import", "table": "minha_tabela", "columns": [...], "rows_inserted": 123456, "elapsed_ms": 5120 }
+```
+
 ---
 
 ## 3. Semântica de erros e concorrência
@@ -101,7 +133,8 @@ Clientes antigos continuam funcionando **sem nenhuma mudança**. As novidades s�
 
 - **Keep-alive**: reutilize a conexão com `requests.Session` (ou equivalente HTTP/1.1 persistente) — nunca abra uma conexão nova por requisição.
 - **Ciclo atômico**: prefira **um único** `statements` com `DROP → CREATE → INSERT(massa) → DROP → RENAME` em vez de várias chamadas separadas.
-- **Respeite `/limits`**: leia `bulk_max_rows`/`bulk_max_rows_limit` no início e divida lotes > 200.000.
+- **Prefira CSV para volumetria**: acima de ~50 mil linhas, use `csv-import` (streaming parse C) em vez de JSON bulk — 3-5x mais rápido.
+- **Respeite `/limits`**: leia `bulk_max_rows`/`bulk_max_rows_limit` no início e divida lotes > 1.000.000.
 - **Retry com backoff** em `423/429/503`, com timeout de cliente generoso (ex.: 180 s) para cargas grandes.
 - **Isolamento por RPA**: crie um `database_id` dedicado por cliente/workspace — cada banco é um arquivo `.sqlite3` próprio, então dois RPAs **nunca se bloqueiam**.
 - **Compatibilidade**: modos novos **coexistem** com o payload legado `{sql}`.
@@ -206,9 +239,24 @@ class ManagerManagedDB:
 
     def _bulk_teto(self):
         try:
-            return int(self.limites().get('bulk_max_rows_limit', 200000))
+            return int(self.limites().get('bulk_max_rows_limit', 1000000))
         except Exception:
-            return 200000
+            return 1000000
+
+    def csv_import(self, table, csv_path, header=True, columns=None):
+        """Importa CSV via streaming (preferido para >50k linhas)."""
+        data = {'table': table, 'header': '1' if header else '0'}
+        if columns:
+            data['columns'] = ','.join(columns)
+        with open(csv_path, 'rb') as fh:
+            r = self._s.post(
+                self._base + '/csv-import',
+                files={'file': (csv_path, fh, 'text/csv')},
+                data=data,
+                timeout=self.timeout,
+            )
+        r.raise_for_status()
+        return r.json()
 ```
 
 **Uso:**

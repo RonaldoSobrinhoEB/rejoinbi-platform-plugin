@@ -1134,6 +1134,27 @@ class RejoinBIClient:
                 if chunk:
                     handle.write(chunk)
 
+    def download_post(self, path: str, output: Path, *, timeout: int = DEFAULT_TIMEOUT, **kwargs: Any) -> None:
+        """POST e grava o corpo da resposta (CSV/binário) direto em arquivo, em streaming."""
+        self.ensure_scope_allows_path(path)
+        try:
+            response = self.session.post(self.url(path), timeout=timeout, stream=True, **kwargs)
+        except requests.RequestException as exc:
+            raise RejoinBIError(f"Download failed before response: {exc}") from exc
+        if not response.ok:
+            try:
+                payload = response.json()
+                message = payload.get("error") or payload.get("message") or response.text
+            except Exception:
+                message = response.text
+            message = compact_response_message(message)
+            raise RejoinBIError(f"Download failed with HTTP {response.status_code}: {message}")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+
     def download_workspace_export(
         self,
         workspace_id: Any,
@@ -6971,6 +6992,37 @@ def cmd_managed_databases(args: argparse.Namespace) -> int:
         database_id = required_arg(args, "database_id", "--database-id")
         token_id = required_arg(args, "token_id", "--token-id")
         data, _ = client.request("DELETE", f"{base}/{quote(database_id)}/tokens/{quote(token_id)}", timeout=args.timeout)
+    elif action == "csv-import":
+        require_yes(args, "Importing a CSV file writes managed data and requires --yes.")
+        database_id = required_arg(args, "database_id", "--database-id")
+        table = required_arg(args, "table", "--table")
+        csv_file = required_arg(args, "file", "--file")
+        csv_path = Path(csv_file).expanduser().resolve()
+        if not csv_path.is_file():
+            raise RejoinBIError(f"CSV file not found: {csv_path}")
+        fields = {"table": table, "header": "1" if getattr(args, "csv_header", True) else "0"}
+        columns = getattr(args, "columns", None)
+        if columns:
+            fields["columns"] = columns
+        with open(csv_path, "rb") as fh:
+            files = {"file": (csv_path.name, fh, "text/csv")}
+            data, _ = client.request(
+                "POST", f"{base}/{quote(database_id)}/csv-import",
+                files=files, data=fields, timeout=args.timeout,
+            )
+    elif action == "csv-export":
+        database_id = required_arg(args, "database_id", "--database-id")
+        sql = required_arg(args, "sql", "--sql")
+        out_path = Path(args.output or f"managed-database-{database_id}-export.csv").expanduser().resolve()
+        payload_export = {"sql": sql}
+        max_rows = getattr(args, "max_rows", None)
+        if max_rows:
+            payload_export["max_rows"] = max_rows
+        client.download_post(
+            f"{base}/{quote(database_id)}/csv-export", out_path,
+            json=payload_export, timeout=args.timeout,
+        )
+        data = {"success": True, "database_id": database_id, "output": str(out_path)}
     else:
         raise RejoinBIError(f"Unsupported managed database action: {action}")
 
@@ -9508,6 +9560,7 @@ def build_parser() -> argparse.ArgumentParser:
         "list", "get", "create", "update", "delete", "schema", "query", "integrity",
         "download", "tokens", "create-token", "revoke-token", "audit", "diagnostics",
         "create-table", "create-view", "create-index", "delete-object", "inspect-sqlite", "migrate-sqlite",
+        "csv-import", "csv-export",
     ])
     p.add_argument("--database-id", help="Managed database UUID")
     p.add_argument("--name", help="Database display name")
@@ -9522,6 +9575,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm-name", help="Exact database name required for deletion")
     p.add_argument("--output", help="Destination for a consistent SQLite backup")
     p.add_argument("--source", help="Local SQLite file to inspect or migrate")
+    p.add_argument("--file", help="CSV file to import (csv-import)")
+    p.add_argument("--table", help="Destination table for csv-import")
+    p.add_argument("--header", dest="csv_header", action="store_true", default=True, help="csv-import: first row is header (default True)")
+    p.add_argument("--no-header", dest="csv_header", action="store_false", help="csv-import: first row is data")
+    p.add_argument("--columns", help="csv-import: comma-separated column list (default: use CSV header)")
+    p.add_argument("--max-rows", dest="max_rows", type=int, help="csv-export: maximum rows to export")
     p.add_argument("--batch-size", type=int, default=100, help="Rows per migration request (default: 100)")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
