@@ -1,6 +1,6 @@
 ---
 name: rejoinbi-platform
-description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload and publish dashboards, operate BI Studio/Data Engine, manage persistent databases (including CSV import/export for high-volume transfers up to 1M rows), and inspect or migrate project SQLite databases with complete schema/data validation. Includes resumable folder and selected-file uploads with per-file diagnostics, explicit recovery choices, and path preservation. Use for Rejoin BI administration, dashboard deployment, managed database creation/query/backup/token/CSV work, and migration of a project's existing SQLite database into platform-managed storage.
+description: Connect Codex to a Rejoin BI platform address, inspect workspaces, upload and publish dashboards, operate BI Studio/Data Engine, manage persistent databases (including CSV import/export for high-volume transfers up to 1M rows), and inspect or migrate project SQLite databases with complete schema/data validation. Includes resumable folder and selected-file uploads with per-file diagnostics, explicit recovery choices, and path preservation. Use for Rejoin BI administration, dashboard deployment, reading workspace file/code content directly without download, managed database creation/query/backup/token/CSV work, and migration of a project's existing SQLite database into platform-managed storage.
 ---
 
 # Rejoin BI
@@ -65,6 +65,7 @@ Use this map before asking clarifying questions. When the request is broad, uncl
 - "mudar logo", "favicon", "icone", "imagem do menu", "cores", "identidade visual": use `backup-platform-branding` first, then `set-platform-branding` with the relevant image/color files. Mention the restore command from the tool output.
 - "restaurar padrao", "voltar como estava", "desfazer visual": use `restore-platform-branding --backup <backup> --yes` when a backup exists. Use `restore-platform-config-defaults --yes` only when the user specifically wants platform defaults.
 - "listar workspaces", "quais pastas/workspaces tem": use `workspaceall`; for files inside a workspace use `workspace-content` or `page-files`.
+- "ler o codigo", "ver o codigo", "mostrar o conteudo do arquivo", "entender o que o codigo faz", "leia o app.py", "abre o arquivo X do workspace", "o que tem nesse arquivo", "quais arquivos tem", "listar arquivos", "pastas": use `workspace-file list --workspace <workspace> --folder <folder>` to list the directory tree, then `workspace-file read --workspace <workspace> --path <rel/path> --raw` to read file content directly from the platform without downloading. Use `--raw` for code ingestion; without `--raw` the output includes metadata (encoding, sha256, size, editable). First run `workspace-content` or `workspace-file list` to discover the file structure, then `workspace-file read` for each file the user or the task needs to understand.
 - "subir X arquivo na pasta Y": use `upload-files --workspace <workspace> --files <file> --folder <folder>` with the explicit platform address in `--tenant`. For files selected from an existing project, pass `--source-root <project-root>` so their relative folders are preserved; use `--target-path <source>=<target/path.ext>` for an exact destination.
 - "remover arquivo avulso", "apagar arquivo solto", "remover arquivo da pasta X", "delete esse arquivo do workspace": use `remove-file --workspace <workspace> --path <rel/path> --type file` — always show the plan first with `--dry-run`, then run for real with `--yes` and `--confirm-path` exactly matching `--path`. Use `--type folder` only when the user asked to delete a folder. Never delete a file that a page/route depends on without the user confirming that exact path.
 - "criar dashboard", "publicar painel", "criar 3 paginas": build one standalone HTML file per Rejoin BI page, write a manifest, run `validate-app`, deploy with `deploy-manifest`, and finish with `smoke-pages`.
@@ -119,6 +120,7 @@ The analyzed codebase is a Flask/Python platform. The important API surface is:
 - Workspace deletion: `DELETE /plataforma/api/containers/<id>`. The platform deletes the workspace only after cleaning linked pages. The plugin must preview the full deletion plan first and require explicit confirmation.
 - Protected workspace validation: `POST /plataforma/api/validate-container-password` with `{container_id, password}`. This also marks the workspace as validated in the server session.
 - Direct file updates: `POST /plataforma/api/upload-multiple-files` is available for compatibility; prefer the plugin's resumable `upload-files` flow so large selected files use bounded chunks and exact target paths.
+- Read/list workspace file code without downloading: `GET /plataforma/api/workspace-file` with `list=1` and an optional `folder` returns the directory tree; with `path=<rel>` (no `list`) it returns one file's `content`, `encoding`, `sha256`, `size`, and `editable`. The plugin exposes both as `workspace-file list` and `workspace-file read --raw` so a model can understand deployed code directly.
 - User-like folder upload flow: start `POST /plataforma/api/upload-init`, send bounded parts through `POST /plataforma/api/upload-chunk`, recover with `GET /plataforma/api/upload-session-status` (always including `container_id`), optionally skip one broken file with `POST /plataforma/api/upload-skip-file`, cancel only the temporary session with `POST /plataforma/api/upload-cancel`, finish with `POST /plataforma/api/upload-finish`, then call `POST /plataforma/api/select-app-file` and poll `/plataforma/api/upload-status/<process_id>`. ZIP project uploads are disabled.
 - BI projects: `GET/POST /plataforma/api/bi/projects`, `GET /plataforma/api/bi/projects/<project_id>/export`.
 - BI publish: `POST /plataforma/api/bi/projects/<project_id>/internal-publish/start`, then poll `/status/<job_id>`.
@@ -376,6 +378,28 @@ Project upload is folder-only and resumable; ZIP project uploads are disabled. F
 python "$HOME\plugins\rejoinbi-platform\scripts\rejoinbi.py" --tenant subdomain.rejoinbi.com.br upload-folder-select --workspace 12 --path C:\path\dashboard --selected-file app.py --startup-mode file --auto-start --operation-scope upload
 ```
 
+
+
+Read workspace file code directly (no download needed):
+
+```powershell
+# List a workspace directory tree:
+python "$HOME\plugins
+ejoinbi-platform\scripts
+ejoinbi.py" --tenant subdomain.rejoinbi.com.br workspace-file list --workspace 12 --folder static --operation-scope workspace
+
+# Read a file's full code content directly from the platform (raw, best for code ingestion):
+python "$HOME\plugins
+ejoinbi-platform\scripts
+ejoinbi.py" --tenant subdomain.rejoinbi.com.br workspace-file read --workspace 12 --path app.py --raw --operation-scope workspace
+
+# Read with metadata (encoding, sha256, size, editable):
+python "$HOME\plugins
+ejoinbi-platform\scripts
+ejoinbi.py" --tenant subdomain.rejoinbi.com.br workspace-file read --workspace 12 --path app.py --operation-scope workspace
+```
+
+Use `workspace-file list` to discover the file tree inside a workspace, then `workspace-file read --raw` to get the source code of each relevant file. This is a read-only operation that uses the same ownership/password gate as the Workspace UI editor. Use it to understand a deployed project's code, inspect a file the user references, review an upload result, or prepare a targeted change without downloading anything to the local machine.
 
 
 ## Remove Loose Files (arquivo avulso)

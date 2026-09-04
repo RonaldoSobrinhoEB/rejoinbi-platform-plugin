@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi",
-  "version": "0.4.35+codex.20260828203000",
+  "version": "0.4.36+codex.20260904102228",
   "description": "Operate Rejoin BI workspaces, uploads, pages, BI Studio, Data Engine, and safely scoped platform administration from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",
@@ -24,7 +24,7 @@
   "interface": {
     "displayName": "Rejoin BI",
     "shortDescription": "Develop, publish, and safely operate Rejoin BI",
-    "longDescription": "Helps Codex connect to a full Rejoin BI address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, manage persistent databases, inspect and migrate project SQLite databases with schema/data validation, and operate pages, branding, messaging, AI, system tools, and upload diagnostics through the authenticated API. User records, direct permissions, and permission groups are isolated from ordinary work: they are inaccessible unless the request explicitly concerns that exact area and the matching scope and confirmation flags are supplied. Natural-language requests to create, manage, back up, query, tokenize, or migrate a database are routed to dedicated managed-databases workflows. Before any other platform action, validate a full address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
+    "longDescription": "Helps Codex connect to a full Rejoin BI address, list workspaces, validate protected workspaces, upload app files, publish BI/ECharts projects, inventory BI Studio and Data Engine resources, read workspace file/code content directly without download, manage persistent databases, inspect and migrate project SQLite databases with schema/data validation, and operate pages, branding, messaging, AI, system tools, and upload diagnostics through the authenticated API. User records, direct permissions, and permission groups are isolated from ordinary work: they are inaccessible unless the request explicitly concerns that exact area and the matching scope and confirmation flags are supplied. Natural-language requests to create, manage, back up, query, tokenize, or migrate a database are routed to dedicated managed-databases workflows. Before any other platform action, validate a full address such as subdomain.rejoinbi.com.br and confirm authentication/permission.",
     "developerName": "Ronaldo Sobrinho",
     "category": "Engineering",
     "capabilities": [

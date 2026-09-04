@@ -47,7 +47,8 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "restaurar padrao" | Restore default platform colors/config | `backup-platform-branding` | `restore-platform-config-defaults --yes` | Only use platform defaults when the user clearly asks for defaults |
 | "voltar como estava", "desfazer visual" | Restore previous backup | Identify backup path | `restore-platform-branding --backup ... --yes` | Always save pre-restore backup unless user says not to |
 | "listar workspaces", "quais workspaces tem" | Workspace inventory | `workspaceall` | none | Summarize id, name, status, password flag, last upload |
-| "o que tem nesse workspace", "listar arquivos", "pastas" | Workspace file tree | `workspace-content --workspace ...` | none | If asking page files, use `page-files` |
+| "o que tem nesse workspace", "listar arquivos", "pastas" | Workspace file tree | `workspace-content --workspace ...`, `workspace-file list --workspace ...` | none | If asking page files, use `page-files` |
+| "ler o codigo", "ver o codigo", "mostrar conteudo", "leia o app.py", "abre o arquivo X do workspace" | Read one workspace file's code without downloading | `workspace-file list --workspace ... --folder ...`, then `workspace-file read --workspace ... --path rel/app.py --raw` | none | Read-only; uses the same ownership/password gate as the Workspace UI editor |
 | "subir arquivo X na pasta Y" | Direct file upload to workspace folder | `workspaceall`, maybe `workspace-content` | `upload-files --workspace ... --files ... --folder ...` | Explicit platform address; list folder after upload |
 | "subir pasta", "igual usuario subindo" | UI-like resumable folder upload | `workspaceall` | `upload-folder-select` | Send bounded chunks; select startup file/mode; poll upload status. ZIP project upload is disabled. |
 | "criar workspace" | Create workspace/container | `workspaceall` | `create-workspace --name ...` | Explicit platform address; if password requested, pass workspace password locally |
@@ -115,6 +116,8 @@ Use terminal auth only for automation. Prefer browser auth for humans.
 python .\scripts\rejoinbi.py workspaceall --operation-scope workspace
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br create-workspace --name workspace-name --operation-scope workspace
 python .\scripts\rejoinbi.py workspace-content --workspace workspace-name --operation-scope workspace
+python .\scripts\rejoinbi.py workspace-file list --workspace workspace-name --folder static --operation-scope workspace
+python .\scripts\rejoinbi.py workspace-file read --workspace workspace-name --path app.py --raw --operation-scope workspace
 python .\scripts\rejoinbi.py page-files --workspace workspace-name --operation-scope pages
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br update-workspace --workspace workspace-name --name new-name --operation-scope workspace
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-workspace-password --workspace workspace-name --password "..." --operation-scope workspace

@@ -47,7 +47,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 # Mantenha em sincronia com .codex-plugin/plugin.json (version).
-PLUGIN_VERSION = "0.4.35"
+PLUGIN_VERSION = "0.4.36"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant", "tenants"}
@@ -296,6 +296,7 @@ COMMAND_OPERATION_SCOPES = {
     "workspaceall": "workspace",
     "workspace-build": "workspace",
     "workspace-content": "workspace",
+    "workspace-file": "workspace",
     "workspace-delete": "workspace",
     "workspace-input": "workspace",
     "workspace-logs": "workspace",
@@ -811,6 +812,8 @@ def api_path_operation_scope(path: str) -> str:
     if lowered.startswith((
         "/plataforma/api/delete-individual-item",
         "/plataforma/api/containers",
+        "/plataforma/api/container-content",
+        "/plataforma/api/workspace-file",
     )):
         return "workspace"
     if lowered.startswith((
@@ -2908,6 +2911,48 @@ def cmd_workspace_content(args: argparse.Namespace) -> int:
     workspace = resolve_workspace(client, args.workspace)
     params = {"container_id": workspace.get("id"), "folder": args.folder or ""}
     data, _ = client.request("GET", "/plataforma/api/container-content", params=params, timeout=60)
+    print_payload(data, as_json=args.json)
+    return 0
+
+
+def cmd_workspace_file(args: argparse.Namespace) -> int:
+    """List a workspace directory or read one file's code directly from the platform.
+
+    This lets an AI model understand and inspect the source code living in a
+    workspace without downloading the file locally: list sees the directory
+    tree, read returns the file content (raw by default for code ingestion).
+    Both are read-only and use the same ownership/password gate as the
+    Workspace UI editor.
+    """
+    client = make_client(args)
+    if not safe_str(getattr(args, "workspace", "")):
+        raise RejoinBIError("--workspace is required (name, slug or id).")
+    workspace = resolve_workspace(client, getattr(args, "workspace", ""))
+    container_id = workspace.get("id")
+    action = getattr(args, "action", "read") or "read"
+
+    if action == "list":
+        params = {"container_id": container_id, "list": "1", "folder": getattr(args, "folder", "") or ""}
+        data, _ = client.request("GET", "/plataforma/api/workspace-file", params=params, timeout=60)
+        print_payload(data, as_json=args.json)
+        return 0
+
+    # ---- read mode ----
+    rel_path = safe_str(getattr(args, "path", ""))
+    if not rel_path:
+        raise RejoinBIError("--path is required for workspace-file read (relative path inside the workspace).")
+    params = {"container_id": container_id, "path": rel_path}
+    data, _ = client.request("GET", "/plataforma/api/workspace-file", params=params, timeout=60)
+    if not isinstance(data, dict):
+        print_payload({"success": False, "message": f"Resposta inesperada do servidor: {data!r}"}, as_json=args.json)
+        return 1
+    if not data.get("success"):
+        print_payload(data, as_json=args.json)
+        return 1
+    if getattr(args, "raw", False):
+        # Raw output: only the code content, ideal for a model to ingest directly.
+        print(data.get("content") or "")
+        return 0
     print_payload(data, as_json=args.json)
     return 0
 
@@ -8830,6 +8875,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--folder", default="")
     p.set_defaults(func=cmd_workspace_content)
+
+    p = sub.add_parser("workspace-file", help="List a workspace directory or read one file's code directly (no download)")
+    p.add_argument("action", choices=["list", "read"], help="list = directory tree; read = file content")
+    p.add_argument("--workspace", required=True, help="Workspace/container id or name")
+    p.add_argument("--folder", default="", help="Folder to list (relative path) - used with 'list'")
+    p.add_argument("--path", default="", help="Relative path of the file to read - used with 'read'")
+    p.add_argument("--raw", action="store_true", help="Print only the raw file content (best for ingesting code)")
+    p.set_defaults(func=cmd_workspace_file)
 
     p = sub.add_parser("create-workspace", help="Create a workspace/container")
     p.add_argument("--name", required=True)
