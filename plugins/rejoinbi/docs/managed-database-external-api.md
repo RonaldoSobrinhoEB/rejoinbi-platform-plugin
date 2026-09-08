@@ -138,6 +138,7 @@ curl -X POST "https://subdomain.rejoinbi.com.br/plataforma/api/managed-databases
 - **Retry com backoff** em `423/429/503`, com timeout de cliente generoso (ex.: 180 s) para cargas grandes.
 - **Isolamento por RPA**: crie um `database_id` dedicado por cliente/workspace — cada banco é um arquivo `.sqlite3` próprio, então dois RPAs **nunca se bloqueiam**.
 - **Compatibilidade**: modos novos **coexistem** com o payload legado `{sql}`.
+- **Modo híbrido (mesmo servidor = local, sem HTTP)**: `GET /plataforma/api/managed-databases/external/<id>/local-path` (Bearer) devolve `local_file_path` e `same_server`. No MESMO servidor, abra `sqlite3.connect("file:<caminho>?mode=ro", uri=True)` — leitura direta sem rede, sem lock (WAL). Regra de decisão do cliente: verifique `os.path.exists` **uma única vez**, cacheie a decisão e, em qualquer falha local, vá direto para HTTPS sem tentar local de novo (circuit breaker 60 s). Escrita **sempre** pela API HTTPS.
 
 ---
 
