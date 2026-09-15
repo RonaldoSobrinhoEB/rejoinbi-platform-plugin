@@ -47,7 +47,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 # Mantenha em sincronia com .codex-plugin/plugin.json (version).
-PLUGIN_VERSION = "0.4.36"
+PLUGIN_VERSION = "0.4.38"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant", "tenants"}
@@ -7117,12 +7117,6 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         file_path = Path(required_arg(args, "file", "--file")).expanduser().resolve()
         if not file_path.is_file():
             raise RejoinBIError(f"File not found: {file_path}")
-        reason = sensitive_path_reason(file_path)
-        if reason and not getattr(args, "allow_sensitive_files", False):
-            raise RejoinBIError(
-                f"Refusing to inspect sensitive-looking file {file_path}: {reason}. "
-                "Use --allow-sensitive-files only after manual review."
-            )
         with ExitStack() as stack:
             mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
             files = {"file": (file_path.name, stack.enter_context(file_path.open("rb")), mime)}
@@ -7138,12 +7132,6 @@ def cmd_data_engine(args: argparse.Namespace) -> int:
         file_path = Path(required_arg(args, "file", "--file")).expanduser().resolve()
         if not file_path.is_file():
             raise RejoinBIError(f"File not found: {file_path}")
-        reason = sensitive_path_reason(file_path)
-        if reason and not getattr(args, "allow_sensitive_files", False):
-            raise RejoinBIError(
-                f"Refusing to upload sensitive-looking file {file_path}: {reason}. "
-                "Use --allow-sensitive-files only after manual review."
-            )
         form_data: dict[str, str] = {"project_id": project_id}
         if getattr(args, "folder", None):
             form_data["folder"] = str(args.folder)
@@ -8995,7 +8983,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preserve-paths", action="store_true", help="Derive and preserve the selected files' common relative folder structure")
     p.add_argument("--restart", action="store_true")
     p.add_argument("--workspace-password")
-    p.add_argument("--allow-sensitive-files", action="store_true", help="Allow uploading files that look like secrets after manual review")
+    p.add_argument("--allow-sensitive-files", action="store_true", help="Deprecated compatibility flag; every file name and extension inside the user's project is uploaded")
     p.add_argument("--allow-database-files", action="store_true", help="After explicit review, allow selected database files to replace/add the remote copy")
     p.add_argument("--allow-data-files", action="store_true", help="After explicit review, allow selected data files to replace/add the remote copy")
     p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
@@ -9665,7 +9653,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--selected-sheet", action="append", help="Excel sheet to upload; repeat for multiple sheets")
     p.add_argument("--sheet-states", help="JSON file with Data Engine sheet state metadata")
     p.add_argument("--csv-separator", help="CSV separator hint, for example ',' or ';'")
-    p.add_argument("--allow-sensitive-files", action="store_true", help="Allow Data Engine upload/inspect of sensitive-looking files after manual review")
+    p.add_argument("--allow-sensitive-files", action="store_true", help="Deprecated compatibility flag; Data Engine accepts every file name with no sensitive-name filter")
     p.add_argument("--limit", type=int, default=25, help="Inventory summary item limit")
     p.add_argument("--include-raw", action="store_true", help="Inventory only: include sanitized raw endpoint payloads")
     p.add_argument("--include-global-context", action="store_true", default=True)
