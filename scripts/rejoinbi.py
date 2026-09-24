@@ -47,7 +47,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 # Mantenha em sincronia com .codex-plugin/plugin.json (version).
-PLUGIN_VERSION = "0.4.38"
+PLUGIN_VERSION = "0.4.39"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant", "tenants"}

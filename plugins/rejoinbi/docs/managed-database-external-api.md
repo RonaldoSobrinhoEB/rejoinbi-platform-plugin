@@ -138,7 +138,32 @@ curl -X POST "https://subdomain.rejoinbi.com.br/plataforma/api/managed-databases
 - **Retry com backoff** em `423/429/503`, com timeout de cliente generoso (ex.: 180 s) para cargas grandes.
 - **Isolamento por RPA**: crie um `database_id` dedicado por cliente/workspace — cada banco é um arquivo `.sqlite3` próprio, então dois RPAs **nunca se bloqueiam**.
 - **Compatibilidade**: modos novos **coexistem** com o payload legado `{sql}`.
-- **Modo híbrido (mesmo servidor = local, sem HTTP)**: `GET /plataforma/api/managed-databases/external/<id>/local-path` (Bearer) devolve `local_file_path` e `same_server`. No MESMO servidor, abra `sqlite3.connect("file:<caminho>?mode=ro", uri=True)` — leitura direta sem rede, sem lock (WAL). Regra de decisão do cliente: verifique `os.path.exists` **uma única vez**, cacheie a decisão e, em qualquer falha local, vá direto para HTTPS sem tentar local de novo (circuit breaker 60 s). Escrita **sempre** pela API HTTPS.
+- **Armazenamento sem cota da plataforma**: não existe mais a cota administrativa de 100 GiB por banco. `max_size_mb` é mantido como campo de compatibilidade e a API o devolve como `0` (sem cota); integrações antigas podem continuar enviando o campo, mas o valor não reativa limites antigos. Isso não significa capacidade física infinita: o SQLite tem limite técnico de páginas — cerca de 17,5 TB com páginas de 4 KiB ou até 281 TB com páginas de 64 KiB — e o disco/sistema de arquivos pode impor um limite menor ([SQLite limits](https://www.sqlite.org/limits.html), [PRAGMA max_page_count](https://www.sqlite.org/pragma.html#pragma_max_page_count)).
+- **Modo híbrido local com CRUD**: `GET /plataforma/api/managed-databases/external/<id>/local-path` (Bearer) devolve `local_api_base_url`, `local_query_url`, `local_health_url`, `local_file_path` e `local_open_uri`. Se o processo do projeto puder acessar o loopback, teste `local_health_url` e use `local_api_base_url` com os mesmos caminhos da API externa (`/query`, `/csv-import`, `/limits` etc.) para as operações disponíveis. `local_query_url` é um atalho para consultas, `INSERT`, `UPDATE`, `DELETE`, transações e lotes. Esses URLs chegam aos mesmos handlers, mantendo bearer token, escopo, rate limit, auditoria, timeout e locks. Se o loopback não estiver acessível, use os URLs HTTPS normais.
+- `local_file_path` e `local_open_uri` continuam disponíveis para compatibilidade de leitura direta (`mode=ro`). **Não remova `mode=ro` nem grave diretamente no arquivo**: a conexão SQLite direta não aplica revogação/escopo do token, auditoria ou os locks da plataforma.
+- `same_server` e `file_exists` são mantidos para clientes antigos e só indicam que o arquivo existe no host da plataforma; não provam que o processo chamador enxerga o mesmo filesystem. A decisão deve ser baseada no teste do `local_health_url` feito pelo próprio cliente.
+- Se uma chamada local de escrita der timeout depois de ser enviada, não a repita automaticamente pela HTTPS: o servidor pode ter confirmado a gravação antes de a resposta se perder. Releia o estado antes de tentar novamente.
+
+Exemplo de seleção do endpoint (o token deve ficar no backend do projeto, nunca no JavaScript do navegador):
+
+```python
+import requests
+
+def choose_hybrid_query_url(config, external_query_url, token):
+    headers = {"Authorization": f"Bearer {token}"}
+    local_health = config.get("local_health_url")
+    local_query = config.get("local_query_url")
+    if local_health and local_query:
+        try:
+            response = requests.get(local_health, headers=headers, timeout=1.0)
+            response.raise_for_status()
+            return local_query, headers
+        except requests.RequestException:
+            pass
+    return external_query_url, headers
+```
+
+Use o URL retornado para executar. O endpoint HTTPS é fallback quando o teste local não conseguiu conectar; não use fallback automático após timeout de uma escrita já enviada.
 
 ---
 
