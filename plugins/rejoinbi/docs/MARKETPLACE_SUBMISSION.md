@@ -23,8 +23,8 @@ The plugin intentionally avoids duplicated marketplace wrappers such as `.agents
 - Manifest uses strict semantic versioning.
 - Manifest includes `homepage`, `repository`, `license`, `keywords`, and interface metadata aligned with Codex plugin conventions.
 - `defaultPrompt` contains three concise prompts.
-- Icon and logo use text SVG under `assets/app-icon.svg`.
-- No binary image assets are required for marketplace recognition.
+- Icon and logo use the Rejoin BI platform icon under `assets/app-icon.png`.
+- Keep this image asset included in the plugin archive so Codex displays the correct brand icon.
 - The plugin validates with `plugin-creator/scripts/validate_plugin.py`.
 
 ## Local validation
