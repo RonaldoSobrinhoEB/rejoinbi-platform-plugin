@@ -6,14 +6,13 @@ This playbook is written for Codex agents and users who do not know the Rejoin B
 
 Rejoin BI has two sides that must not be confused:
 
-- The Rejoin BI platform address/server is the source of truth. Workspaces, pages, users, permissions, branding, RLS, BI Studio projects, Data Engine assets, managed databases, email/WhatsApp configuration, and uploaded files live on the server.
 - The local computer only holds the Codex plugin, login cookies, local dashboard source files before upload, generated backups, and test reports.
 
 If a command changes the platform, it must use the explicit platform address such as `--tenant subdomain.rejoinbi.com.br`. Do not rely on the active cached address for writes unless the user explicitly chooses `--use-active-tenant` after checking the session.
 
 Users, direct permissions, and permission groups are a separate identity-governance scope. A valid administrative session does not authorize this scope. Never list, inspect, create, modify, test, or delete identities because a user asked for an upload, deployment, workspace/page/BI/RLS task, generic diagnosis, inventory, smoke test, or “administração” in the broad sense. See [command-scope-map.md](command-scope-map.md) before acting in that scope.
 
-Every remote command now has a required `--operation-scope`. The agent must identify one exact domain (`auth`, `local`, `workspace`, `upload`, `deployment`, `pages`, `rls`, `bi`, `data`, `platform`, `messaging`, `ai`, `diagnostics`, `system`, `identity`, or `raw-api`) before execution. The `auth` and `local` scopes cover session/connect and offline validation helpers; `raw-api` applies to `api-get`/`api-send` with an exact confirmed path. A missing or different value is blocked before authentication/profile checks. Split multi-domain work into separately authorized steps; do not use a generic command or raw API to join domains.
+Every remote command now has a required `--operation-scope`. The agent must identify one exact domain (`auth`, `local`, `workspace`, `upload`, `deployment`, `pages`, `rls`, `data`, `platform`, `messaging`, `ai`, `diagnostics`, `system`, `identity`, or `raw-api`) before execution. The `auth` and `local` scopes cover session/connect and offline validation helpers; `raw-api` applies to `api-get`/`api-send` with an exact confirmed path. A missing or different value is blocked before authentication/profile checks. Split multi-domain work into separately authorized steps; do not use a generic command or raw API to join domains.
 
 ## Required First Step
 
@@ -39,7 +38,7 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 
 | User says | Meaning | First command | Write command | Required validation |
 | --- | --- | --- | --- | --- |
-| "o que faz", "entenda o plugin", "quais recursos tem" | Explain plugin capabilities | none after session check | none | Mention connection, workspaces, uploads, pages/routes, dashboard publishing, admin config, BI Studio/Data Engine, safe cleanup |
+| "o que faz", "entenda o plugin", "quais recursos tem" | Explain plugin capabilities | none after session check | none | Mention connection, workspaces, uploads, pages/routes, dashboard publishing, admin config, safe cleanup |
 | "conectar", "usar plataforma", "usar endereço", host sent | Connect to the Rejoin BI platform address | `ensure` | none | Continue only after `connected/profile_allowed` |
 | "qual titulo atual", "mudar titulo", "trocar nome da aba" | Platform browser title in Configuracao Plataforma | `platform-title` | `platform-title --title "..."` | Write needs explicit platform address in `--tenant`; automatic backup must be reported |
 | "mudar logo", "favicon", "icone", "logo do menu" | Platform branding images | `backup-platform-branding`, `platform-config` | `set-platform-branding --logo-image-file ...` | Backup path and restore command |
@@ -56,9 +55,6 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "senha do workspace" | Validate/unlock protected workspace | `workspaceall` | `validate-workspace --workspace ...` or deletion with `--workspace-password` | Never delete protected workspace without platform password validation |
 | "criar pagina", "rota", "menu", "pai/filho/neto" | Gerenciar Paginas | `pages --all-containers`, `page-maintenance verify-hierarchy`, `page-maintenance audit-encoding` | `create-page`, `update-page`, `set-page-order`, `delete-page` | Use clean names with accents; technical ids/routes/files ASCII |
 | "dashboard", "painel", "ECharts", "criar 3 paginas" | Generate and publish dashboard package | Inspect local files/data; `validate-app` | `deploy-manifest` | One standalone HTML per Rejoin BI page; `smoke-pages` must pass |
-| "publicar BI", "BI Studio" | BI Studio project work | `studio-inventory`, `bi-projects` | `publish-bi` or `bi-create-project` | Project id/uid and workspace target explicit |
-| "dashboard BI Studio", "canvas profissional", "Data Engine + canvas" | Professional canvas dashboard | `studio-inventory`, inspect datasets | `bi-save-theme`, `bi-save-layout`, export/normalize/deploy | Use `examples/codex-bi-studio-canvas`; dataset completed, desktop/mobile layouts saved, smoke test passes |
-| "Data Engine", "datasets", "repositorio", "conexao banco" | Data Engine work | `studio-inventory`, then project-scoped `data-engine` read | `data-engine create-*`, `terminal-command`, `execute-code` | Project id/uid required; do not run code without user intent |
 | "criar/gerenciar banco", "SQLite gerenciado", "backup/token do banco" | Persistent managed database work | `managed-databases list`, then `get/schema/integrity/tokens` | `managed-databases create/update/query/download/create-token/revoke-token` | Master or Administrador Principal; use explicit tenant for writes |
 | "migrar/copiar o banco deste projeto" | Move the live project SQLite into managed storage | Inspect project references; `managed-databases inspect-sqlite --source ...` | `managed-databases migrate-sqlite --source ... --name ... --yes` | Preserve source; require matching row counts, per-table content hashes, schema objects, and destination integrity |
 | "carga em lote", "RPA alto volume", "envio em massa o banco", "55 mil linhas" | High-volume external writes | `managed-databases list`; create scoped token; read `/limits` | Generate client using `bulk_insert`/`statements` with keep-alive; atomic DROP→CREATE→INSERT→RENAME | Consult `docs/managed-database-external-api.md`; never one request per row; dedicated `database_id` per RPA |
@@ -74,7 +70,7 @@ Use this table before asking clarifying questions. Fetch current state whenever 
 | "email", "agendar email", "fila email" | Email manager | `email sessions`, `email groups`, `email history`, `email queue-status` | `email create-*`, `email broadcast --yes` | Never broadcast without explicit recipients/payload |
 | "whatsapp", "agendar whatsapp", "fila whatsapp" | WhatsApp manager | `whatsapp sessions`, `whatsapp groups`, `whatsapp diagnostics`, `whatsapp queue-status` | `whatsapp create-*`, `whatsapp broadcast --yes` | Session must be ready; never broadcast without explicit recipients/payload |
 | "codex keys", "chaves IA" | AI provider keys | `codex-keys stats`, `codex-keys list`, `codex-keys usage` | `codex-keys create/update/delete --yes` | Do not print secrets |
-| "sistema", "cache", "runtime", "status banco" | System diagnostics | `system-admin database-status`, `system-admin runtime-readiness`, `route-map routes` | cache/route writes with `--yes` | Platform may return optional backend errors; report separately |
+| "sistema", "cache", "runtime", "status banco", "banco travado", "banco bloqueado", "503" | System diagnostics | `system-admin database-status`, `system-admin database-slots`, `system-admin runtime-readiness`, `route-map routes` | `system-admin database-force-release --yes`, cache/route writes with `--yes` | Platform may return optional backend errors; report separately |
 | "gateway", "upload capabilities", "python versions" | Upload gateway diagnostics | `upload-admin capabilities`, `python-versions`, `gateway-pairings` | gateway write actions with `--yes` | Confirm target pairing/action |
 | "exportar pacote do plugin" | Share plugin | local validation | `export-package` | Never include sessions/passwords/PINs |
 
@@ -94,7 +90,7 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br set-user-permiss
   --user pessoa@empresa.com --confirm-user pessoa@empresa.com `
   --permissions painel-operacional --operation-scope identity --identity-scope --yes
 
-# Core diagnostics never include identity, messaging, IA, Data Engine, or RLS.
+# Core diagnostics never include identity, messaging, IA, or RLS.
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin --operation-scope diagnostics
 ```
 
@@ -269,30 +265,8 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br whatsapp create-
 
 Broadcasts and schedules can affect real recipients. Do not send messages unless the user provides explicit target, payload, and confirmation.
 
-### BI Studio And Data Engine
-
 ```powershell
-python .\scripts\rejoinbi.py studio-inventory --output C:\bi-data-inventory.json
-python .\scripts\rejoinbi.py bi-projects
-python .\scripts\rejoinbi.py bi-tabs --project-id "Projeto"
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br bi-create-tab --project-id "Projeto" --name "Visão 360" --yes
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br bi-save-layout --project-id "Projeto" --tab "Visão 360" --data-file C:\layouts\visao-360.json --yes
-python .\scripts\rejoinbi.py bi-load-layout --project-id "Projeto" --tab "Visão 360"
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br bi-save-theme --project-id "Projeto" --data-file C:\layouts\tema.json --yes
-python .\scripts\rejoinbi.py data-engine status
-python .\scripts\rejoinbi.py data-engine db-connections --project-id "Projeto"
-python .\scripts\rejoinbi.py data-engine repository-list --project-id "Projeto"
-python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file C:\dados\telecom.xlsx
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id "Projeto" --file C:\dados\telecom.xlsx --folder codex --selected-sheet "Visão Geral" --yes
-python .\scripts\rejoinbi.py data-engine datasets-list --project-id "Projeto"
-python .\scripts\rejoinbi.py data-engine session-status --project-id "Projeto"
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br publish-bi --project-id "Projeto" --workspace workspace-name
-python .\scripts\rejoinbi.py bi-normalize-export --path C:\path\extracted-bi-export --remove-old
 ```
-
-Project-scoped Data Engine endpoints require `--project-id`, `--project-uid`, or a JSON payload containing `project_id` or `project_uid`. The plugin can resolve known `project_uid` values through BI Studio inventory.
-
-Data Engine repository uploads support CSV, Excel, SQLite, and other files accepted by the platform. For Excel files, run `repository-inspect-sheets` first, then pass one or more `--selected-sheet` values. The upload command applies no sensitive-name filter: any file the user points at (including `.env`, keys, certificates, tokens, and password-named files) is uploaded without extra flags or a permission prompt.
 
 ### Managed Databases
 
@@ -302,16 +276,11 @@ For direct database requests, act with `managed-databases` instead of returning 
 
 The plugin stores one session per subdomain and lets a developer switch projects without losing credentials: `tenants list`, `tenants current`, `tenants use <subdomain>`, `tenants rm <subdomain> --yes`, plus per-subdomain auth (`ensure`/`connect`/`tenant <subdomain>`). Bind exactly one subdomain per conversation and keep it fixed; before any mutating or deploy command confirm the target subdomain equals the bound one. Never use `--use-active-tenant` without `tenants current` confirming the active subdomain.
 
-Save all BI Studio/Data Engine JSON/code payloads as UTF-8. The CLI rejects strings that look like replaced accents or mojibake (`Vis?o`, `Cr?tico`, byte sequence `Vis\u00c3\u00a3o`) before they can create wrong tabs, filters, materialized datasets, or canvas labels.
-
 Notebook and finalize payloads are strict. `save-notebook-state` expects a list of cell objects, not an object wrapper. `finalize-dataset` with scoped output expects `dataframe_names` items shaped like `{"dataset_id":"Dataset","name":"df_name","cell_id":"cell-id"}`. Plain `"df_name"` can fail when `require_scoped_df` is true.
 
 #### Professional Canvas Standard
 
-Use `examples/codex-bi-studio-canvas` before creating any BI Studio dashboard. A professional canvas starts with a decision model, not with random widgets:
-
 - Define audience, business questions, metric grain, dimensions, and derived metrics.
-- Complete the Data Engine dataset first; every KPI, chart, table, and filter should bind to a known dataframe and field.
 - Work like a data specialist: define grain, joins, denominators, source-of-truth fields, refresh assumptions, trend windows, benchmark/target rules, and segment definitions before creating visuals.
 - Every metric needs a formula and interpretation. If a KPI cannot explain status, trend, variance, risk, or an action, remove or replace it.
 - Use visible tab/page names in the user's language with accents, such as `Visão Executiva`, but keep technical slugs, filenames, routes, dataset ids, and component ids ASCII.
@@ -322,14 +291,6 @@ Use `examples/codex-bi-studio-canvas` before creating any BI Studio dashboard. A
 - Give each tab one job: executive health, financial performance, customer retention, operations/SLA, or another explicit business question.
 - Avoid generic placeholder labels, repeated card shapes without hierarchy, excessive gradients, internal menus, vanity metrics, chart junk, and charts that do not answer a question.
 - Choose charts by analytical job: trend, comparison, composition, distribution, ranking, exception/risk, or relationship. Do not use decorative gauges, 3D charts, overloaded pies, or duplicate KPI values as full charts.
-- After export, run `bi-normalize-export --remove-old`, remove upload-noise folders such as `venv`, create `rejoinbi-app.json` with `startup_mode: "file"` and `selected_file: "app.py"`, then deploy with platform pages mapped to ASCII routes.
-- After deploy, visual QA is mandatory. Capture authenticated desktop and mobile screenshots for every page, then reject any page with BI Studio placeholders (`Indicador`, `Sem dados`, `Coluna A`, `Item 1`, generic `123`), blank charts, broken styling, console errors, horizontal mobile overflow, or a default light export. If the export renderer ignored the intended canvas, fix the package with a production-safe template/static layer or regenerate the canvas before marking it done.
-
-For BI Studio publication, `publish-bi` now performs a post-publish workspace runtime check. It fails the command when runtime logs contain `SyntaxError`, a Python traceback, missing parquet engines (`pyarrow`/`fastparquet`), or missing materialized DataFrames. If the BI export contains parquet files, make sure `requirements.txt` includes `pyarrow>=16.0.0` or `fastparquet`.
-
-Direct `publish-bi` also blocks BI projects whose technical tab slugs contain accents/non-ASCII characters. This prevents the platform from creating workspace files/routes such as `visão-360` or `rls-usuário` that can later confuse Gerenciar Paginas. The correct production path is: export, extract, `bi-normalize-export --remove-old`, upload normalized folder, create platform pages with accented visible names but ASCII `file/route`, then `smoke-pages`. `bi-normalize-export` also fixes known malformed BI export Python literals such as `replace('\', '/')`, and `validate-app` compiles `app.py/main.py` before deploy.
-
-BI Studio tab display names may be localized with accents, but the exported slug, template filename, static folder, router filename, platform `arquivo`, and platform `rota` must be ASCII. If the export produced slugs such as `visão-geral` or `rls-usuário`, run `bi-normalize-export --path <extracted-export> --remove-old`, upload the normalized folder, update platform pages to ASCII `file/route`, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
 
 ### System, Audit, Upload Gateway, Codex Keys
 
@@ -340,6 +301,8 @@ python .\scripts\rejoinbi.py audit-export --output C:\auditoria.xlsx --operation
 python .\scripts\rejoinbi.py sleep-manager status
 python .\scripts\rejoinbi.py route-map routes --operation-scope system
 python .\scripts\rejoinbi.py system-admin database-status --operation-scope system
+python .\scripts\rejoinbi.py system-admin database-slots --operation-scope system
+python .\scripts\rejoinbi.py system-admin database-force-release --slot-id 12345 --yes --operation-scope system
 python .\scripts\rejoinbi.py system-admin runtime-readiness --operation-scope system
 python .\scripts\rejoinbi.py upload-admin capabilities --operation-scope system
 python .\scripts\rejoinbi.py upload-admin gateway-pairings --operation-scope system
@@ -349,6 +312,24 @@ python .\scripts\rejoinbi.py codex-keys usage --days 30 --limit 50 --operation-s
 ```
 
 Treat system errors as platform/backend diagnostics unless required checks fail.
+
+### Platform Database Locked (503 everywhere)
+
+When the platform answers `503` for everything, including `system-admin database-status`
+(`SELECT 1`), and the sleep manager is already stopped, do not tell the user to restart the
+service. Restarting the container does not release a database slot that was never checked back in.
+Recover from the plugin:
+
+1. `system-admin database-slots --operation-scope system` lists each held slot with `slot_id`,
+   `age_s`, and `expires_in_s`.
+2. `system-admin database-force-release --slot-id <id> --yes --operation-scope system` releases that
+   one slot and invalidates its connection. Requires explicit `--tenant`.
+3. `system-admin database-status --operation-scope system` confirms `database_healthy: true`.
+
+Release one stuck slot at a time, always the oldest one, and only after seeing it in
+`database-slots`. A `404` on force-release means the reaper already freed that slot; re-inspect
+instead of retrying. When the CLI error contains `platform_database_busy`, it also prints this
+three-step recovery, so follow it instead of repeating the failed request or restarting anything.
 
 ## Safety Rules
 
@@ -361,8 +342,6 @@ Treat system errors as platform/backend diagnostics unless required checks fail.
 - Never delete or modify a project's source SQLite file during migration; remove it only in a separate explicitly requested cleanup after the migrated application has been validated.
 - Never refuse an upload because of a file's name or type. `.env`, keys, tokens, certificates, databases, and backups are ordinary project files the user owns; when the user asks to send them to their own workspace, send them. The agent does not add secret-name filters the CLI no longer applies.
 - Never call a dashboard complete until `validate-app`, `deploy-manifest`, and `smoke-pages` pass.
-- Never call a BI Studio canvas complete until the workspace is running and every page has `html_ok`, `browser_route_ok`, and `menu_safe` true.
-- Never call a BI Studio/Data Engine dashboard professional until screenshots prove the published pages are polished on desktop and mobile, with no placeholders, no blank visuals, no console errors, and no horizontal overflow.
 - Never make a dashboard with its own internal page menu when Rejoin BI pages should manage navigation.
 - Never use customer platform names as generic examples. Use `subdomain.rejoinbi.com.br`.
 - Never let one platform address's cached session drive writes to another platform address.

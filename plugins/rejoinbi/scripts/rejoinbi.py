@@ -25,6 +25,7 @@ import sys
 import tempfile
 import threading
 import time
+import random
 import unicodedata
 import zipfile
 from contextlib import ExitStack
@@ -47,7 +48,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 # Mantenha em sincronia com .codex-plugin/plugin.json (version).
-PLUGIN_VERSION = "0.4.39"
+PLUGIN_VERSION = "0.4.41"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant", "tenants"}
@@ -148,24 +149,13 @@ MUTATING_COMMANDS_REQUIRING_EXPLICIT_TENANT = {
     "create-workspace",
     "delete-ai-config",
     "delete-announcement",
-    "bi-create-tab",
     "delete-group",
-    "bi-delete-tab",
-    "bi-delete-theme",
     "delete-page",
     "delete-user",
     "delete-workspace",
     "deploy-manifest",
-    "bi-create-project",
-    "bi-duplicate-tab",
-    "bi-init-canvas",
-    "bi-rename-tab",
-    "bi-reorder-tabs",
-    "bi-save-layout",
-    "bi-save-theme",
     "menu-maintenance",
     "page-maintenance",
-    "publish-bi",
     "recalculate-permissions",
     "remove-file",
     "restore-platform-config-defaults",
@@ -258,7 +248,6 @@ IDENTITY_GOVERNANCE_API_PATH = re.compile(
 OPERATION_SCOPE_CHOICES = (
     "ai",
     "auth",
-    "bi",
     "data",
     "deployment",
     "diagnostics",
@@ -316,29 +305,6 @@ COMMAND_OPERATION_SCOPES = {
     "deploy-manifest": "deployment",
     "upload-files": "upload",
     "upload-folder-select": "upload",
-    # BI Studio.
-    "bi-create-project": "bi",
-    "bi-create-tab": "bi",
-    "bi-data-inventory": "bi",
-    "bi-delete-tab": "bi",
-    "bi-delete-theme": "bi",
-    "bi-duplicate-tab": "bi",
-    "bi-export": "bi",
-    "bi-init-canvas": "bi",
-    "bi-inventory": "bi",
-    "bi-load-layout": "bi",
-    "bi-normalize-export": "local",
-    "bi-projects": "bi",
-    "bi-rename-tab": "bi",
-    "bi-reorder-tabs": "bi",
-    "bi-save-layout": "bi",
-    "bi-save-theme": "bi",
-    "bi-tab-content": "bi",
-    "bi-tabs": "bi",
-    "bi-themes": "bi",
-    "echarts-template": "bi",
-    "publish-bi": "bi",
-    "studio-inventory": "bi",
     # Identity governance.
     "announcement-groups": "identity",
     "assign-user-group": "identity",
@@ -408,7 +374,6 @@ COMMAND_OPERATION_SCOPES = {
     "system-admin": "system",
     "upload-admin": "system",
     # Data and raw API.
-    "data-engine": "data",
     "managed-databases": "data",
     "api-get": "raw-api",
     "api-send": "raw-api",
@@ -452,48 +417,6 @@ WORKSPACE_PASSWORD_VALUE_FIELDS = (
     "password_hash",
     "senha_hash",
 )
-DATA_ENGINE_PROJECT_ACTIONS = {
-    "session-status",
-    "db-connections",
-    "create-db-connection",
-    "test-db-connection",
-    "query-preview",
-    "query-materialize",
-    "ai-sql-query",
-    "repository-upload",
-    "repository-list",
-    "repository-content",
-    "repository-global-context",
-    "repository-execute-global-context",
-    "repository-manual-table",
-    "create-manual-table",
-    "create-folder",
-    "move",
-    "order",
-    "delete",
-    "datasets-list",
-    "create-dataset",
-    "duplicate-dataset",
-    "delete-dataset",
-    "link-dataset",
-    "unlink-dataset",
-    "list-files",
-    "preview-file",
-    "dataset-get",
-    "save-column-types",
-    "save-notebook-state",
-    "finalize-dataset",
-    "toggle-visibility",
-    "execute-code",
-    "agent-mine",
-    "chat",
-    "load-chat",
-    "cancel-execution",
-    "reset-session",
-    "remove-variable",
-    "terminal-command",
-    "terminal-auto-install",
-}
 
 PT_BR_WORD_ACCENT_FIXES = {
     "acao": "ação",
@@ -550,6 +473,39 @@ def _http_status_from_error(value: str) -> int | None:
         return int(match.group(1))
     except ValueError:
         return None
+
+
+PLATFORM_DATABASE_BUSY_RECOVERY = (
+    "Platform database busy/locked (503). Do not restart the container: a stuck database slot "
+    "survives a container restart. Recover with:\n"
+    "  1. system-admin database-slots --operation-scope system   # who is holding each slot, age, TTL\n"
+    "  2. system-admin database-force-release --slot-id <id> --yes --operation-scope system\n"
+    "  3. system-admin database-status --operation-scope system   # confirm SELECT 1 recovered"
+)
+
+
+PLATFORM_DATABASE_BUSY_MARKERS = (
+    "platform_database_busy",
+    "banco de dados em manuten",
+    "platform database",
+    "database busy",
+    "database is locked",
+    "database locked",
+)
+
+
+def is_platform_database_busy_error(value: str) -> bool:
+    """Detect the platform-wide database lock that a container restart cannot clear."""
+    raw = str(value or "")
+    lowered = raw.lower()
+    if "x-rejoinbi-isolated-failure" in lowered and "platform-database" in lowered:
+        return True
+    if not any(marker in lowered for marker in PLATFORM_DATABASE_BUSY_MARKERS):
+        return False
+    status = _http_status_from_error(raw)
+    if status is None:
+        return "platform_database_busy" in lowered
+    return status == 503 or status == 500
 
 
 @lru_cache(maxsize=8)
@@ -735,32 +691,28 @@ def command_requires_explicit_tenant(args: argparse.Namespace) -> bool:
         return True
     if command == "platform-title":
         return bool(str(getattr(args, "title", "") or "").strip())
-    if command in {"codex-keys", "data-engine", "email", "managed-databases", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
+    if command in {"codex-keys", "email", "managed-databases", "route-map", "sleep-manager", "system-admin", "upload-admin", "whatsapp"}:
         action = str(getattr(args, "action", "") or "").strip()
         read_only_actions = {
             "capabilities",
+            "containers-resilience",
             "database-status",
+            "database-slots",
             "db-connections",
-            "datasets-list",
             "dns-records",
             "gateway-pairings",
             "history",
-            "inventory",
             "list",
-            "list-files",
             "get",
             "schema",
             "tokens",
             "download",
             "integrity",
             "inspect-sqlite",
-            "repository-global-context",
-            "repository-list",
             "route",
             "routes",
             "sessions",
             "session-status",
-            "sqlserver-drivers",
             "status",
             "stats",
             "usage",
@@ -795,10 +747,8 @@ def api_path_operation_scope(path: str) -> str:
     lowered = path_only.lower()
     if api_path_is_identity_governance(path_only):
         return "identity"
-    if lowered.startswith("/plataforma/data-engine/api/") or lowered.startswith("/plataforma/api/managed-databases/"):
+    if lowered.startswith("/plataforma/api/managed-databases/"):
         return "data"
-    if lowered.startswith("/plataforma/api/bi/"):
-        return "bi"
     if lowered.startswith("/plataforma/api/rls"):
         return "rls"
     if lowered.startswith(("/plataforma/api/paginas", "/plataforma/api/accessible-pages", "/plataforma/api/capture/")):
@@ -1110,10 +1060,21 @@ class RejoinBIClient:
         else:
             payload = {"raw": response.text}
         if not response.ok:
-            message = ""
+            raw_message: Any = ""
+            detection_source = ""
             if isinstance(payload, dict):
-                message = str(payload.get("error") or payload.get("message") or payload.get("raw") or "")
-            message = compact_response_message(message)
+                raw_message = payload.get("error") or payload.get("message") or payload.get("raw") or ""
+                # O 503 do gate de saude responde 'error' + 'message' com textos
+                # diferentes; a deteccao precisa olhar os dois campos.
+                detection_source = " ".join(str(payload.get(key) or "") for key in ("error", "message", "raw"))
+            else:
+                detection_source = str(raw_message or "")
+            if not detection_source:
+                detection_source = response.headers.get("X-RejoinBI-Isolated-Failure", "")
+            database_busy = is_platform_database_busy_error(f"HTTP {response.status_code}: {detection_source}")
+            message = compact_response_message(raw_message)
+            if database_busy:
+                message = f"{message}\n{PLATFORM_DATABASE_BUSY_RECOVERY}"
             raise RejoinBIError(f"{method} {path} failed with HTTP {response.status_code}: {message}")
         return payload, response
 
@@ -2233,7 +2194,7 @@ def require_clean_json_text(value: Any, *, context: str) -> None:
         details = "\n".join(f"- {error}" for error in errors[:10])
         raise RejoinBIError(
             f"{context} appears to contain corrupted text/encoding. "
-            "This would create wrong BI Studio/Data Engine labels or values.\n"
+            "This would create wrong labels or values.\n"
             f"{details}"
         )
 
@@ -3529,7 +3490,7 @@ def upload_entries_chunked(
     entries: list[tuple[Path, str]],
     *,
     timeout: int = 900,
-    max_retries: int = 5,
+    max_retries: int = 10,
     on_file_error: str = "ask",
     max_recovery_retries: int = 1,
 ) -> dict[str, Any]:
@@ -3707,7 +3668,8 @@ def upload_entries_chunked(
                             )
                             break
                         if attempt < max_retries:
-                            time.sleep(min(15, 2 ** (attempt - 1)))
+                            retry_delay = min(30, 2 ** (attempt - 1))
+                            time.sleep(retry_delay * random.uniform(0.8, 1.2))
                 if restart_file:
                     failure = None
                     break
@@ -3821,7 +3783,7 @@ def upload_folder_chunked(
     timeout: int = 900,
     exclude: list[str] | None = None,
     allow_sensitive: bool = False,
-    max_retries: int = 5,
+    max_retries: int = 10,
     on_file_error: str = "ask",
     max_recovery_retries: int = 1,
     allow_database_files: bool = False,
@@ -3974,737 +3936,6 @@ def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_bi_projects(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    data, _ = client.request("GET", "/plataforma/api/bi/projects", timeout=60)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_create_project(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    payload = {"name": args.name}
-    if args.password:
-        payload["password"] = args.password
-    data, _ = client.request("POST", "/plataforma/api/bi/projects", json=payload, timeout=60)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_export(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    output = Path(args.output or f"{args.project_id}.zip").expanduser().resolve()
-    params = ""
-    if args.project_password:
-        params = f"?password={quote(args.project_password)}"
-    client.download(bi_project_path(args.project_id, f"/export{params}"), output, timeout=args.timeout)
-    print_payload({"success": True, "output": str(output)}, as_json=args.json)
-    return 0
-
-
-def bi_project_path(project_id: str, suffix: str = "") -> str:
-    base = f"/plataforma/api/bi/projects/{quote(str(project_id), safe='')}"
-    return f"{base}{suffix}"
-
-
-def cmd_bi_tabs(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    data, _ = client.request("GET", bi_project_path(args.project_id, "/tabs"), timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_tab_content(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    path = path_with_query(bi_project_path(args.project_id, "/tabs/content"), {"name": args.tab})
-    data, _ = client.request("GET", path, timeout=args.timeout)
-    print_payload({"success": True, "project_id": args.project_id, "tab": args.tab, "content": data}, as_json=args.json)
-    return 0
-
-
-def cmd_bi_init_canvas(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-init-canvas initializes BI Studio canvas files and requires --yes.")
-    client = make_client(args)
-    data, _ = client.request("POST", bi_project_path(args.project_id, "/canvas/init"), json={}, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_create_tab(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-create-tab changes a BI Studio project and requires --yes.")
-    payload = {"name": args.name}
-    require_clean_json_text(payload, context="bi-create-tab payload")
-    client = make_client(args)
-    data, _ = client.request("POST", bi_project_path(args.project_id, "/tabs"), json=payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_duplicate_tab(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-duplicate-tab changes a BI Studio project and requires --yes.")
-    payload = {"new_name": args.new_name}
-    if args.source_slug:
-        payload["source_slug"] = args.source_slug
-    if args.source_name:
-        payload["source_name"] = args.source_name
-    require_clean_json_text(payload, context="bi-duplicate-tab payload")
-    client = make_client(args)
-    data, _ = client.request("POST", bi_project_path(args.project_id, "/tabs/duplicate"), json=payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_rename_tab(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-rename-tab changes a BI Studio project and requires --yes.")
-    payload = {"new_name": args.new_name}
-    if args.old_slug:
-        payload["old_slug"] = args.old_slug
-    if args.old_name:
-        payload["old_name"] = args.old_name
-    require_clean_json_text(payload, context="bi-rename-tab payload")
-    client = make_client(args)
-    data, _ = client.request("PATCH", bi_project_path(args.project_id, "/tabs/rename"), json=payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_delete_tab(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-delete-tab deletes BI Studio tab files and requires --yes.")
-    params: dict[str, Any] = {}
-    if args.slug:
-        params["slug"] = args.slug
-    if args.name:
-        params["name"] = args.name
-    if not params:
-        raise RejoinBIError("bi-delete-tab requires --slug or --name.")
-    client = make_client(args)
-    data, _ = client.request("DELETE", path_with_query(bi_project_path(args.project_id, "/tabs"), params), timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_reorder_tabs(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-reorder-tabs changes BI Studio tab order and requires --yes.")
-    order = split_list(args.order)
-    if not order:
-        raise RejoinBIError("bi-reorder-tabs requires --order with comma-separated tab names/slugs or a JSON array.")
-    require_clean_json_text(order, context="bi-reorder-tabs order")
-    client = make_client(args)
-    data, _ = client.request("PATCH", bi_project_path(args.project_id, "/tabs/reorder"), json={"order": order}, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_load_layout(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    params = {"tab": args.tab}
-    data, _ = client.request("GET", path_with_query(bi_project_path(args.project_id, "/layout"), params), timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_save_layout(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-save-layout writes BI Studio canvas layout/assets and requires --yes.")
-    payload = load_json_file(args.data_file)
-    if not isinstance(payload, dict):
-        raise RejoinBIError("bi-save-layout --data-file must contain a JSON object.")
-    if args.tab and not payload.get("tab"):
-        payload["tab"] = args.tab
-    if not payload.get("tab"):
-        raise RejoinBIError("bi-save-layout requires --tab or a JSON payload containing tab.")
-    require_clean_json_text(payload, context="bi-save-layout payload")
-    client = make_client(args)
-    data, _ = client.request("POST", bi_project_path(args.project_id, "/layout"), json=payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_themes(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    data, _ = client.request("GET", bi_project_path(args.project_id, "/themes"), timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_save_theme(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-save-theme changes BI Studio project themes and requires --yes.")
-    payload = load_json_file(args.data_file)
-    require_clean_json_text(payload, context="bi-save-theme payload")
-    client = make_client(args)
-    data, _ = client.request("POST", bi_project_path(args.project_id, "/themes"), json=payload, timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def cmd_bi_delete_theme(args: argparse.Namespace) -> int:
-    require_yes(args, "bi-delete-theme deletes a BI Studio project theme and requires --yes.")
-    client = make_client(args)
-    data, _ = client.request("DELETE", bi_project_path(args.project_id, f"/themes/{quote(args.theme_id, safe='')}"), timeout=args.timeout)
-    print_payload(data, as_json=args.json)
-    return 0
-
-
-def ensure_child_path(root: Path, path: Path) -> Path:
-    resolved_root = root.resolve()
-    resolved_path = path.resolve()
-    try:
-        resolved_path.relative_to(resolved_root)
-    except ValueError as exc:
-        raise RejoinBIError(f"Refusing path outside export root: {resolved_path}") from exc
-    return resolved_path
-
-
-def copy_or_move_export_path(root: Path, source: Path, target: Path, *, remove_old: bool, dry_run: bool) -> dict[str, Any]:
-    source = ensure_child_path(root, source)
-    target = ensure_child_path(root, target)
-    result = {"source": str(source), "target": str(target), "exists": source.exists(), "changed": False}
-    if not source.exists() or source == target:
-        return result
-    result["changed"] = True
-    if dry_run:
-        return result
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(source, target, dirs_exist_ok=True)
-        if remove_old:
-            shutil.rmtree(source)
-    else:
-        shutil.copy2(source, target)
-        if remove_old:
-            source.unlink()
-    return result
-
-
-def replace_text_in_file(path: Path, replacements: list[tuple[str, str]], *, dry_run: bool) -> bool:
-    if not path.exists() or not path.is_file():
-        return False
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        text = path.read_text(encoding="utf-8-sig")
-    updated = text
-    for old, new in replacements:
-        if old and new and old != new:
-            updated = updated.replace(old, new)
-    if updated == text:
-        return False
-    if not dry_run:
-        path.write_text(updated, encoding="utf-8")
-    return True
-
-
-def ensure_parquet_requirement(root: Path, *, dry_run: bool) -> dict[str, Any]:
-    parquet_files = [path for path in (root / "dados" / "df").rglob("*.parquet")] if (root / "dados" / "df").exists() else []
-    requirements_path = root / "requirements.txt"
-    if not parquet_files:
-        return {"needed": False, "changed": False, "reason": "no_parquet_files"}
-    existing = requirements_path.read_text(encoding="utf-8") if requirements_path.exists() else ""
-    normalized = existing.lower()
-    if "pyarrow" in normalized or "fastparquet" in normalized:
-        return {"needed": True, "changed": False, "path": str(requirements_path), "engine_present": True}
-    if not dry_run:
-        requirements_path.parent.mkdir(parents=True, exist_ok=True)
-        suffix = "" if not existing or existing.endswith(("\n", "\r")) else "\n"
-        requirements_path.write_text(existing + suffix + "pyarrow>=16.0.0\n", encoding="utf-8")
-    return {
-        "needed": True,
-        "changed": True,
-        "path": str(requirements_path),
-        "reason": "parquet_files_require_pyarrow_or_fastparquet",
-        "parquet_count": len(parquet_files),
-    }
-
-
-def fix_export_python_backslash_literals(root: Path, *, dry_run: bool) -> dict[str, Any]:
-    """Fix BI Studio exports that accidentally emit an invalid backslash string literal."""
-    bad = ".replace('" + "\\" + "', '/')"
-    good = ".replace('\\\\', '/')"
-    changed: list[str] = []
-    for py_file in root.rglob("*.py"):
-        rel_parts = {part.lower() for part in py_file.relative_to(root).parts}
-        if rel_parts.intersection({"venv", ".venv", "__pycache__"}):
-            continue
-        try:
-            text = py_file.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            text = py_file.read_text(encoding="utf-8-sig")
-        if bad not in text:
-            continue
-        changed.append(str(py_file))
-        if not dry_run:
-            py_file.write_text(text.replace(bad, good), encoding="utf-8")
-    return {
-        "changed": bool(changed),
-        "files": changed,
-        "reason": "fixed_invalid_python_backslash_literal",
-    }
-
-
-def cmd_bi_normalize_export(args: argparse.Namespace) -> int:
-    root = Path(args.path).expanduser().resolve()
-    manifest_path = root / "manifest.json"
-    if not root.is_dir():
-        raise RejoinBIError(f"BI export path is not a directory: {root}")
-    if not manifest_path.exists():
-        raise RejoinBIError(f"manifest.json not found in BI export path: {root}")
-    manifest = read_json(manifest_path, {})
-    tabs = manifest.get("tabs") if isinstance(manifest.get("tabs"), list) else []
-    used_slugs: set[str] = set()
-    slug_changes: list[dict[str, Any]] = []
-    path_changes: list[dict[str, Any]] = []
-    text_changes: list[str] = []
-
-    for tab in tabs:
-        if not isinstance(tab, dict):
-            continue
-        old_slug = safe_str(tab.get("slug") or "")
-        if not old_slug:
-            continue
-        proposed = slugify_page_id(old_slug)
-        if old_slug == "index":
-            proposed = "index"
-        base = proposed
-        suffix = 2
-        while proposed in used_slugs and proposed != old_slug:
-            proposed = f"{base}-{suffix}"
-            suffix += 1
-        used_slugs.add(proposed)
-        if proposed == old_slug:
-            continue
-
-        tab["slug"] = proposed
-        slug_changes.append({"name": tab.get("name"), "old_slug": old_slug, "new_slug": proposed})
-        replacements = [(old_slug, proposed), (quote(old_slug, safe=""), quote(proposed, safe=""))]
-
-        file_pairs = [
-            (root / "templates" / f"{old_slug}.html", root / "templates" / f"{proposed}.html"),
-            (root / "layouts" / f"{old_slug}_layout.json", root / "layouts" / f"{proposed}_layout.json"),
-            (root / "router" / f"{old_slug}_router.py", root / "router" / f"{proposed}_router.py"),
-        ]
-        dir_pairs = [
-            (root / "static" / "css" / old_slug, root / "static" / "css" / proposed),
-            (root / "static" / "js" / old_slug, root / "static" / "js" / proposed),
-        ]
-        for source, target in [*file_pairs, *dir_pairs]:
-            path_changes.append(copy_or_move_export_path(root, source, target, remove_old=args.remove_old, dry_run=args.dry_run))
-        new_template = root / "templates" / f"{proposed}.html"
-        if replace_text_in_file(new_template, replacements, dry_run=args.dry_run):
-            text_changes.append(str(new_template))
-
-    manifest_changed = bool(slug_changes)
-    if manifest_changed and not args.dry_run:
-        write_json(manifest_path, manifest)
-    parquet_requirement = ensure_parquet_requirement(root, dry_run=args.dry_run)
-    python_syntax_fix = fix_export_python_backslash_literals(root, dry_run=args.dry_run)
-    result = {
-        "success": True,
-        "path": str(root),
-        "dry_run": bool(args.dry_run),
-        "manifest_changed": manifest_changed,
-        "slug_changes": slug_changes,
-        "path_changes": [item for item in path_changes if item.get("changed")],
-        "text_changes": text_changes,
-        "parquet_requirement": parquet_requirement,
-        "python_syntax_fix": python_syntax_fix,
-        "notes": [
-            "Visible BI Studio tab names can stay localized with accents.",
-            "Published workspace files, slugs, platform page routes, and page arquivo values should stay ASCII.",
-            "Run upload-folder-select or deploy pages again after normalization, then run smoke-pages.",
-        ],
-    }
-    print_payload(result, as_json=args.json)
-    return 0
-
-
-def poll_publish(client: RejoinBIClient, project_id: str, job_id: str, timeout: int, interval: float) -> dict[str, Any]:
-    deadline = time.time() + timeout
-    last = {}
-    while time.time() < deadline:
-        time.sleep(interval)
-        data, _ = client.request("GET", bi_project_path(project_id, f"/internal-publish/status/{quote(str(job_id), safe='')}"), timeout=60)
-        last = data if isinstance(data, dict) else {"raw": data}
-        if last.get("done") or str(last.get("status") or "").lower() in {"success", "error", "cancelled"}:
-            return last
-    raise RejoinBIError(f"Publish polling timed out. Last status: {last}")
-
-
-def bi_manifest_slug_issues(client: RejoinBIClient, project_id: str) -> list[dict[str, Any]]:
-    manifest, _ = client.request("GET", bi_project_path(project_id, "/manifest"), timeout=60)
-    tabs = manifest.get("tabs") if isinstance(manifest, dict) and isinstance(manifest.get("tabs"), list) else []
-    issues: list[dict[str, Any]] = []
-    for tab in tabs:
-        if not isinstance(tab, dict):
-            continue
-        slug = safe_str(tab.get("slug") or "")
-        if not slug or slug == "index":
-            continue
-        ascii_slug = slugify_page_id(slug)
-        if slug != ascii_slug:
-            issues.append({
-                "name": tab.get("name"),
-                "slug": slug,
-                "recommended_slug": ascii_slug,
-                "reason": "non_ascii_or_unsafe_technical_slug",
-            })
-    return issues
-
-
-POST_PUBLISH_FATAL_PATTERNS = (
-    ("python_syntax_error", "syntaxerror"),
-    ("python_traceback", "traceback (most recent call last)"),
-    ("parquet_engine_missing", "unable to find a usable engine"),
-    ("parquet_engine_missing", "pyarrow is required for parquet support"),
-    ("parquet_engine_missing", "fastparquet is required for parquet support"),
-    ("materialized_dataframe_missing", "nenhum artefato legível"),
-)
-
-
-def payload_text_tail(payload: Any, *, limit: int = 6000) -> str:
-    parts: list[str] = []
-
-    def visit(value: Any) -> None:
-        if value is None:
-            return
-        if isinstance(value, str):
-            parts.append(value)
-            return
-        if isinstance(value, dict):
-            for nested in value.values():
-                visit(nested)
-            return
-        if isinstance(value, list):
-            for nested in value:
-                visit(nested)
-            return
-
-    visit(payload)
-    text = "\n".join(part for part in parts if part)
-    return text[-limit:]
-
-
-def workspace_log_running(payload: dict[str, Any]) -> bool:
-    runtime_details = payload.get("runtime_details") if isinstance(payload.get("runtime_details"), dict) else {}
-    status_values = [
-        payload.get("status"),
-        payload.get("docker_status"),
-        runtime_details.get("status"),
-    ]
-    if runtime_details.get("running") is True:
-        return True
-    return any(str(value or "").strip().lower() == "running" for value in status_values)
-
-
-def analyze_workspace_runtime(logs_payload: dict[str, Any]) -> dict[str, Any]:
-    text_tail = payload_text_tail(logs_payload)
-    lower_tail = text_tail.lower()
-    findings: list[dict[str, str]] = []
-    for code, pattern in POST_PUBLISH_FATAL_PATTERNS:
-        if pattern in lower_tail and not any(item.get("code") == code for item in findings):
-            findings.append({"severity": "fatal", "code": code, "pattern": pattern})
-    return {
-        "running": workspace_log_running(logs_payload),
-        "fatal_findings": findings,
-        "log_tail": text_tail,
-    }
-
-
-def wait_workspace_post_publish_ready(
-    client: RejoinBIClient,
-    workspace: dict[str, Any],
-    *,
-    timeout: float,
-    interval: float,
-) -> dict[str, Any]:
-    workspace_id = workspace.get("id")
-    deadline = time.time() + max(float(timeout), 0.0)
-    attempts: list[dict[str, Any]] = []
-    last_status: dict[str, Any] = {}
-    last_logs: dict[str, Any] = {}
-    last_analysis: dict[str, Any] = {}
-
-    while time.time() <= deadline:
-        attempt: dict[str, Any] = {"checked_at": utc_now()}
-        try:
-            status_payload, _ = client.request("GET", f"/plataforma/api/containers/{workspace_id}/status", timeout=60)
-            last_status = status_payload if isinstance(status_payload, dict) else {"raw": status_payload}
-            attempt["status"] = {
-                "success": last_status.get("success"),
-                "status": last_status.get("status"),
-                "details_status": (last_status.get("details") or {}).get("status") if isinstance(last_status.get("details"), dict) else None,
-                "running": (last_status.get("details") or {}).get("running") if isinstance(last_status.get("details"), dict) else None,
-            }
-        except RejoinBIError as exc:
-            attempt["status_error"] = str(exc)
-
-        try:
-            logs_payload, _ = client.request("GET", f"/plataforma/api/containers/{workspace_id}/logs", timeout=60)
-            last_logs = logs_payload if isinstance(logs_payload, dict) else {"raw": logs_payload}
-            last_analysis = analyze_workspace_runtime(last_logs)
-            attempt["logs"] = {
-                "success": last_logs.get("success"),
-                "status": last_logs.get("status"),
-                "docker_status": last_logs.get("docker_status"),
-                "running": last_analysis.get("running"),
-                "fatal_findings": last_analysis.get("fatal_findings"),
-            }
-        except RejoinBIError as exc:
-            attempt["logs_error"] = str(exc)
-
-        attempts.append(attempt)
-        fatal_findings = last_analysis.get("fatal_findings") if isinstance(last_analysis, dict) else []
-        if fatal_findings:
-            return {
-                "success": False,
-                "reason": "runtime_logs_contain_fatal_findings",
-                "workspace": {"id": workspace.get("id"), "name": workspace.get("name")},
-                "fatal_findings": fatal_findings,
-                "status": last_status,
-                "logs_summary": {
-                    "status": last_logs.get("status"),
-                    "docker_status": last_logs.get("docker_status"),
-                    "running": last_analysis.get("running"),
-                    "log_tail": last_analysis.get("log_tail"),
-                },
-                "attempts": attempts,
-            }
-        if last_analysis.get("running"):
-            return {
-                "success": True,
-                "workspace": {"id": workspace.get("id"), "name": workspace.get("name")},
-                "status": last_status,
-                "logs_summary": {
-                    "status": last_logs.get("status"),
-                    "docker_status": last_logs.get("docker_status"),
-                    "running": True,
-                },
-                "attempts": attempts,
-            }
-        time.sleep(max(float(interval), 0.5))
-
-    return {
-        "success": False,
-        "reason": "workspace_runtime_not_running_before_timeout",
-        "workspace": {"id": workspace.get("id"), "name": workspace.get("name")},
-        "status": last_status,
-        "logs_summary": {
-            "status": last_logs.get("status") if isinstance(last_logs, dict) else None,
-            "docker_status": last_logs.get("docker_status") if isinstance(last_logs, dict) else None,
-            "running": last_analysis.get("running") if isinstance(last_analysis, dict) else False,
-            "log_tail": last_analysis.get("log_tail") if isinstance(last_analysis, dict) else "",
-        },
-        "attempts": attempts,
-    }
-
-
-def cmd_publish_bi(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    slug_issues = bi_manifest_slug_issues(client, args.project_id)
-    if slug_issues and not args.allow_non_ascii_routes:
-        print_payload({
-            "success": False,
-            "error": "BI Studio project contains non-ASCII/unsafe technical tab slugs. Direct publish is blocked to avoid broken workspace/page routes.",
-            "project_id": args.project_id,
-            "slug_issues": slug_issues,
-            "next_steps": [
-                "Export with bi-export.",
-                "Extract the ZIP locally.",
-                "Run bi-normalize-export --path <extracted-export> --remove-old.",
-                "Upload the normalized folder with upload-folder-select or deploy-manifest.",
-                "Create/update pages with accented visible names but ASCII file/route values, then run smoke-pages.",
-            ],
-        }, as_json=args.json)
-        return 1
-    workspace = resolve_workspace(client, args.workspace)
-    password = args.workspace_password or os.environ.get("REJOINBI_WORKSPACE_PASSWORD") or ""
-    payload = {
-        "container_id": workspace.get("id"),
-        "password": password,
-        "python_version": args.python_version or "auto",
-    }
-    data, _ = client.request(
-        "POST",
-        bi_project_path(args.project_id, "/internal-publish/start"),
-        json=payload,
-        timeout=60,
-    )
-    result = data if isinstance(data, dict) else {"raw": data}
-    if result.get("job_id"):
-        final = poll_publish(client, args.project_id, result["job_id"], args.timeout, args.interval)
-        result = {"initial_response": result, "final_response": final, "success": bool(final.get("success"))}
-    publish_success = bool(result.get("success"))
-    if publish_success and not args.no_post_publish_check:
-        post_check = wait_workspace_post_publish_ready(
-            client,
-            workspace,
-            timeout=args.post_publish_timeout,
-            interval=args.interval,
-        )
-        result["post_publish_check"] = post_check
-        result["success"] = bool(post_check.get("success"))
-    print_payload(result, as_json=args.json)
-    return 0 if bool(result.get("success")) else 1
-
-
-def cmd_echarts_template(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    data, _ = client.request("GET", "/plataforma/api/bi/echarts/template", params={"id": args.template_id}, timeout=60)
-    if args.output:
-        output = Path(args.output).expanduser().resolve()
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(str(data.get("code") or ""), encoding="utf-8")
-        print_payload({"success": True, "template_id": args.template_id, "output": str(output)}, as_json=args.json)
-    else:
-        print_payload(data, as_json=args.json)
-    return 0
-
-
-def build_studio_inventory(client: RejoinBIClient, args: argparse.Namespace) -> dict[str, Any]:
-    timeout = int(getattr(args, "timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT)
-    limit = int(getattr(args, "limit", 25) or 25)
-    include_raw = bool(getattr(args, "include_raw", False))
-    include_files = bool(getattr(args, "include_files", True))
-    include_sessions = bool(getattr(args, "include_sessions", True))
-    include_global_context = bool(getattr(args, "include_global_context", True))
-    requested_project_id = safe_str(getattr(args, "project_id", "") or "")
-    requested_project_uid = safe_str(getattr(args, "project_uid", "") or "")
-    issues: list[dict[str, Any]] = []
-
-    bi_payload = optional_inventory_get(
-        client,
-        "/plataforma/api/bi/projects",
-        label="bi_projects",
-        timeout=timeout,
-        issues=issues,
-    )
-    projects = extract_inventory_items(bi_payload or {}, ("projects", "data", "items", "results"))
-    project_records = [project for project in projects if isinstance(project, dict)]
-    if requested_project_id or requested_project_uid:
-        project_records = [
-            project
-            for project in project_records
-            if (
-                not requested_project_id
-                or safe_str(first_present_value(project, ("id", "project_id", "projectId"))) == requested_project_id
-            )
-            and (
-                not requested_project_uid
-                or safe_str(first_present_value(project, ("uid", "project_uid", "projectUid"))) == requested_project_uid
-            )
-        ]
-
-    data_engine_base = "/plataforma/data-engine"
-    data_engine: dict[str, Any] = {}
-    global_status = optional_inventory_get(
-        client,
-        f"{data_engine_base}/api/status",
-        label="data_engine_status",
-        timeout=timeout,
-        issues=issues,
-    )
-    data_engine["status"] = (
-        inventory_endpoint_result(global_status, limit=limit, include_raw=include_raw)
-        if global_status is not None
-        else inventory_error_result("status endpoint unavailable")
-    )
-    drivers_payload = optional_inventory_get(
-        client,
-        f"{data_engine_base}/api/db/providers/sqlserver/drivers",
-        label="sqlserver_drivers",
-        timeout=timeout,
-        issues=issues,
-    )
-    data_engine["sqlserver_drivers"] = (
-        inventory_endpoint_result(drivers_payload, limit=limit, include_raw=include_raw)
-        if drivers_payload is not None
-        else inventory_error_result("sqlserver drivers endpoint unavailable")
-    )
-
-    project_summaries: list[dict[str, Any]] = []
-    for project in project_records:
-        ref = project_inventory_ref(project)
-        query = project_query_from_ref(ref)
-        project_summary: dict[str, Any] = {
-            "project": compact_inventory_item(project),
-            "project_ref": ref,
-            "data_engine": {},
-        }
-        if not query:
-            project_summary["data_engine"]["skipped"] = "Project has no id or uid for Data Engine project-scoped endpoints."
-            project_summaries.append(project_summary)
-            continue
-
-        endpoint_specs: list[tuple[str, str, tuple[str, ...]]] = []
-        if include_sessions:
-            endpoint_specs.append(("session", f"{data_engine_base}/api/session/status", INVENTORY_COLLECTION_KEYS))
-        endpoint_specs.extend([
-            ("db_connections", f"{data_engine_base}/api/db/connections", ("connections", "data", "items", "results")),
-            ("repository", f"{data_engine_base}/api/repository/list", ("items", "children", "files", "data", "results")),
-            ("datasets", f"{data_engine_base}/api/datasets/list", ("datasets", "data", "items", "results")),
-        ])
-        if include_files:
-            endpoint_specs.append(("files", f"{data_engine_base}/api/list-files", ("files", "items", "data", "results")))
-        if include_global_context:
-            endpoint_specs.append(("global_context", f"{data_engine_base}/api/repository/global-context", INVENTORY_COLLECTION_KEYS))
-
-        for key, path, collection_keys in endpoint_specs:
-            payload = optional_inventory_get(
-                client,
-                path,
-                label=f"data_engine_{key}",
-                timeout=timeout,
-                issues=issues,
-                query=query,
-            )
-            if payload is None:
-                project_summary["data_engine"][key] = inventory_error_result("endpoint unavailable")
-            else:
-                project_summary["data_engine"][key] = inventory_endpoint_result(
-                    payload,
-                    limit=limit,
-                    include_raw=include_raw,
-                    collection_keys=collection_keys,
-                )
-        project_summaries.append(project_summary)
-
-    result: dict[str, Any] = {
-        "success": True,
-        "read_only": True,
-        "tenant": tenant_host_from_base_url(client.base_url),
-        "generated_at": utc_now(),
-        "bi_studio": {
-            "projects_endpoint": (
-                inventory_endpoint_result(
-                    bi_payload,
-                    limit=limit,
-                    include_raw=include_raw,
-                    collection_keys=("projects", "data", "items", "results"),
-                )
-                if bi_payload is not None
-                else inventory_error_result("BI Studio projects endpoint unavailable")
-            ),
-            "projects_count": len(project_records),
-            "projects": project_summaries,
-        },
-        "data_engine": data_engine,
-        "issues": issues,
-        "usage_notes": [
-            "This command is read-only and redacts password, token, key, secret, and connection-string fields.",
-            "Use --project-id or --project-uid to inspect one project. Use --include-raw only for sanitized troubleshooting output.",
-            "Use data-engine repository-content, preview-file, dataset-get, or query-preview only after reviewing this inventory.",
-        ],
-    }
-    return result
-
-
-def cmd_studio_inventory(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    result = build_studio_inventory(client, args)
-    if getattr(args, "output", None):
-        output = Path(args.output).expanduser().resolve()
-        write_json(output, result)
-        result = {**result, "output": str(output)}
-    print_payload(result, as_json=args.json)
-    return 0
 
 
 def load_users(client: RejoinBIClient) -> list[dict[str, Any]]:
@@ -5881,21 +5112,6 @@ def project_query_from_ref(ref: dict[str, str]) -> dict[str, str]:
     return {}
 
 
-def resolve_bi_project_id_from_uid(client: RejoinBIClient, project_uid: str) -> str:
-    uid = safe_str(project_uid)
-    if not uid:
-        return ""
-    data, _ = client.request("GET", "/plataforma/api/bi/projects", timeout=60)
-    for project in extract_inventory_items(data, ("projects", "items", "data", "result", "results")):
-        if not isinstance(project, dict):
-            continue
-        candidate_uid = safe_str(first_present_value(project, ("uid", "project_uid", "projectUid")))
-        if candidate_uid != uid:
-            continue
-        project_id = safe_str(first_present_value(project, ("id", "project_id", "projectId")))
-        if project_id:
-            return project_id
-    return ""
 
 
 def payload_summary(payload: Any) -> dict[str, Any]:
@@ -5915,6 +5131,8 @@ def payload_summary(payload: Any) -> dict[str, Any]:
 
 
 def classify_smoke_error(error: str) -> str:
+    if is_platform_database_busy_error(error):
+        return "platform_database_busy"
     if "HTTP 401" in error:
         return "session_expired"
     if "HTTP 403" in error and "local_only" in error:
@@ -6465,6 +5683,24 @@ def cmd_system_admin(args: argparse.Namespace) -> int:
         "auto-stress-start": ("GET", "/plataforma/api/auto-stress/start", True),
         "auto-stress-results": ("GET", "/plataforma/api/auto-stress/results", False),
         "database-status": ("GET", "/plataforma/api/database/status", False),
+        # Recuperacao anti lock-orfao: o que segura cada vaga do pool isolado e
+        # a liberacao manual da vaga presa quando o banco fica em 503.
+        "database-slots": lambda: ("GET", "/plataforma/api/database/slots", False),
+        "database-force-release": lambda: (
+            "POST",
+            f"/plataforma/api/database/slots/{required_int(args, 'slot_id', '--slot-id')}/force-release",
+            True,
+        ),
+        # Isolamento de sobrecarga: quais workspaces estao travados e o
+        # orcamento de tentativas por container (read-only).
+        "containers-resilience": ("GET", "/plataforma/api/containers/resilience", False),
+        # Recuperacao ISOLADA de UM container: nao reinicia o servidor inteiro,
+        # nao derruba os demais workspaces e nao derruba o tunel.
+        "container-recover": lambda: (
+            "POST",
+            f"/plataforma/api/containers/{required_int(args, 'container_id', '--container-id')}/recover",
+            True,
+        ),
         "subscription-status": ("GET", "/plataforma/api/subscription/status", False),
         "clear-dynamic-cache": ("GET", "/plataforma/api/clear-dynamic-cache", True),
         "dynamic-apps-monitoring": ("GET", "/plataforma/api/dynamic-apps-monitoring", False),
@@ -6484,7 +5720,8 @@ def cmd_system_admin(args: argparse.Namespace) -> int:
         "middleware-status": ("GET", "/plataforma/api/middleware/status", False),
         "middleware-cleanup": ("GET", "/plataforma/api/middleware/cleanup", True),
     }
-    method, path, destructive = action_map[args.action]
+    entry = action_map[args.action]
+    method, path, destructive = entry() if callable(entry) else entry
     if destructive:
         require_yes(args, f"{args.action} changes platform runtime/system state and requires --yes.")
     request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
@@ -7075,141 +6312,6 @@ def cmd_managed_databases(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_data_engine(args: argparse.Namespace) -> int:
-    client = make_client(args)
-    payload = parse_json_payload(args)
-    if not isinstance(payload, dict):
-        raise RejoinBIError("Data Engine payload must be a JSON object.")
-    query_params = parse_query_params(args)
-    if getattr(args, "project_id", None):
-        query_params["project_id"] = args.project_id
-    if getattr(args, "project_uid", None):
-        query_params["project_uid"] = args.project_uid
-    if query_params.get("project_uid") and not query_params.get("project_id"):
-        resolved_project_id = resolve_bi_project_id_from_uid(client, safe_str(query_params["project_uid"]))
-        if resolved_project_id:
-            query_params["project_id"] = resolved_project_id
-    if payload.get("project_uid") and not payload.get("project_id"):
-        resolved_project_id = resolve_bi_project_id_from_uid(client, safe_str(payload["project_uid"]))
-        if resolved_project_id:
-            payload["project_id"] = resolved_project_id
-    if payload:
-        require_clean_json_text(payload, context=f"data-engine {args.action} payload")
-    if args.action == "inventory":
-        result = build_studio_inventory(client, args)
-        if getattr(args, "output", None):
-            output = Path(args.output).expanduser().resolve()
-            write_json(output, result)
-            result = {**result, "output": str(output)}
-        print_payload(result, as_json=args.json)
-        return 0
-    if args.action in DATA_ENGINE_PROJECT_ACTIONS and not (
-        query_params.get("project_id")
-        or query_params.get("project_uid")
-        or payload_has_project_reference(payload)
-    ):
-        raise RejoinBIError(
-            f"data-engine {args.action} requires --project-id, --project-uid, "
-            "or a JSON payload containing project_id/project_uid."
-        )
-    base = "/plataforma/data-engine"
-    if args.action == "repository-inspect-sheets":
-        file_path = Path(required_arg(args, "file", "--file")).expanduser().resolve()
-        if not file_path.is_file():
-            raise RejoinBIError(f"File not found: {file_path}")
-        with ExitStack() as stack:
-            mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-            files = {"file": (file_path.name, stack.enter_context(file_path.open("rb")), mime)}
-            data, _ = client.request("POST", f"{base}/api/repository/inspect-sheets", files=files, timeout=args.timeout)
-        print_payload(scrub_sensitive(data), as_json=args.json)
-        return 0
-    if args.action == "repository-upload":
-        project_id = safe_str(query_params.get("project_id") or payload.get("project_id") or getattr(args, "project_id", ""))
-        if not project_id and query_params.get("project_uid"):
-            project_id = safe_str(resolve_bi_project_id_from_uid(client, safe_str(query_params["project_uid"])) or "")
-        if not project_id:
-            raise RejoinBIError("data-engine repository-upload requires --project-id or --project-uid.")
-        file_path = Path(required_arg(args, "file", "--file")).expanduser().resolve()
-        if not file_path.is_file():
-            raise RejoinBIError(f"File not found: {file_path}")
-        form_data: dict[str, str] = {"project_id": project_id}
-        if getattr(args, "folder", None):
-            form_data["folder"] = str(args.folder)
-        if getattr(args, "selected_sheet", None):
-            require_clean_json_text(args.selected_sheet, context="data-engine repository-upload selected sheets")
-            form_data["selected_sheets"] = json.dumps(args.selected_sheet, ensure_ascii=False)
-        if getattr(args, "sheet_states", None):
-            sheet_states_text = Path(args.sheet_states).expanduser().read_text(encoding="utf-8")
-            try:
-                require_clean_json_text(json.loads(sheet_states_text), context="data-engine repository-upload sheet states")
-            except json.JSONDecodeError:
-                require_clean_json_text(sheet_states_text, context="data-engine repository-upload sheet states")
-            form_data["sheet_states"] = sheet_states_text
-        if getattr(args, "csv_separator", None):
-            form_data["csv_separator"] = str(args.csv_separator)
-        with ExitStack() as stack:
-            mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-            files = {"file": (file_path.name, stack.enter_context(file_path.open("rb")), mime)}
-            data, _ = client.request("POST", f"{base}/api/repository/upload", data=form_data, files=files, timeout=args.timeout)
-        print_payload(scrub_sensitive(data), as_json=args.json)
-        return 0
-    action_map = {
-        "status": lambda: ("GET", f"{base}/api/status", False),
-        "session-status": lambda: ("GET", f"{base}/api/session/status", False),
-        "db-connections": lambda: ("GET", f"{base}/api/db/connections", False),
-        "create-db-connection": lambda: ("POST", f"{base}/api/db/connections", True),
-        "db-connection": lambda: ("GET", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}", False),
-        "update-db-connection": lambda: ("PUT", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}", True),
-        "delete-db-connection": lambda: ("DELETE", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}", True),
-        "test-db-connection": lambda: ("POST", f"{base}/api/db/connections/test", False),
-        "sqlserver-drivers": lambda: ("GET", f"{base}/api/db/providers/sqlserver/drivers", False),
-        "db-objects": lambda: ("GET", f"{base}/api/db/connections/{required_int(args, 'connection_id', '--connection-id')}/objects", False),
-        "query": lambda: ("GET", f"{base}/api/db/queries/{required_int(args, 'query_id', '--query-id')}", False),
-        "query-preview": lambda: ("POST", f"{base}/api/db/query/preview", False),
-        "query-materialize": lambda: ("POST", f"{base}/api/db/query/materialize", True),
-        "query-materialize-saved": lambda: ("POST", f"{base}/api/db/queries/{required_int(args, 'query_id', '--query-id')}/materialize", True),
-        "query-run": lambda: ("GET", f"{base}/api/db/query-runs/{required_int(args, 'run_id', '--run-id')}", False),
-        "ai-sql-query": lambda: ("POST", f"{base}/api/ai/sql-query", False),
-        "repository-list": lambda: ("GET", f"{base}/api/repository/list", False),
-        "repository-content": lambda: ("GET", f"{base}/api/repository/content", False),
-        "repository-global-context": lambda: ("GET", f"{base}/api/repository/global-context", False),
-        "repository-execute-global-context": lambda: ("POST", f"{base}/api/repository/execute-global-context", False),
-        "repository-manual-table": lambda: ("GET", f"{base}/api/repository/manual-table", False),
-        "create-manual-table": lambda: ("POST", f"{base}/api/repository/manual-table", True),
-        "create-folder": lambda: ("POST", f"{base}/api/repository/create-folder", True),
-        "move": lambda: ("POST", f"{base}/api/repository/move", True),
-        "order": lambda: ("POST", f"{base}/api/repository/order", True),
-        "delete": lambda: ("POST", f"{base}/api/repository/delete", True),
-        "datasets-list": lambda: ("GET", f"{base}/api/datasets/list", False),
-        "create-dataset": lambda: ("POST", f"{base}/api/datasets/create", True),
-        "duplicate-dataset": lambda: ("POST", f"{base}/api/datasets/duplicate", True),
-        "delete-dataset": lambda: ("POST", f"{base}/api/datasets/delete", True),
-        "link-dataset": lambda: ("POST", f"{base}/api/dataset/link", True),
-        "unlink-dataset": lambda: ("POST", f"{base}/api/dataset/unlink", True),
-        "list-files": lambda: ("GET", f"{base}/api/list-files", False),
-        "preview-file": lambda: ("GET", f"{base}/api/preview-file", False),
-        "dataset-get": lambda: ("GET", f"{base}/api/datasets/get", False),
-        "save-column-types": lambda: ("POST", f"{base}/api/datasets/column-types/save", True),
-        "save-notebook-state": lambda: ("POST", f"{base}/api/datasets/notebook-state/save", True),
-        "finalize-dataset": lambda: ("POST", f"{base}/api/datasets/finalize", True),
-        "toggle-visibility": lambda: ("POST", f"{base}/api/datasets/toggle-visibility", True),
-        "execute-code": lambda: ("POST", f"{base}/api/execute_code", True),
-        "agent-mine": lambda: ("POST", f"{base}/api/agent/mine", False),
-        "chat": lambda: ("POST", f"{base}/api/chat", False),
-        "load-chat": lambda: ("GET", f"{base}/api/load-chat", False),
-        "cancel-execution": lambda: ("POST", f"{base}/api/execute/cancel", True),
-        "reset-session": lambda: ("POST", f"{base}/api/session/reset", True),
-        "remove-variable": lambda: ("POST", f"{base}/api/session/remove-variable", True),
-        "terminal-command": lambda: ("POST", f"{base}/api/terminal/command", True),
-        "terminal-auto-install": lambda: ("POST", f"{base}/api/terminal/auto-install", True),
-    }
-    method, path, destructive = action_map[args.action]()
-    if destructive:
-        require_yes(args, f"{args.action} changes Data Engine configuration/data/session state and requires --yes.")
-    request_payload = payload if method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    data, _ = client.request(method, path_with_query(path, query_params), json=request_payload, timeout=args.timeout)
-    print_payload(scrub_sensitive(data), as_json=args.json)
-    return 0
 
 
 def cmd_workspace_logs(args: argparse.Namespace) -> int:
@@ -7796,7 +6898,7 @@ def upload_folder_with_options(
     interval: float = 3.0,
     exclude: list[str] | None = None,
     on_file_error: str = "ask",
-    max_retries: int = 5,
+    max_retries: int = 10,
     max_recovery_retries: int = 1,
     allow_database_files: bool = False,
     allow_data_files: bool = False,
@@ -8357,6 +7459,7 @@ def cmd_smoke_admin(args: argparse.Namespace) -> int:
         {"name": "gateway-pairings", "method": "GET", "path": "/plataforma/api/gateway/pairings", "required": False},
         {"name": "route-map-routes", "method": "GET", "path": "/plataforma/api/route-mapping/routes", "required": False},
         {"name": "system-database-status", "method": "GET", "path": "/plataforma/api/database/status", "required": False},
+        {"name": "system-database-slots", "method": "GET", "path": "/plataforma/api/database/slots", "required": False},
         {"name": "system-runtime-readiness", "method": "GET", "path": "/plataforma/api/runtime-readiness", "required": False},
     ]
     results: list[dict[str, Any]] = []
@@ -8987,7 +8090,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-database-files", action="store_true", help="After explicit review, allow selected database files to replace/add the remote copy")
     p.add_argument("--allow-data-files", action="store_true", help="After explicit review, allow selected data files to replace/add the remote copy")
     p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
-    p.add_argument("--max-retries", type=int, default=5, help="Bounded retries for each failed chunk")
+    p.add_argument("--max-retries", type=int, default=10, help="Bounded retries for each failed chunk")
     p.add_argument("--max-recovery-retries", type=int, default=1, help="Extra retry cycles when --on-file-error retry is selected")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     p.set_defaults(func=cmd_upload_files)
@@ -9010,156 +8113,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--interval", type=float, default=3.0)
     p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
-    p.add_argument("--max-retries", type=int, default=5, help="Bounded retries for each failed chunk")
+    p.add_argument("--max-retries", type=int, default=10, help="Bounded retries for each failed chunk")
     p.add_argument("--max-recovery-retries", type=int, default=1, help="Extra retry cycles when --on-file-error retry is selected")
     p.set_defaults(func=cmd_upload_folder_select)
 
-    p = sub.add_parser("bi-projects", help="List BI Studio projects")
-    p.set_defaults(func=cmd_bi_projects)
-
-    p = sub.add_parser(
-        "studio-inventory",
-        aliases=["bi-inventory", "bi-data-inventory"],
-        help="Read-only inventory of BI Studio projects and linked Data Engine resources",
-    )
-    p.add_argument("--project-id", help="Limit inventory to one BI/Data Engine project id")
-    p.add_argument("--project-uid", help="Limit inventory to one BI/Data Engine project uid")
-    p.add_argument("--limit", type=int, default=25, help="Maximum summarized items per endpoint")
-    p.add_argument("--include-raw", action="store_true", help="Include sanitized raw endpoint payloads")
-    p.add_argument("--include-global-context", action="store_true", default=True)
-    p.add_argument("--no-global-context", dest="include_global_context", action="store_false")
-    p.add_argument("--include-sessions", action="store_true", default=True)
-    p.add_argument("--no-sessions", dest="include_sessions", action="store_false")
-    p.add_argument("--include-files", action="store_true", default=True)
-    p.add_argument("--no-files", dest="include_files", action="store_false")
-    p.add_argument("--output", help="Optional JSON report path")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_studio_inventory)
-
-    p = sub.add_parser("bi-create-project", help="Create a BI Studio project")
-    p.add_argument("--name", required=True)
-    p.add_argument("--password")
-    p.set_defaults(func=cmd_bi_create_project)
-
-    p = sub.add_parser("bi-init-canvas", help="Initialize BI Studio canvas files for a project")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_init_canvas)
-
-    p = sub.add_parser("bi-tabs", help="List BI Studio tabs")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_tabs)
-
-    p = sub.add_parser("bi-tab-content", help="Read BI Studio tab HTML content")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--tab", required=True)
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_tab_content)
-
-    p = sub.add_parser("bi-create-tab", help="Create a BI Studio tab")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--name", required=True)
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_create_tab)
-
-    p = sub.add_parser("bi-duplicate-tab", help="Duplicate a BI Studio tab")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--source-name")
-    p.add_argument("--source-slug")
-    p.add_argument("--new-name", required=True)
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_duplicate_tab)
-
-    p = sub.add_parser("bi-rename-tab", help="Rename a BI Studio tab and sync project references")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--old-name")
-    p.add_argument("--old-slug")
-    p.add_argument("--new-name", required=True)
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_rename_tab)
-
-    p = sub.add_parser("bi-delete-tab", help="Delete a BI Studio tab")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--name")
-    p.add_argument("--slug")
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_delete_tab)
-
-    p = sub.add_parser("bi-reorder-tabs", help="Reorder BI Studio tabs")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--order", required=True, help="Comma-separated tab names/slugs or JSON array")
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_reorder_tabs)
-
-    p = sub.add_parser("bi-load-layout", help="Load BI Studio canvas layout for a tab")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--tab", required=True)
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_load_layout)
-
-    p = sub.add_parser("bi-save-layout", help="Save BI Studio canvas layout/page size/theme/components for a tab")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--tab")
-    p.add_argument("--data-file", required=True)
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_save_layout)
-
-    p = sub.add_parser("bi-themes", help="List BI Studio project themes")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_themes)
-
-    p = sub.add_parser("bi-save-theme", help="Save/update a BI Studio project theme")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--data-file", required=True)
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_save_theme)
-
-    p = sub.add_parser("bi-delete-theme", help="Delete a BI Studio project theme")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--theme-id", required=True)
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_delete_theme)
-
-    p = sub.add_parser("bi-export", help="Export a BI Studio project ZIP")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--output")
-    p.add_argument("--project-password")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    p.set_defaults(func=cmd_bi_export)
-
-    p = sub.add_parser("bi-normalize-export", help="Normalize a BI Studio export folder for Rejoin BI workspace routes")
-    p.add_argument("--path", required=True, help="Extracted BI Studio export folder")
-    p.add_argument("--remove-old", action="store_true", help="Remove accent/non-ASCII technical duplicate files after copying normalized files")
-    p.add_argument("--dry-run", action="store_true")
-    p.set_defaults(func=cmd_bi_normalize_export)
-
-    p = sub.add_parser("publish-bi", help="Publish a BI Studio project to a workspace")
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--workspace", required=True, help="Workspace id or name")
-    p.add_argument("--workspace-password")
-    p.add_argument("--python-version", default="auto")
-    p.add_argument("--timeout", type=int, default=1200)
-    p.add_argument("--interval", type=float, default=4.0)
-    p.add_argument("--post-publish-timeout", type=float, default=180.0, help="Seconds to wait for the published workspace runtime to start cleanly")
-    p.add_argument("--no-post-publish-check", action="store_true", help="Skip runtime/log validation after BI publish")
-    p.add_argument("--allow-non-ascii-routes", action="store_true", help="Allow direct publish even when BI tab slugs contain accents/non-ASCII characters")
-    p.set_defaults(func=cmd_publish_bi)
-
-    p = sub.add_parser("echarts-template", help="Fetch an ECharts template from the selected platform")
-    p.add_argument("--template-id", required=True)
-    p.add_argument("--output")
-    p.set_defaults(func=cmd_echarts_template)
 
     p = sub.add_parser("users", help="List users")
     p.add_argument("--profile", help="Filter by profile")
@@ -9569,11 +8526,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("system-admin", help="Inspect or operate platform runtime/system endpoints")
     p.add_argument("action", choices=[
         "auto-stress-start", "auto-stress-results", "database-status", "subscription-status",
+        "database-slots", "database-force-release",
+        "containers-resilience", "container-recover",
         "clear-dynamic-cache", "dynamic-apps-monitoring", "check-work-status", "dynamic-pages",
         "init-status", "restart-dynamics", "dynamic-status", "public-ready", "runtime-readiness",
         "runtime-build-info", "file-recognition", "test-url-rewriting", "active-container",
         "force-reload", "clear-all-caches", "middleware-status", "middleware-cleanup",
     ])
+    p.add_argument("--slot-id", help="Slot id from database-slots, required by database-force-release")
+    p.add_argument("--container-id", help="Container id, required by container-recover")
     p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
@@ -9628,46 +8589,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_payload_args(p)
     p.set_defaults(func=cmd_managed_databases)
 
-    p = sub.add_parser("data-engine", help="Manage Data Engine DB connections, repository, datasets, notebook, and terminal")
-    p.add_argument("action", choices=[
-        "inventory", "status", "session-status", "db-connections", "create-db-connection", "db-connection",
-        "update-db-connection", "delete-db-connection", "test-db-connection", "sqlserver-drivers",
-        "db-objects", "query", "query-preview", "query-materialize", "query-materialize-saved",
-        "query-run", "ai-sql-query", "repository-list", "repository-content",
-        "repository-inspect-sheets", "repository-upload",
-        "repository-global-context", "repository-execute-global-context",
-        "repository-manual-table", "create-manual-table", "create-folder", "move", "order",
-        "delete", "datasets-list", "create-dataset", "duplicate-dataset", "delete-dataset",
-        "link-dataset", "unlink-dataset", "list-files", "preview-file", "dataset-get",
-        "save-column-types", "save-notebook-state", "finalize-dataset", "toggle-visibility",
-        "execute-code", "agent-mine", "chat", "load-chat", "cancel-execution",
-        "reset-session", "remove-variable", "terminal-command", "terminal-auto-install",
-    ])
-    p.add_argument("--connection-id")
-    p.add_argument("--query-id")
-    p.add_argument("--run-id")
-    p.add_argument("--project-id", help="Data Engine project id for project-scoped endpoints")
-    p.add_argument("--project-uid", help="Data Engine project uid for project-scoped endpoints")
-    p.add_argument("--file", help="Data Engine repository upload/inspect file path")
-    p.add_argument("--folder", help="Data Engine repository target folder")
-    p.add_argument("--selected-sheet", action="append", help="Excel sheet to upload; repeat for multiple sheets")
-    p.add_argument("--sheet-states", help="JSON file with Data Engine sheet state metadata")
-    p.add_argument("--csv-separator", help="CSV separator hint, for example ',' or ';'")
-    p.add_argument("--allow-sensitive-files", action="store_true", help="Deprecated compatibility flag; Data Engine accepts every file name with no sensitive-name filter")
-    p.add_argument("--limit", type=int, default=25, help="Inventory summary item limit")
-    p.add_argument("--include-raw", action="store_true", help="Inventory only: include sanitized raw endpoint payloads")
-    p.add_argument("--include-global-context", action="store_true", default=True)
-    p.add_argument("--no-global-context", dest="include_global_context", action="store_false")
-    p.add_argument("--include-sessions", action="store_true", default=True)
-    p.add_argument("--no-sessions", dest="include_sessions", action="store_false")
-    p.add_argument("--include-files", action="store_true", default=True)
-    p.add_argument("--no-files", dest="include_files", action="store_false")
-    p.add_argument("--output", help="Inventory only: optional JSON report path")
-    p.add_argument("--query", action="append", help="Query parameter as key=value; can be repeated")
-    p.add_argument("--yes", action="store_true")
-    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    add_payload_args(p)
-    p.set_defaults(func=cmd_data_engine)
 
     p = sub.add_parser("pages", help="List platform pages")
     p.add_argument("--workspace", help="Workspace id or name")
@@ -9812,7 +8733,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--interval", type=float, default=3.0)
     p.add_argument("--on-file-error", choices=["ask", "retry", "skip", "cancel", "fail"], default="ask", help="Action after retries for one file; ask is interactive and never skips silently")
-    p.add_argument("--max-retries", type=int, default=5, help="Bounded retries for each failed chunk")
+    p.add_argument("--max-retries", type=int, default=10, help="Bounded retries for each failed chunk")
     p.add_argument("--max-recovery-retries", type=int, default=1, help="Extra retry cycles when --on-file-error retry is selected")
     p.add_argument("--readiness-timeout", type=float, default=300.0, help="Seconds to wait for accessible-pages to expose container_name for every page")
     p.add_argument("--no-page-readiness", action="store_true", help="Skip post-deploy accessible-pages/menu safety verification")

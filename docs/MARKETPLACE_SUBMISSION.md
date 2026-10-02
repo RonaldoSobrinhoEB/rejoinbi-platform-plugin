@@ -32,5 +32,4 @@ The plugin intentionally avoids duplicated marketplace wrappers such as `.agents
 ```powershell
 python "$HOME\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py" .
 python -m py_compile .\scripts\rejoinbi.py
-python .\scripts\rejoinbi.py studio-inventory --help
 ```

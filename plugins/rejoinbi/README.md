@@ -6,11 +6,11 @@ The plugin also manages persistent SQLite databases outside project workspaces t
 
 ## Scope Isolation
 
-Normal workspace, upload, page, dashboard, BI Studio, Data Engine, messaging, branding, RLS, and diagnostic work cannot inspect or alter users, direct permissions, or permission groups. Those identity-governance commands are disabled by default, even for an authenticated administrator.
+Normal workspace, upload, page, dashboard, messaging, branding, RLS, and diagnostic work cannot inspect or alter users, direct permissions, or permission groups. Those identity-governance commands are disabled by default, even for an authenticated administrator.
 
-Every remote command also has a mandatory immutable `--operation-scope`: `workspace`, `upload`, `deployment`, `pages`, `rls`, `bi`, `data`, `platform`, `messaging`, `ai`, `diagnostics`, `system`, or `identity`. The CLI rejects a missing or wrong scope before it opens an authenticated client. The agent must first identify one area, declare that exact scope, and split requests that span areas.
+Every remote command also has a mandatory immutable `--operation-scope`: `workspace`, `upload`, `deployment`, `pages`, `rls`, `data`, `platform`, `messaging`, `ai`, `diagnostics`, `system`, or `identity`. The CLI rejects a missing or wrong scope before it opens an authenticated client. The agent must first identify one area, declare that exact scope, and split requests that span areas.
 
-Only use identity commands when the requester explicitly names users, permissions, or groups and the exact purpose is clear. Identity reads require both `--operation-scope identity --identity-scope`; identity writes also require `--yes` and an exact resolved `--confirm-user` or `--confirm-group` target. `smoke-admin` is permanently limited to core diagnostics and cannot re-enable identity, messaging, AI, Data Engine, or RLS checks. Raw `api-get` and `api-send` derive the scope from known paths and require the exact `--confirm-api-path`, so they cannot bypass the separation.
+Only use identity commands when the requester explicitly names users, permissions, or groups and the exact purpose is clear. Identity reads require both `--operation-scope identity --identity-scope`; identity writes also require `--yes` and an exact resolved `--confirm-user` or `--confirm-group` target. `smoke-admin` is permanently limited to core diagnostics and cannot re-enable identity, messaging, AI, or RLS checks. Raw `api-get` and `api-send` derive the scope from known paths and require the exact `--confirm-api-path`, so they cannot bypass the separation.
 
 See [docs/command-scope-map.md](docs/command-scope-map.md) for the complete command-by-command boundary and confirmations.
 
@@ -40,13 +40,9 @@ Correct pattern:
 - The manifest maps each page to its own `file` and `route`.
 - Visible page names may be localized with accents. Technical values (`id`, `route`, filenames) stay ASCII; for static dashboards, `route` should usually be the HTML filename without `.html`.
 
-See `examples/codex-advanced-suite/rejoinbi-app.json`. The advanced suite now includes executive, sales, operations, and scenario-form pages with a shared professional dashboard design system, responsive ECharts layouts, validation states, and export-ready local form records. For BI Studio canvas work, use `examples/codex-bi-studio-canvas`; it documents the professional canvas standard, Data Engine binding, Rejoin BI theme, export normalization, and Flask manifest shape for BI Studio exports. For row-level-security checks, use `examples/codex-rls-suite/rejoinbi-app.json`; it publishes a single accented menu page (`Visão RLS por Email`) with ASCII route/file values and client-side filtering from the platform config endpoint over fictitious data. Do not copy that static JSON pattern for sensitive production data; real sensitive rows must come from a server/API path that enforces RLS before returning data.
-
 Read the full Workspace compatibility guide in `docs/workspace-compatibility.md`. It captures the platform Workspace tips for static dashboards, Flask apps, `/api/` routes, startup modes, upload replacement behavior, and the explicit upload-safety boundaries.
 
 Read `docs/page-routing-map.md` for the platform route/menu contract. It maps `accessible-pages`, `container_name`, `arquivo`, `rota`, and the `/plataforma/<container_name>/client/<route>` tunnel so generated pages do not fall back to `container_<id>`.
-
-Read `docs/admin-configuration-map.md` for the administrative configuration map. It follows the Rejoin BI manual permission levels and maps sidebar tools such as users, permissions, groups, announcements, platform branding, AI configuration, workspace, pages, RLS, audit, system management, and BI Studio to plugin commands or authenticated API fallbacks.
 
 Read `docs/agent-operating-playbook.md` when another Codex agent, teammate, or new user needs to understand the platform from zero. It includes the full natural-language router, command families, safety rules, response patterns, and completion checklist.
 
@@ -58,7 +54,7 @@ Read `docs/command-scope-map.md` before any identity-governance work. It disting
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br ensure
 python .\scripts\rejoinbi.py workspaceall --operation-scope workspace
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-advanced-suite\rejoinbi-app.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages --operation-scope deployment
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --create-workspace --replace-pages --upload-mode full --operation-scope deployment
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br smoke-pages --manifest .\examples\codex-advanced-suite\rejoinbi-app.json --operation-scope pages
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin --operation-scope diagnostics
 python .\scripts\rejoinbi.py announcements --operation-scope messaging
@@ -73,8 +69,6 @@ python .\scripts\rejoinbi.py audit dashboard --operation-scope diagnostics
 python .\scripts\rejoinbi.py page-maintenance verify-hierarchy --operation-scope pages
 python .\scripts\rejoinbi.py rls pages --operation-scope rls
 python .\scripts\rejoinbi.py codex-keys stats --operation-scope ai
-python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json --operation-scope bi
-python .\scripts\rejoinbi.py data-engine status --operation-scope data
 ```
 
 ## Mandatory deployment choice
@@ -119,8 +113,6 @@ These are the expected interpretations for Codex agents using this plugin:
 - "mudar logo", "favicon", "cores", "identidade visual": use `backup-platform-branding` and `set-platform-branding`.
 - "subir arquivo em uma pasta": use `upload-files --folder`; add `--source-root` when selected files must keep their project folders.
 - "criar dashboard com paginas": create one standalone HTML file per platform page, then `validate-app`, `deploy-manifest`, and `smoke-pages`.
-- "criar dashboard no BI Studio", "canvas profissional", "Data Engine + canvas": use `examples/codex-bi-studio-canvas` as the quality bar. Build the dataset first, save a professional desktop/mobile layout, export, normalize, deploy, and smoke test.
-- "o que tem no BI Studio/Data Engine": run `studio-inventory` first. For BI exports with accents/parquet, run `bi-normalize-export` before uploading.
 - "remover workspace": run `delete-workspace` dry-run first; password-protected workspaces require validated workspace password before deletion.
 - For everything else, use `docs/agent-operating-playbook.md` as the routing source before asking questions.
 
@@ -130,8 +122,6 @@ For automation-only cases, the older terminal/API flow is still available:
 $env:REJOINBI_PASSWORD = "..."
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br connect --email user@example.com --terminal
 ```
-
-The `examples/codex-echarts-dashboard` folder is a polished single-page ECharts signal dashboard for quick upload and rendering checks. The `examples/codex-bi-studio-canvas` folder is the BI Studio/Data Engine reference for professional canvas dashboards.
 
 ## Scoped Platform Administration
 
@@ -180,24 +170,10 @@ python .\scripts\rejoinbi.py upload-admin gateway-pairings --operation-scope sys
 python .\scripts\rejoinbi.py route-map routes --operation-scope system
 python .\scripts\rejoinbi.py system-admin database-status --operation-scope system
 
-python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
-python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin --operation-scope diagnostics
-python .\scripts\rejoinbi.py data-engine db-connections --project-id 1
-python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file .\dados.xlsx
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id 1 --file .\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
-python .\scripts\rejoinbi.py data-engine repository-list --project-id 1
-python .\scripts\rejoinbi.py data-engine datasets-list --project-id 1
-python .\scripts\rejoinbi.py bi-normalize-export --path .\bi-export --remove-old
 ```
 
-`smoke-admin` runs a read-only API check across the main configuration areas and writes a reusable JSON report. `studio-inventory` links BI Studio projects to Data Engine status, SQL Server driver support, sessions, database connections, repository tree, datasets, and files. It is read-only and redacts passwords, tokens, API keys, secrets, and connection strings. Data Engine repository/session/dataset commands are project-scoped; pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload.
-
-`bi-normalize-export` is a local safety helper for BI Studio exports. It keeps display names localized, converts technical slugs/files/static folders/routes to ASCII, and adds `pyarrow>=16.0.0` when parquet Data Engine artifacts are present. After using it, upload the normalized folder, update page `arquivo`/`rota` to the ASCII values, then run `page-files`, `page-maintenance verify-hierarchy`, and `smoke-pages`.
-
-Professional BI Studio dashboards must not be treated as generic KPI dumps. Build a metric model first, bind Data Engine outputs, design each tab around a business question, and save both desktop and mobile canvas layouts. A finished BI Studio publication must pass `validate-app --strict`, have a running workspace, and show `html_ok`, `browser_route_ok`, and `menu_safe` for every platform page.
-
-For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Codex keys, Data Engine, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
+For e-mail, WhatsApp, RLS, sleep manager, workspace notification, Codex keys, and other high-variation configuration payloads, prefer `--data-file` with the same JSON shape used by the platform API. JSON files saved by Windows tools with UTF-8 BOM are accepted. That keeps the plugin compatible with new fields while still enforcing authentication, profile checks, and `--yes` on risky actions.
 
 ### RLS Smoke Workflow
 
@@ -205,7 +181,7 @@ Use this when changing RLS logic, page routing, permissions, or user/PIN handlin
 
 ```powershell
 python .\scripts\rejoinbi.py validate-app --manifest .\examples\codex-rls-suite\rejoinbi-app.json
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages --operation-scope deployment
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br deploy-manifest --manifest .\examples\codex-rls-suite\rejoinbi-app.json --create-workspace --replace-pages --upload-mode full --operation-scope deployment
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-config --page-id codex-rls-suite-visao --container-id 12 --data-file .\rls-config.json --yes --operation-scope rls
 python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br rls set-page-mapping --page-id codex-rls-suite-visao --container-id 12 --page-rls-id codex-rls-suite-visao --data-file .\rls-page-mapping.json --yes --operation-scope rls
 # Only if the user explicitly requested this permission test.

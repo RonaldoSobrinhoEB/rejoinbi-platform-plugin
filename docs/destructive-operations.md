@@ -94,3 +94,24 @@ Notes:
 - `--restart` restarts the container after removal (default: no).
 - Removal is blocked when `--yes` is absent or `--confirm-path` does not match `--path`.
 
+## Database Slot Force Release
+
+Releases a stuck platform-database slot through
+`POST /plataforma/api/database/slots/<slot_id>/force-release`. It frees the reservation and
+invalidates that connection, so it is destructive against live platform state.
+
+```powershell
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br system-admin database-slots --operation-scope system
+python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br system-admin database-force-release --slot-id 12345 --yes --operation-scope system
+```
+
+Notes:
+
+- Always inspect with `database-slots` first and release the single oldest stuck `slot_id`.
+  There is no "release all" action by design.
+- The release is blocked without `--yes` and without an explicit `--tenant`/`--use-active-tenant`.
+- `slot_id` identifies a live connection; it disappears once the slot is released. A `404` means it
+  was already freed — re-inspect instead of retrying.
+- The platform lease/TTL reaper frees expired slots on its own; prefer waiting one reaper interval
+  over forcing a slot that is about to expire.
+

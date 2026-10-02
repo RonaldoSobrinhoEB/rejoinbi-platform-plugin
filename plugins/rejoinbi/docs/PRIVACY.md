@@ -6,7 +6,6 @@ Rejoin BI is a Codex plugin for operating Rejoin BI addresses selected by the us
 
 - Platform addresses provided by the user, such as `subdomain.rejoinbi.com.br`.
 - Rejoin BI session cookies created after the user completes login.
-- Metadata returned by the authenticated Rejoin BI platform, such as workspace names, page names, BI Studio project names, Data Engine dataset names, and admin configuration summaries.
 - Local files selected by the user for upload to a Rejoin BI workspace.
 
 ## Credential handling

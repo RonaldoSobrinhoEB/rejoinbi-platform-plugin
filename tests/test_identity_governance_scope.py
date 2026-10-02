@@ -125,7 +125,7 @@ class IdentityGovernanceScopeTests(unittest.TestCase):
             "/plataforma/api/email/",
             "/plataforma/api/whatsapp/",
             "/plataforma/api/codex/",
-            "/plataforma/data-engine/api/",
+            "/plataforma/api/managed-databases/", # raw path guarded by smoke-admin
             "/plataforma/api/rls",
         ):
             self.assertNotIn(forbidden_path, smoke_source)

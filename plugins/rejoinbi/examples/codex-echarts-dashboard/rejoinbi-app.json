@@ -1,0 +1,23 @@
+{
+  "language": "pt-BR",
+  "workspace": {
+    "name": "codex-echarts-dashboard",
+    "create": true
+  },
+  "upload": {
+    "path": ".",
+    "startup_mode": "static",
+    "auto_start": true
+  },
+  "replace_pages": true,
+  "pages": [
+    {
+      "id": "codex-echarts-signal",
+      "name": "Executive Signal",
+      "route": "index",
+      "file": "index.html",
+      "description": "Dashboard ECharts standalone de demonstração com métricas executivas.",
+      "icon": "fas fa-chart-line"
+    }
+  ]
+}

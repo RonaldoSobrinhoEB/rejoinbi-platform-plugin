@@ -17,14 +17,13 @@ The only deliberate multi-area transaction is `deploy-manifest`, which is locked
 | Scope value | Area | Main commands |
 | --- | --- | --- |
 | `auth` | Local authentication/session handling | `connect`, `login`, `ensure`, `status`, `tenant`, `tenants` |
-| `local` | Local-only tools | `validate-app`, `bi-normalize-export`, `export-package` |
+| `local` | Local-only tools | `validate-app`, `export-package` |
 | `workspace` | Workspace lifecycle and configuration | `workspace*`, `workspace-file`, `create-workspace`, `update-workspace`, `delete-workspace`, `validate-workspace`, `remove-file` |
 | `upload` | Direct project/file transfer | `upload-folder-select`, `upload-files` |
 | `deployment` | Manifest-driven publish transaction | `deploy-manifest` |
 | `pages` | Pages, hierarchy, routes, and page smoke | `pages`, `page-*`, `create-page`, `update-page`, `delete-page`, `smoke-pages` |
 | `rls` | Row-level-security configuration | `rls`, `rls-export` |
-| `bi` | BI Studio and canvas publishing | `bi-*`, `studio-inventory`, `echarts-template`, `publish-bi` |
-| `data` | Data Engine and managed databases | `data-engine`, `managed-databases` |
+| `data` | Managed databases | `managed-databases` |
 | `platform` | Branding, menu, title, and platform configuration | `platform-*`, `colors-config`, `menu*`, `storage-path` |
 | `messaging` | Announcements, e-mail, and WhatsApp | `announcements`, `email`, `whatsapp` |
 | `ai` | Page AI configuration and Codex keys | `ai-config`, `set-ai-config`, `codex-keys` |
@@ -39,14 +38,13 @@ The following groups are registered in `COMMAND_OPERATION_SCOPES`. Automated tes
 
 | Scope | Registered commands |
 | --- | --- |
-| Authentication/local | `auth`, `browser-login`, `connect`, `ensure`, `ensure-connected`, `login`, `status`, `tenant`, `tenants`, `validate-app`, `bi-normalize-export`, `export-package`, `create-user-template`, `user-template` |
+| Authentication/local | `auth`, `browser-login`, `connect`, `ensure`, `ensure-connected`, `login`, `status`, `tenant`, `tenants`, `validate-app`, `export-package`, `create-user-template`, `user-template` |
 | Workspace | `workspaceall`, `validate-workspace`, `workspace-content`, `create-workspace`, `update-workspace`, `delete-workspace`, `workspace-delete`, `set-workspace-password`, `workspace-start`, `workspace-stop`, `workspace-restart`, `workspace-status`, `workspace-logs`, `workspace-versions`, `workspace-version-export`, `workspace-version-restore`, `workspace-version-delete`, `workspace-schedule`, `workspace-notification`, `workspace-input`, `workspace-build`, `workspace-stop-all`, `workspace-file`, `remove-file` |
 | Upload/deployment | `upload-files`, `upload-folder-select`, `deploy-manifest` |
-| BI | `bi-projects`, `studio-inventory`, `bi-inventory`, `bi-data-inventory`, `bi-create-project`, `bi-init-canvas`, `bi-tabs`, `bi-tab-content`, `bi-create-tab`, `bi-duplicate-tab`, `bi-rename-tab`, `bi-delete-tab`, `bi-reorder-tabs`, `bi-load-layout`, `bi-save-layout`, `bi-themes`, `bi-save-theme`, `bi-delete-theme`, `bi-export`, `publish-bi`, `echarts-template` |
 | Identity | `users`, `sectors`, `setores`, `permission-pages`, `user-presence`, `download-users`, `download-permissions`, `create-user`, `create-users-file`, `update-user`, `set-user-password`, `delete-user`, `user-permissions`, `set-user-permissions`, `recalculate-permissions`, `groups`, `create-group`, `update-group`, `delete-group`, `assign-user-group`, `users-for-groups`, `announcement-groups` |
 | Pages/RLS | `pages`, `page-files`, `page-maintenance`, `set-page-order`, `accessible-pages`, `create-page`, `update-page`, `delete-page`, `resolve-page`, `smoke-pages`, `rls`, `rls-export` |
 | Platform/messaging/AI/diagnostics/system | `menu`, `menu-maintenance`, `announcements`, `create-announcement`, `delete-announcement`, `platform-config`, `colors-config`, `set-platform-config`, `export-platform-config`, `backup-platform-branding`, `platform-title`, `set-platform-branding`, `restore-platform-branding`, `restore-platform-config-defaults`, `ai-config`, `set-ai-config`, `delete-ai-config`, `cleanup-ai-config`, `storage-path`, `audit`, `audit-export`, `sleep-manager`, `email`, `whatsapp`, `codex-keys`, `route-map`, `system-admin`, `upload-admin`, `smoke-admin` |
-| Data/raw | `managed-databases`, `data-engine`, `api-get`, `api-send` |
+| Data/raw | `managed-databases`, `api-get`, `api-send` |
 
 Special sub-actions that expose identity data are `workspace-notification users`, `sleep-manager users-online`, and `codex-keys users`. They dynamically change from their normal module scope to `identity`. E-mail and WhatsApp contact groups are messaging objects, not platform permission groups.
 
@@ -66,13 +64,28 @@ User records, departments, online-user presence, direct permissions, permission 
 
 The protection exists at two levels: `make_client()` rejects a missing identity declaration and `RejoinBIClient.ensure_scope_allows_path()` blocks an identity API route from any client not locked to `identity`. Therefore a future handler cannot accidentally reach identity endpoints from a workspace, upload, page, BI, system, or messaging command.
 
-`smoke-admin` is permanently limited to core diagnostics. It does not inspect identity, messaging, AI, Data Engine, or RLS. Use the dedicated command with the corresponding scope for those areas.
+`smoke-admin` is permanently limited to core diagnostics. It does not inspect identity, messaging, AI, or RLS. Use the dedicated command with the corresponding scope for those areas.
 
 ## Raw API Rules
 
 `api-get` and `api-send` never bypass a scope. Known endpoint paths derive their actual scope: for example, `/plataforma/api/users` is `identity`, `/plataforma/api/platform-config` is `platform`, and `/plataforma/api/containers` is `workspace`. The caller must provide the derived value in `--operation-scope` and repeat the exact endpoint using `--confirm-api-path`.
 
 Identity raw paths additionally require `--identity-scope`; raw writes also require `--yes`. An unknown path is assigned `raw-api`, but still requires its exact path confirmation.
+
+## Platform Database Recovery Actions
+
+`/plataforma/api/database/*` resolves to the `system` scope, so a raw `api-send` to a slot
+endpoint still requires `--operation-scope system` plus `--confirm-api-path`. Prefer the named
+actions, which carry the same scope with the required confirmations already wired:
+
+| Action | Scope | Confirmation | Notes |
+| --- | --- | --- | --- |
+| `system-admin database-status` | `system` | none | Read-only. Runs `SELECT 1` through the platform health manager; returns 503 while the database is locked. |
+| `system-admin database-slots` | `system` | none | Read-only. Lists held slots with `slot_id`, `age_s`, `expires_in_s`. |
+| `system-admin database-force-release --slot-id <id>` | `system` | `--yes` + explicit `--tenant`/`--use-active-tenant` | Destructive. Releases exactly one stuck slot and invalidates its connection. |
+
+`database-slots` is registered as a read-only `system-admin` action, so it does not require an
+explicit tenant; `database-force-release` does, because it mutates live platform state.
 
 ## Examples
 

@@ -22,7 +22,7 @@ User records, departments, user-presence data, direct permissions, permission ex
 - Identity writes require both identity scope flags, `--yes`, and the resolved target repeated with `--confirm-user` or `--confirm-group`.
 - An intentional empty direct-permission replacement additionally requires `--allow-empty-permissions`.
 - Recalculating all user permissions additionally requires `--confirm-all-users RECALCULATE-ALL`.
-- `smoke-admin` is permanently restricted to core diagnostics; it cannot inspect identity, messaging, IA, Data Engine, or RLS.
+- `smoke-admin` is permanently restricted to core diagnostics; it cannot inspect identity, messaging, IA, or RLS.
 - `api-get` and `api-send` cannot bypass these rules: they derive known endpoint scopes and require exact `--confirm-api-path`.
 
 The complete boundary, including command families and non-authorizing requests, is in [command-scope-map.md](command-scope-map.md).
@@ -47,10 +47,8 @@ The complete boundary, including command families and non-authorizing requests, 
 | Chaves Codex/IA | `/plataforma/api/codex/keys*`, `/plataforma/api/codex/auth-*` | `codex-keys stats`, `codex-keys list`, `codex-keys create`, `codex-keys update`, `codex-keys delete`, `codex-keys usage` |
 | Sistema de Auditoria | `GET /plataforma/api/audit/*`, `GET /plataforma/api/audit/export`, `POST /plataforma/api/audit-cleanup` | `audit logs`, `audit dashboard`, `audit health`, `audit log`, `audit cleanup`, `audit-export` |
 | Gateway/Upload | `/plataforma/api/python-versions`, `/plataforma/api/upload-capabilities`, `/plataforma/api/gateway/*`, `/plataforma/api/upload-status/<id>`, `/plataforma/api/clear-dynamic-data` | `upload-admin python-versions`, `upload-admin capabilities`, `upload-admin gateway-pairings`, `upload-admin gateway-generate-pairing-code`, `upload-admin upload-status`, `upload-admin clear-dynamic-data` |
-| Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
-| Data Engine | `/plataforma/data-engine/api/db/*`, `/repository/*`, `/datasets/*`, `/terminal/*`, `/session/*` | `studio-inventory`, `data-engine inventory`, `data-engine db-connections --project-id 1`, `data-engine create-db-connection --data-file db.json`, `data-engine repository-list --project-id 1`, `data-engine datasets-list --project-id 1`, `data-engine terminal-command --project-id 1`, `data-engine reset-session --project-id 1` |
+| Gerenciamento de Sistema | `/api/system/storage-path`, `/plataforma/api/sleep-manager/*`, menu cache endpoints, runtime/cache/status endpoints, `/plataforma/api/database/status`, `/plataforma/api/database/slots`, `/plataforma/api/database/slots/<id>/force-release` | `storage-path`, `sleep-manager`, `menu`, `menu-maintenance`, `system-admin database-status`, `system-admin database-slots`, `system-admin database-force-release`, `system-admin runtime-readiness`, `system-admin clear-all-caches`, `route-map routes` |
 | Bancos gerenciados | `/plataforma/api/managed-databases/*` | `managed-databases list/get/create/update/delete/schema/query/integrity/download/tokens/create-token/revoke-token/audit/diagnostics/create-table/create-view/create-index/delete-object/inspect-sqlite/migrate-sqlite` |
-| BI Studio | `/plataforma/api/bi/*` | `studio-inventory`, `bi-projects`, `bi-create-project`, `bi-export`, `publish-bi`, `echarts-template` |
 
 ## Fast Platform Branding
 
@@ -121,7 +119,6 @@ python .\scripts\rejoinbi.py email resume-schedule --schedule-id 12 --yes --oper
 python .\scripts\rejoinbi.py whatsapp pause-schedule --schedule-id 27 --yes --operation-scope messaging
 python .\scripts\rejoinbi.py sleep-manager set-config --data-file .\sleep-config.json --yes
 python .\scripts\rejoinbi.py codex-keys create --data-file .\codex-key.json --yes --operation-scope ai
-python .\scripts\rejoinbi.py data-engine create-db-connection --data-file .\db-connection.json --yes
 ```
 
 RLS needs both page mapping and user dimension data. For platform-created workspace pages, always include `container_id`; it prevents route/page confusion when the same technical page id pattern appears in another workspace. A complete RLS validation should prove four things: the page exists in `accessible-pages`, the standard user has direct permission only for that page, `rls test-config` returns only that e-mail's dimension values, and an admin command attempted as `Usuario` is rejected by the plugin profile guard.
@@ -131,42 +128,61 @@ Inspect platform infrastructure and upload support:
 ```powershell
 python .\scripts\rejoinbi.py smoke-admin --output-dir .\smoke-admin --operation-scope diagnostics
 python .\scripts\rejoinbi.py system-admin database-status --operation-scope system
+python .\scripts\rejoinbi.py system-admin database-slots --operation-scope system
+python .\scripts\rejoinbi.py system-admin database-force-release --slot-id 12345 --yes --operation-scope system
 python .\scripts\rejoinbi.py system-admin runtime-readiness --operation-scope system
 python .\scripts\rejoinbi.py route-map routes --operation-scope system
 python .\scripts\rejoinbi.py upload-admin capabilities --operation-scope system
 python .\scripts\rejoinbi.py upload-admin gateway-pairings --operation-scope system
 ```
 
-## BI Studio and Data Engine Inventory
+## Platform Database Lock Recovery
 
-Before answering what exists in BI Studio/Data Engine, creating a linked dataset, changing repository files, or publishing a BI project, run the read-only inventory:
+Symptom: the platform keeps answering `503` for ordinary requests, even for a bare `SELECT 1`
+(`database-status`), while the sleep manager (Medalhão) is already stopped. A container restart
+does not clear it, because the blockage is a database slot held by a connection that was never
+checked back in, not a container state.
+
+The agent must recover this without asking the user to restart the service. Read the slot inventory
+first, release only the slot that is actually stuck, and confirm the database came back:
 
 ```powershell
-python .\scripts\rejoinbi.py studio-inventory --output .\bi-data-inventory.json
-python .\scripts\rejoinbi.py studio-inventory --project-id 1 --include-raw
-python .\scripts\rejoinbi.py data-engine inventory --project-uid projeto-uid
+# 1. Inspect: who holds each slot, for how long, and when the lease expires.
+python .\scripts\rejoinbi.py system-admin database-slots --operation-scope system
+
+# 2. Release the stuck slot (destructive: requires --yes and an explicit --tenant).
+python .\scripts\rejoinbi.py system-admin database-force-release --slot-id 12345 --yes --operation-scope system
+
+# 3. Confirm recovery (runs SELECT 1 through db_health_manager).
+python .\scripts\rejoinbi.py system-admin database-status --operation-scope system
 ```
 
-The inventory links each BI Studio project to project-scoped Data Engine resources:
+Rules for this flow:
 
-- Data Engine service status and SQL Server driver availability.
+- `database-slots` is read-only. `database-force-release` is destructive, needs `--yes`, and needs
+  an explicit tenant (`--tenant` or `--use-active-tenant`) like any other mutating command.
+- Release by `slot_id`, never "release everything". A slot whose `age_s` is close to
+  `expires_in_s` is about to be reaped automatically; wait and re-check before forcing.
+- `slot_id` is only valid while the slot exists. A `404` ("Slot não encontrado ou já liberado")
+  means the reaper already freed it; re-run `database-slots` instead of retrying the release.
+- If `database-slots` itself fails with `platform_database_busy`, the platform is still locked at
+  the connection layer. Report that state instead of guessing; a server-side restart is the last
+  resort, not the first step.
+
+Before answering what exists in creating a linked dataset, changing repository files, or publishing a BI project, run the read-only inventory:
+
+```powershell
+```
+
 - Project session status.
 - Database connections, with credentials and connection strings redacted.
 - Repository tree and global context.
 - Datasets and uploaded files.
 
-Use the inventory as the first source of truth for "o que tem no BI Studio" or "o que tem no Data Engine". It is safe for summaries because password, token, key, secret, credential, and connection-string fields are redacted. Use `--include-raw` only when troubleshooting because it includes sanitized endpoint payloads.
-
-Data Engine session, repository, and dataset endpoints are project-scoped. Pass `--project-id`, `--project-uid`, or include `project_id/project_uid` in the JSON payload so the plugin validates the request before reaching the platform API.
-
 Repository upload coverage includes sheet inspection and upload for Excel/CSV/SQLite-style source files:
 
 ```powershell
-python .\scripts\rejoinbi.py data-engine repository-inspect-sheets --file .\dados.xlsx
-python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br data-engine repository-upload --project-id "Projeto" --file .\dados.xlsx --folder codex --selected-sheet "Visão Geral" --yes
 ```
-
-BI Studio exports may contain localized display names with non-ASCII slugs. Before uploading an extracted BI export to a workspace, run `bi-normalize-export --path <folder> --remove-old`; then bind platform pages with localized visible names but ASCII `arquivo` and `rota`. This command also adds `pyarrow>=16.0.0` when parquet materialized Data Engine files are present.
 
 ## Safety Notes
 

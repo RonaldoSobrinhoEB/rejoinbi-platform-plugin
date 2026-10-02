@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -23,10 +24,12 @@ class FakeUploadClient:
         *,
         base_url: str,
         fail_paths: set[str] | None = None,
+        transient_failures: dict[str, int] | None = None,
         finish_status_failures: int = 0,
     ):
         self.base_url = base_url
         self.fail_paths = fail_paths or set()
+        self.transient_failures = dict(transient_failures or {})
         self.finish_status_failures = finish_status_failures
         self.calls: list[tuple[str, str, dict]] = []
         self.session_id = "c1d9cc97-02a5-470a-987f-7e911a781b9b"
@@ -40,6 +43,9 @@ class FakeUploadClient:
         if path == "/plataforma/api/upload-chunk":
             relative = kwargs["data"]["rel_path"]
             if relative in self.fail_paths:
+                raise plugin.RejoinBIError("POST /plataforma/api/upload-chunk failed with HTTP 502: gateway")
+            if self.transient_failures.get(relative, 0) > 0:
+                self.transient_failures[relative] -= 1
                 raise plugin.RejoinBIError("POST /plataforma/api/upload-chunk failed with HTTP 502: gateway")
             return {"success": True}, None
         if path == "/plataforma/api/upload-skip-file":
@@ -64,6 +70,28 @@ class FakeUploadClient:
 
 
 class UploadResilienceTests(unittest.TestCase):
+    def test_folder_upload_retries_transient_502_chunk_failures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "transient.txt"
+            path.write_text("retry me", encoding="utf-8")
+            client = FakeUploadClient(
+                base_url=f"https://retry-{Path(temporary).name}.rejoinbi.com.br",
+                transient_failures={"transient.txt": 3},
+            )
+
+            with patch.object(plugin.time, "sleep") as sleep_mock:
+                result = plugin.upload_entries_chunked(
+                    client,
+                    {"id": 59, "name": "test"},
+                    [(path, "transient.txt")],
+                    on_file_error="fail",
+                )
+
+            chunk_calls = [call for call in client.calls if call[1] == "/plataforma/api/upload-chunk"]
+            self.assertEqual(len(chunk_calls), 4)
+            self.assertEqual(sleep_mock.call_count, 3)
+            self.assertEqual(result["summary"]["uploaded_files"], 1)
+
     def test_folder_upload_keeps_hidden_cache_compiled_and_archive_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "project"

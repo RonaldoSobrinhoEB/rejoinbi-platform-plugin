@@ -33,7 +33,18 @@ function applyRls(rows, config) {
   if (!active) {
     return { rows, column, allowed, active: false };
   }
-  const filtered = rows.filter((row) => allowed.includes(String(row[column] ?? "")));
+  // Multi-coluna: valores_por_coluna = { coluna: [valores permitidos] } — filtro AND.
+  const multi = config?.valores_por_coluna && typeof config.valores_por_coluna === "object"
+    ? Object.entries(config.valores_por_coluna)
+        .map(([col, vals]) => ({ col: String(col), vals: Array.isArray(vals) ? vals.map(String) : [] }))
+        .filter((entry) => entry.col && entry.vals.length)
+    : [];
+  let filtered;
+  if (multi.length) {
+    filtered = rows.filter((row) => multi.every(({ col, vals }) => vals.includes(String(row[col] ?? ""))));
+  } else {
+    filtered = rows.filter((row) => allowed.includes(String(row[column] ?? "")));
+  }
   return { rows: filtered, column, allowed, active: true };
 }
 
@@ -46,7 +57,13 @@ async function loadRlsConfig() {
     throw new Error(`RLS HTTP ${response.status}`);
   }
   const payload = await response.json();
-  return payload.rls_config || {};
+  // Fail-closed: resposta inesperada ou sem rls_config NUNCA deve ser
+  // tratada como "RLS inativo" (isso exibiria todas as linhas).
+  // A plataforma responde status 'success' (modules/rls.py); aceite tambem 'ok'.
+  if (!payload || (payload.status !== "success" && payload.status !== "ok") || !payload.rls_config || typeof payload.rls_config !== "object") {
+    throw new Error((payload && payload.message) || "Resposta RLS inesperada — dados bloqueados por segurança");
+  }
+  return payload.rls_config;
 }
 
 async function loadData() {
