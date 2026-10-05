@@ -48,7 +48,7 @@ SESSION_DIR = APP_HOME / "sessions"
 CONFIG_PATH = APP_HOME / "config.json"
 DEFAULT_DOMAIN = "rejoinbi.com.br"
 # Mantenha em sincronia com .codex-plugin/plugin.json (version).
-PLUGIN_VERSION = "0.4.41"
+PLUGIN_VERSION = "0.4.42"
 DEFAULT_TIMEOUT = 120
 UPLOAD_SESSION_RESUME_MAX_AGE_SECONDS = 24 * 60 * 60
 SAFE_PROFILE_COMMANDS = {"auth", "browser-login", "connect", "ensure", "ensure-connected", "login", "status", "tenant", "tenants"}
@@ -2957,6 +2957,15 @@ def apply_selected_upload_files(
 
 
 def cmd_upload_files(args: argparse.Namespace) -> int:
+    entries = build_individual_upload_entries(args)
+    root_value = getattr(args, "source_root", None)
+    source_root = Path(root_value).expanduser().resolve() if root_value else None
+    plan = build_upload_plan(args, entries, source_root=source_root, mode="selected-files")
+    if getattr(args, "dry_run", False):
+        print_payload(plan, as_json=True)
+        return 0
+    report_upload_entry_destinations(entries, context="upload-files")
+    data_findings = confirm_sensitive_data_files(args, entries, context="Upload de arquivos selecionados")
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
     if args.workspace_password:
@@ -2966,8 +2975,6 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
             json={"container_id": workspace.get("id"), "password": args.workspace_password},
             timeout=60,
         )
-    entries = build_individual_upload_entries(args)
-    data_findings = confirm_sensitive_data_files(args, entries, context="Upload de arquivos selecionados")
     upload = upload_entries_chunked(
         client,
         workspace,
@@ -2981,9 +2988,10 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         client,
         workspace,
         upload["summary"].get("session_id"),
-        [target for _source, target in entries],
+        [item["path"] for item in upload["files"]],
         timeout=args.timeout,
     )
+    verification = verify_uploaded_plan(client, workspace, plan, upload, args)
     restart = None
     if args.restart:
         restart, _ = client.request(
@@ -2996,6 +3004,8 @@ def cmd_upload_files(args: argparse.Namespace) -> int:
         "workspace": {"id": workspace.get("id"), "name": workspace.get("name")},
         "upload": upload,
         "apply": apply_result,
+        "plan": plan,
+        "verification": verification,
         "data_file_confirmation": data_findings,
         "restart": restart,
         "preserved_existing_files": True,
@@ -3061,6 +3071,8 @@ def parse_upload_path_mappings(values: list[str] | None, *, label: str, target_i
         source = source.strip()
         if not source:
             raise RejoinBIError(f"Invalid {label} value: source cannot be empty.")
+        if source in mappings:
+            raise RejoinBIError(f"Duplicate {label} source: {source}")
         mappings[source] = normalize_upload_relative_path(
             target,
             field=f"{label} destination",
@@ -3069,12 +3081,57 @@ def parse_upload_path_mappings(values: list[str] | None, *, label: str, target_i
     return mappings
 
 
-def mapping_value_for_path(mappings: dict[str, str], path: Path) -> str | None:
-    candidates = (str(path), str(path).replace("\\", "/"), path.name)
-    for candidate in candidates:
-        if candidate in mappings:
-            return mappings[candidate]
-    return None
+def resolve_upload_mappings(
+    mappings: dict[str, str],
+    sources: list[tuple[str, Path]],
+    *,
+    source_root: Path | None,
+    label: str,
+) -> dict[Path, str]:
+    """Bind every mapping to exactly one selected source; never ignore a typo."""
+    resolved: dict[Path, str] = {}
+    for key, target in mappings.items():
+        key_posix = key.replace("\\", "/")
+        matches: set[Path] = set()
+        for raw, source in sources:
+            candidates = {raw.replace("\\", "/"), str(source).replace("\\", "/")}
+            if source_root is not None:
+                candidates.add(source.relative_to(source_root).as_posix())
+            if "/" not in key_posix:
+                candidates.add(source.name)
+            if key_posix in candidates:
+                matches.add(source)
+        if not matches:
+            supplied = Path(key).expanduser()
+            roots = [source_root, Path.cwd()] if source_root else [Path.cwd()]
+            possible = {
+                (supplied if supplied.is_absolute() else root / supplied).resolve()
+                for root in roots if root is not None
+            }
+            matches = {source for _raw, source in sources if source in possible}
+        if len(matches) != 1:
+            problem = "ambiguous" if matches else "does not match a selected file"
+            raise RejoinBIError(
+                f"[UPLOAD_PATH_MAPPING] {label} source '{key}' {problem}. "
+                "Use the exact project-relative or absolute source path, not a shared basename."
+            )
+        source = matches.pop()
+        if source in resolved:
+            raise RejoinBIError(f"Multiple {label} mappings refer to the same source: {source}")
+        resolved[source] = target
+    return resolved
+
+
+def ensure_no_upload_root_drop(source: Path, target: str, root: Path | None, args: argparse.Namespace) -> None:
+    if root is None or "/" in target or getattr(args, "allow_root_drop", False):
+        return
+    relative = source.relative_to(root)
+    if relative.parent != Path("."):
+        raise RejoinBIError(
+            f"[UPLOAD_ROOT_DROP] '{relative.as_posix()}' would become '{target}' at the workspace app root. "
+            "Keep the subfolder in --target-path/--changed-target-path. "
+            "Use --allow-root-drop only for an explicitly requested relocation to the root."
+        )
 
 
 def build_individual_upload_entries(args: argparse.Namespace) -> list[tuple[Path, str]]:
@@ -3085,36 +3142,60 @@ def build_individual_upload_entries(args: argparse.Namespace) -> list[tuple[Path
             raise RejoinBIError(f"File not found: {path}")
         paths.append(path)
 
-    source_root = Path(args.source_root).expanduser().resolve() if args.source_root else None
-    preserve_paths = bool(args.preserve_paths or source_root)
-    if preserve_paths and source_root is None:
-        source_root = Path(os.path.commonpath([str(path.parent) for path in paths])).resolve()
+    if not paths:
+        raise RejoinBIError("No files selected to upload.")
+    if len(set(paths)) != len(paths):
+        raise RejoinBIError("The same source file was selected more than once.")
+    source_root_value = getattr(args, "source_root", None)
+    source_root = Path(source_root_value).expanduser().resolve() if source_root_value else None
     if source_root is not None and not source_root.is_dir():
         raise RejoinBIError(f"Source root is not a folder: {source_root}")
-
-    folder_by_source = parse_upload_path_mappings(args.map, label="--map", target_is_file=False)
-    target_by_source = parse_upload_path_mappings(args.target_path, label="--target-path", target_is_file=True)
-    base_folder = normalize_upload_relative_path(args.folder, field="--folder", allow_empty=True)
+    if source_root is not None:
+        for path in paths:
+            try:
+                path.relative_to(source_root)
+            except ValueError as exc:
+                raise RejoinBIError(f"Selected file is outside --source-root: {path}") from exc
+    sources = list(zip([str(value) for value in args.files], paths))
+    folder_by_source = resolve_upload_mappings(
+        parse_upload_path_mappings(getattr(args, "map", None), label="--map", target_is_file=False),
+        sources, source_root=source_root, label="--map",
+    )
+    target_by_source = resolve_upload_mappings(
+        parse_upload_path_mappings(getattr(args, "target_path", None), label="--target-path", target_is_file=True),
+        sources, source_root=source_root, label="--target-path",
+    )
+    base_folder = normalize_upload_relative_path(getattr(args, "folder", ""), field="--folder", allow_empty=True)
+    if getattr(args, "preserve_paths", False) and source_root is None and len(target_by_source) != len(paths):
+        raise RejoinBIError(
+            "[UPLOAD_SOURCE_ROOT_REQUIRED] --preserve-paths requires --source-root. "
+            "The common parent of selected files is not necessarily the project root."
+        )
     entries: list[tuple[Path, str]] = []
     used_targets: dict[str, Path] = {}
     for path in paths:
-        explicit_target = mapping_value_for_path(target_by_source, path)
+        explicit_target = target_by_source.get(path)
         if explicit_target:
             target = explicit_target
         else:
-            target_folder = mapping_value_for_path(folder_by_source, path)
+            target_folder = folder_by_source.get(path)
             if target_folder is None:
                 target_folder = base_folder
-            if preserve_paths:
-                try:
-                    relative_parent = path.relative_to(source_root).parent
-                except ValueError as exc:
-                    raise RejoinBIError(f"Selected file is outside --source-root: {path}") from exc
+            if source_root is None and not target_folder:
+                raise RejoinBIError(
+                    f"[UPLOAD_SOURCE_ROOT_REQUIRED] Destination is not explicit for {path}. "
+                    "Pass --source-root <project-root> to preserve subfolders, "
+                    "or --target-path <source>=<relative/destination>. "
+                    "The plugin will not infer a root destination from the filename."
+                )
+            if source_root is not None:
+                relative_parent = path.relative_to(source_root).parent
                 if relative_parent != Path("."):
                     relative_folder = normalize_upload_relative_path(relative_parent.as_posix(), field="source relative folder")
                     target_folder = "/".join(part for part in (target_folder, relative_folder) if part)
             target = "/".join(part for part in (target_folder, path.name) if part)
             target = normalize_upload_relative_path(target, field="target file path")
+        ensure_no_upload_root_drop(path, target, source_root, args)
         collision_key = target.casefold()
         previous = used_targets.get(collision_key)
         if previous and previous != path:
@@ -3125,6 +3206,64 @@ def build_individual_upload_entries(args: argparse.Namespace) -> list[tuple[Path
         used_targets[collision_key] = path
         entries.append((path, target))
     return entries
+
+
+def report_upload_entry_destinations(entries: list[tuple[Path, str]], *, context: str) -> None:
+    """Print a compact source -> workspace-destination map for the requester to review."""
+    print(f"\n[DESTINATION-MAP] {context}", file=sys.stderr)
+    for source, target in entries:
+        print(f"  {source}  ->  {target}", file=sys.stderr)
+
+
+def build_upload_plan(
+    args: argparse.Namespace, entries: list[tuple[Path, str]], *, source_root: Path | None, mode: str,
+) -> dict[str, Any]:
+    """Local path/content proof. Planning never creates a platform client."""
+    if not entries:
+        raise RejoinBIError("No files found to upload.")
+    files = []
+    for source, target in entries:
+        before = source.stat()
+        digest = hashlib.sha256()
+        with source.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        after = source.stat()
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise RejoinBIError(f"File changed while planning the upload: {source}. Retry the local plan.")
+        files.append({
+            "source": str(source), "target": target, "size": after.st_size,
+            "sha256": digest.hexdigest(), "data_reason": sensitive_data_upload_reason(source),
+        })
+    contract = {
+        "schema_version": 1, "command": getattr(args, "command", ""),
+        "mode": mode, "destination_base": "workspace/app",
+        "source_root": str(source_root) if source_root else None,
+        "workspace_selector": getattr(args, "workspace", None),
+        "tenant": getattr(args, "tenant", None) or getattr(args, "base_url", None),
+        "files": files,
+    }
+    plan_hash = hashlib.sha256(json.dumps(contract, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    expected = str(getattr(args, "expected_plan_sha256", "") or "").strip().lower()
+    if expected and expected != plan_hash:
+        raise RejoinBIError(
+            "[UPLOAD_PLAN_CHANGED] File bytes, paths, or target differ from the reviewed plan. "
+            "Run --dry-run again and review the new plan before uploading."
+        )
+    plan = {
+        **contract, "plan_sha256": plan_hash, "success": True,
+        "dry_run": bool(getattr(args, "dry_run", False)), "remote_verified": False,
+        "count": len(files), "total_bytes": sum(item["size"] for item in files),
+    }
+    output = getattr(args, "plan_output", None)
+    if output:
+        output_path = Path(output).expanduser().resolve()
+        if source_root and (output_path == source_root or source_root in output_path.parents):
+            raise RejoinBIError("--plan-output must be outside the upload source root so it cannot be uploaded itself.")
+        if output_path in {source for source, _target in entries}:
+            raise RejoinBIError("--plan-output cannot overwrite a selected source file.")
+        write_json(output_path, plan)
+    return plan
 
 
 def database_upload_reason(path: Path) -> str:
@@ -3253,7 +3392,7 @@ def build_deploy_changed_upload_entries(
     root = app_root.expanduser().resolve()
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
-    target_by_source = parse_upload_path_mappings(
+    raw_mappings = parse_upload_path_mappings(
         getattr(args, "changed_target_path", None),
         label="--changed-target-path",
         target_is_file=True,
@@ -3261,6 +3400,7 @@ def build_deploy_changed_upload_entries(
     entries: list[tuple[Path, str]] = []
     seen_sources: set[Path] = set()
     used_targets: dict[str, Path] = {}
+    sources: list[tuple[str, Path]] = []
 
     for raw_value in raw_files:
         raw_path = str(raw_value or "").strip()
@@ -3279,24 +3419,17 @@ def build_deploy_changed_upload_entries(
         if source_path in seen_sources:
             raise RejoinBIError(f"Changed file was selected more than once: {source_path}")
         seen_sources.add(source_path)
-
+        sources.append((raw_path, source_path))
+    target_by_source = resolve_upload_mappings(
+        raw_mappings, sources, source_root=root, label="--changed-target-path",
+    )
+    for raw_path, source_path in sources:
         relative_target = normalize_upload_relative_path(
-            relative_path.as_posix(),
+            source_path.relative_to(root).as_posix(),
             field="changed file relative path",
         )
-        explicit_target = None
-        for candidate in (
-            raw_path,
-            raw_path.replace("\\", "/"),
-            str(source_path),
-            str(source_path).replace("\\", "/"),
-            relative_target,
-            source_path.name,
-        ):
-            if candidate in target_by_source:
-                explicit_target = target_by_source[candidate]
-                break
-        target = explicit_target or relative_target
+        target = target_by_source.get(source_path) or relative_target
+        ensure_no_upload_root_drop(source_path, target, root, args)
         target_key = target.casefold()
         previous_source = used_targets.get(target_key)
         if previous_source and previous_source != source_path:
@@ -3306,8 +3439,54 @@ def build_deploy_changed_upload_entries(
             )
         used_targets[target_key] = source_path
         entries.append((source_path, target))
-    confirm_sensitive_data_files(args, entries, context="Incremental deployment")
+    if not getattr(args, "dry_run", False):
+        confirm_sensitive_data_files(args, entries, context="Incremental deployment")
     return entries
+
+
+def build_folder_upload_entries(root: Path) -> list[tuple[Path, str]]:
+    if not root.is_dir():
+        raise RejoinBIError(f"Folder not found: {root}")
+    entries = []
+    for path in iter_folder_files(root, set()):
+        try:
+            path.resolve().relative_to(root)
+        except ValueError as exc:
+            raise RejoinBIError(f"Upload source resolves outside the project root: {path}") from exc
+        entries.append((path, normalize_upload_relative_path(path.relative_to(root).as_posix())))
+    if not entries:
+        raise RejoinBIError("No files found to upload.")
+    return entries
+
+
+def verify_uploaded_plan(
+    client: RejoinBIClient, workspace: dict[str, Any], plan: dict[str, Any],
+    upload: dict[str, Any], args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Optional exact remote content proof, before restart or page changes."""
+    if not getattr(args, "verify_upload", False):
+        return {"performed": False, "success": None, "note": "Use --verify-upload or workspace-file read to compare remote SHA-256."}
+    uploaded_targets = {item["path"] for item in upload["files"]}
+    results = []
+    for item in plan["files"]:
+        if item["target"] not in uploaded_targets:
+            continue
+        data, _ = client.request(
+            "GET", "/plataforma/api/workspace-file",
+            params={"container_id": workspace.get("id"), "path": item["target"]},
+            timeout=max(60, int(args.timeout)),
+        )
+        matches = bool(
+            isinstance(data, dict) and data.get("success")
+            and data.get("path") == item["target"] and data.get("sha256") == item["sha256"]
+        )
+        results.append({"path": item["target"], "sha256": data.get("sha256") if isinstance(data, dict) else None, "matches": matches})
+        if not matches:
+            raise RejoinBIError(
+                f"[UPLOAD_VERIFY_MISMATCH] Applied upload could not be verified at '{item['target']}'. "
+                "The workspace may already contain the applied files. Inspect that exact path before retrying or restarting."
+            )
+    return {"performed": True, "success": True, "files": results}
 
 
 def upload_error_retryable(error: Exception) -> bool:
@@ -3793,10 +3972,7 @@ def upload_folder_chunked(
     if not root.is_dir():
         raise RejoinBIError(f"Folder not found: {root}")
     # Keep the compatibility argument but never let it omit project content.
-    paths = iter_folder_files(root, set(), allow_sensitive=allow_sensitive)
-    if not paths:
-        raise RejoinBIError("No files found to upload.")
-    entries = [(path, path.relative_to(root).as_posix()) for path in paths]
+    entries = build_folder_upload_entries(root)
     safety_args = argparse.Namespace(
         allow_database_files=allow_database_files,
         allow_data_files=allow_data_files,
@@ -3910,13 +4086,18 @@ def select_app_file(
 
 
 def cmd_upload_folder_select(args: argparse.Namespace) -> int:
+    root = Path(args.path).expanduser().resolve()
+    entries = build_folder_upload_entries(root)
+    plan = build_upload_plan(args, entries, source_root=root, mode="full")
+    if getattr(args, "dry_run", False):
+        print_payload(plan, as_json=True)
+        return 0
+    report_upload_entry_destinations(entries, context="upload-folder-select")
+    confirm_sensitive_data_files(args, entries, context="Upload da pasta do projeto")
     client = make_client(args)
     workspace = resolve_workspace(client, args.workspace)
     if args.workspace_password:
         client.request("POST", "/plataforma/api/validate-container-password", json={"container_id": workspace.get("id"), "password": args.workspace_password})
-    root = Path(args.path).expanduser().resolve()
-    if not root.is_dir():
-        raise RejoinBIError(f"Folder not found: {root}")
     upload = upload_folder_chunked(
         client,
         workspace,
@@ -3932,8 +4113,10 @@ def cmd_upload_folder_select(args: argparse.Namespace) -> int:
     )
     result = select_app_file(client, workspace, upload["files"], args)
     result["upload"] = upload["summary"]
+    result["plan"] = plan
+    result["preserved_existing_files"] = False
     print_payload(result, as_json=args.json)
-    return 0
+    return 0 if result.get("success") else 1
 
 
 
@@ -5173,11 +5356,13 @@ def require_deploy_upload_mode(args: argparse.Namespace) -> str:
     changed_files = list(getattr(args, "changed_file", None) or [])
     changed_targets = list(getattr(args, "changed_target_path", None) or [])
     if upload_mode == "full":
-        if changed_files or changed_targets or getattr(args, "allow_database_files", False) or getattr(args, "allow_data_files", False):
+        if changed_files or changed_targets:
             raise RejoinBIError(
-                "--changed-file, --changed-target-path, and data-file approval flags are only valid with "
+                "--changed-file and --changed-target-path are only valid with "
                 "--upload-mode changed-files."
             )
+        if getattr(args, "verify_upload", False):
+            raise RejoinBIError("--verify-upload verifies selected files; use it with --upload-mode changed-files.")
         return upload_mode
 
     if not changed_files:
@@ -7177,7 +7362,6 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
     text_errors = manifest_text_integrity_errors(manifest)
     if text_errors:
         raise RejoinBIError("Manifest text integrity check failed:\n- " + "\n- ".join(text_errors))
-    client = make_client(args)
     app_root = Path(args.path).expanduser().resolve() if args.path else (manifest_path.parent / str(manifest.get("app_root") or ".")).resolve()
     workspace_cfg = manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
     upload_cfg = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else {}
@@ -7202,26 +7386,17 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             "replace_pages from the command or manifest, or upload only the changed files."
         )
 
+    if args.workspace is None:
+        args.workspace = str(workspace_name)
+    entries = build_folder_upload_entries(app_root) if upload_mode == "full" else build_deploy_changed_upload_entries(args, app_root)
+    plan = build_upload_plan(args, entries, source_root=app_root, mode=upload_mode)
+    if getattr(args, "dry_run", False):
+        print_payload(plan, as_json=True)
+        return 0
+    report_upload_entry_destinations(entries, context=f"deploy-manifest {upload_mode}")
     if upload_mode == "full":
-        # Review database/data artifacts before create-workspace or any other
-        # remote mutation. The upload helper repeats this check immediately
-        # before sending, so a changed local tree cannot bypass the guard.
-        preflight_exclude = {
-            str(item).casefold()
-            for item in (upload_cfg.get("exclude") or [])
-            if str(item).strip()
-        }
-        preflight_paths = iter_folder_files(
-            app_root,
-            preflight_exclude,
-            allow_sensitive=bool(getattr(args, "allow_sensitive_files", False)),
-        )
-        confirm_sensitive_data_files(
-            args,
-            [(path, path.relative_to(app_root).as_posix()) for path in preflight_paths],
-            context="Full deployment preflight",
-        )
-
+        confirm_sensitive_data_files(args, entries, context="Full deployment preflight")
+    client = make_client(args)
     workspace = create_workspace_if_needed(
         client,
         workspace_name,
@@ -7254,9 +7429,12 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             allow_data_files=bool(args.allow_data_files),
         )
         upload_result["mode"] = "full"
-        upload_result["preserved_existing_files"] = True
+        upload_result["preserved_existing_files"] = False
+        if not upload_result.get("success"):
+            print_payload({"success": False, "plan": plan, "upload": upload_result}, as_json=args.json)
+            return 1
     elif upload_mode == "changed-files":
-        changed_entries = build_deploy_changed_upload_entries(args, app_root)
+        changed_entries = entries
         changed_upload = upload_entries_chunked(
             client,
             workspace,
@@ -7270,9 +7448,10 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             client,
             workspace,
             changed_upload["summary"].get("session_id"),
-            [target for _source, target in changed_entries],
+            [item["path"] for item in changed_upload["files"]],
             timeout=args.timeout,
         )
+        verification = verify_uploaded_plan(client, workspace, plan, changed_upload, args)
         restart = None
         if getattr(args, "restart_after_upload", False):
             restart, _ = client.request(
@@ -7287,6 +7466,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             "selected_files": [target for _source, target in changed_entries],
             "upload": changed_upload["summary"],
             "apply": changed_apply,
+            "verification": verification,
             "restart": restart,
             "automatic_app_reselection": False,
             "note": (
@@ -7333,6 +7513,7 @@ def cmd_deploy_manifest(args: argparse.Namespace) -> int:
             "pages_preserved": not sync_pages,
         },
         "upload": upload_result,
+        "plan": plan,
         "pages": page_results,
         "menu_refresh": menu_refresh,
         "page_readiness": page_readiness,
@@ -7915,6 +8096,14 @@ def build_parser() -> argparse.ArgumentParser:
             help="Required acknowledgement for explicit users, permissions, or permission-groups work.",
         )
 
+    def add_upload_plan_args(command_parser: argparse.ArgumentParser, *, selected: bool = False) -> None:
+        command_parser.add_argument("--dry-run", action="store_true", help="Build a LOCAL source -> workspace/app path and SHA-256 plan; no authentication or remote requests")
+        command_parser.add_argument("--plan-output", help="Write the local JSON plan outside the upload root")
+        command_parser.add_argument("--expected-plan-sha256", help="Abort before remote access if paths or file bytes differ from this reviewed plan hash")
+        if selected:
+            command_parser.add_argument("--allow-root-drop", action="store_true", help="Allow an explicitly requested nested file relocation to the app root; never needed for normal preservation")
+            command_parser.add_argument("--verify-upload", action="store_true", help="After selected files are applied, compare exact remote path and SHA-256 before restart")
+
     for name in ("connect", "login"):
         p = sub.add_parser(name, help="Authenticate and save Rejoin BI session cookies. Opens a browser wizard if no password is provided.")
         p.add_argument("--email")
@@ -8076,6 +8265,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_workspace_stop_all)
 
     p = sub.add_parser("upload-files", help="Upload selected files in resumable chunks without replacing files not selected")
+    add_upload_plan_args(p, selected=True)
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--files", nargs="+", required=True)
     p.add_argument("--folder", default="", help="Base destination folder inside the workspace app folder")
@@ -8083,7 +8273,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--map", action="append", help="source-or-filename=target/folder mapping (kept for compatibility)")
     p.add_argument("--target-path", action="append", help="source-or-filename=target/path.ext mapping; preserves distinct duplicate filenames")
     p.add_argument("--source-root", help="Project root used to preserve each selected file's relative folder")
-    p.add_argument("--preserve-paths", action="store_true", help="Derive and preserve the selected files' common relative folder structure")
+    p.add_argument("--preserve-paths", action="store_true", help="Compatibility alias: requires --source-root; never infer a common project root")
     p.add_argument("--restart", action="store_true")
     p.add_argument("--workspace-password")
     p.add_argument("--allow-sensitive-files", action="store_true", help="Deprecated compatibility flag; every file name and extension inside the user's project is uploaded")
@@ -8096,6 +8286,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_upload_files)
 
     p = sub.add_parser("upload-folder-select", help="Upload a project folder in resumable chunks, then choose startup options like the UI")
+    add_upload_plan_args(p)
     p.add_argument("--workspace", required=True, help="Workspace id or name")
     p.add_argument("--path", required=True)
     p.add_argument("--exclude", action="append", default=[], help="Deprecated compatibility option; project uploads always include every file in the selected folder")
@@ -8711,6 +8902,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_rls_export)
 
     p = sub.add_parser("deploy-manifest", help="Deploy a manifest after an explicit full-project or changed-files upload choice")
+    add_upload_plan_args(p, selected=True)
     p.add_argument("--manifest", required=True)
     p.add_argument("--path", help="App root folder. Defaults to manifest folder or manifest.app_root.")
     p.add_argument("--workspace", help="Workspace id/name override")

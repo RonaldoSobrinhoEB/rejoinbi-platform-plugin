@@ -135,6 +135,8 @@ python .\scripts\rejoinbi.py --tenant subdomain.rejoinbi.com.br upload-folder-se
 
 After upload, list files or smoke pages. Do not assume production is ready just because upload returned success.
 
+**Before any upload/deploy, the agent must read `docs/upload-path-contract.md`, print the exact `local source -> workspace destination (app_root relative)` list, and confirm it with the requester. Prefer the local plan first: `--dry-run --plan-output <outside-the-project>` for `upload-files`, `upload-folder-select`, and `deploy-manifest`; review `files[].source/target/size/sha256`. Use `--source-root <project root>` when files come from a project tree so subfolders are preserved. If a file is under `services/` or `templates/` in the origin but the computed destination has no folder, that is a prefix-loss error: stop and fix `--source-root`/`--folder`/`--target-path` before sending anything. The CLI prints `[DESTINATION-MAP]` for the resolved paths and rejects unsafe mappings with `[UPLOAD_ROOT_DROP]`, `[UPLOAD_SOURCE_ROOT_REQUIRED]`, `[UPLOAD_PATH_MAPPING]`, or `[UPLOAD_PLAN_CHANGED]`. `--verify-upload` optionally reads the exact remote paths back and compares hashes before restart.**
+
 ### Pages And Routes
 
 ```powershell
