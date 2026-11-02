@@ -95,11 +95,11 @@ The plugin ships `server/rejoinbi_mcp.py`, a stdio MCP server with no third-part
 | `rejoinbi_deploy` | Deploy a manifest; `dry_run` defaults to `true` |
 | `rejoinbi_smoke_pages` | Resolve and request every published page |
 
-Both manifests point to the single `.mcp.json`. The MCP server is standard-library only and picks the first Python interpreter that can import `requests` (`REJOINBI_PYTHON`, then the launching interpreter, then `python3`/`python`, then the Windows `py -3` launcher). When none qualifies, `rejoinbi_doctor` reports the exact remediation: `pip install -r requirements.txt` or set `REJOINBI_PYTHON`.
+The package ships two MCP manifests that declare the same local stdio server: `mcp.json` is the portable Agent Plugins manifest and the file the plugins directory reads; `.mcp.json` is the Codex desktop overlay. Keep them in sync. The MCP server is standard-library only and picks the first Python interpreter that can import `requests` (`REJOINBI_PYTHON`, then the launching interpreter, then `python3`/`python`, then the Windows `py -3` launcher). When none qualifies, `rejoinbi_doctor` reports the exact remediation: `pip install -r requirements.txt` or set `REJOINBI_PYTHON`.
 
 ## Package and sharing
 
-The repository root is the plugin artifact: `plugin.json`, `.codex-plugin/plugin.json`, `.mcp.json`, `server/`, `skills/`, `scripts/`, `docs/`, `examples/`, and the official `assets/app-icon.png`. The root `plugin.json` is the portable Agent Plugins manifest and `.codex-plugin/plugin.json` is the Codex compatibility overlay; keep both in sync. This is a desktop-only plugin, so for the public Plugins Directory upload a ZIP whose root contains a single `rejoinbi/` folder and complete review in the plugin submission portal. For Git distribution, `.agents/plugins/marketplace.json` exposes this same root as the `rejoinbi` marketplace.
+The repository root is the plugin artifact: `plugin.json`, `.codex-plugin/plugin.json`, `mcp.json`, `.mcp.json`, `server/`, `skills/`, `scripts/`, `docs/`, `examples/`, and the official `assets/app-icon.png`. The root `plugin.json` is the portable Agent Plugins manifest and `.codex-plugin/plugin.json` is the Codex compatibility overlay; keep both in sync. This is a desktop-only plugin, so for the public Plugins Directory upload a ZIP whose root contains a single `rejoinbi/` folder and complete review in the plugin submission portal. For Git distribution, `.agents/plugins/marketplace.json` exposes this same root as the `rejoinbi` marketplace.
 
 ~~~powershell
 python .\scripts\rejoinbi.py export-package

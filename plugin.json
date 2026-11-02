@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "rejoinbi",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Operate Rejoin BI workspaces, uploads, pages, and safely scoped platform administration from Codex.",
   "author": {
     "name": "Ronaldo Sobrinho",

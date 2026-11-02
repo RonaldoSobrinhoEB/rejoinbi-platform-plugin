@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 SERVER_NAME = "rejoinbi"
-SERVER_VERSION = "0.5.1"
+SERVER_VERSION = "0.5.2"
 SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 DEFAULT_PROTOCOL = "2024-11-05"
 

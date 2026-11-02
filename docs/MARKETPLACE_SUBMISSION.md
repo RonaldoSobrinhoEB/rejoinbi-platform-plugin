@@ -1,9 +1,11 @@
 # Codex Plugin Submission
 
 This repository root is the plugin artifact. `plugin.json` is the portable Agent Plugins
-manifest, `.codex-plugin/plugin.json` is the Codex compatibility overlay, both point to the
-single `.mcp.json`, and `server/rejoinbi_mcp.py` implements the local stdio server.
-Keep the two manifests in sync with that one MCP file.
+manifest, `.codex-plugin/plugin.json` is the Codex compatibility overlay, and `mcp.json` (portable Agent Plugins manifest, read by the plugins directory)
+plus `.mcp.json` (Codex overlay) declare the same local stdio server, which
+`server/rejoinbi_mcp.py` implements. Keep all four files in sync. The directory
+detects the MCP server from `mcp.json`; without it the package is treated as
+skills-only and rejected, because new skills-only submissions are closed.
 
 The plugin is desktop-only: it ships one skill, a local Python CLI, and a stdio MCP server
 that runs on the user's machine. It hosts no server and sends nothing outside the Rejoin BI
@@ -29,7 +31,7 @@ Local MCP plugins do not need MCP app review cases, a demo recording, or screens
 ## Local validation
 
 ```powershell
-python -B -c "import json,pathlib;[json.loads(pathlib.Path(p).read_text(encoding='utf-8')) for p in ('plugin.json','.codex-plugin/plugin.json','.mcp.json')]"
+python -B -c "import json,pathlib;[json.loads(pathlib.Path(p).read_text(encoding='utf-8')) for p in ('plugin.json','.codex-plugin/plugin.json','mcp.json','.mcp.json')]"
 python -B -m py_compile .\scripts\rejoinbi.py .\server\rejoinbi_mcp.py
 python -B -m pytest .\tests -q
 
