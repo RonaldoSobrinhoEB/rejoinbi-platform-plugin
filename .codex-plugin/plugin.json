@@ -1,6 +1,6 @@
 {
   "name": "rejoinbi",
-  "version": "0.4.42",
+  "version": "0.5.1",
   "requires_local_executor": true,
   "description": "Operate Rejoin BI workspaces, uploads, pages, and safely scoped platform administration from Codex.",
   "author": {
@@ -19,6 +19,7 @@
     "codex"
   ],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Rejoin BI",
     "shortDescription": "Operate Rejoin BI from Codex",

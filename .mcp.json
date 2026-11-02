@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "rejoinbi": {
+      "command": "python",
+      "args": ["${PLUGIN_ROOT}/server/rejoinbi_mcp.py"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

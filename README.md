@@ -80,9 +80,26 @@ Operational commands require their exact `--operation-scope`; local tools and au
 
 Retain authorization already given for the same purpose and target. An instruction to repair one dashboard does not expand into unrelated identity administration or deletion. Use [command-scope-map.md](docs/command-scope-map.md) for the exact parser contract and [admin-configuration-map.md](docs/admin-configuration-map.md) for supported operations.
 
+## Local MCP surface
+
+The plugin ships `server/rejoinbi_mcp.py`, a stdio MCP server with no third-party dependencies. It exposes eight tools that delegate to `scripts/rejoinbi.py`, so operation scopes, identity confirmations, and confirmation flags keep a single implementation:
+
+| Tool | Purpose |
+| --- | --- |
+| `rejoinbi_doctor` | Local prerequisites: CLI, Python, `requests`, server version |
+| `rejoinbi_run` | Any CLI command, for cases without a dedicated tool |
+| `rejoinbi_validate_app` | Validate a dashboard manifest locally before upload |
+| `rejoinbi_workspace_list` | List workspaces with `--operation-scope workspace` |
+| `rejoinbi_read_file` | Read one workspace file without downloading it |
+| `rejoinbi_upload_plan` | Dry-run an upload and return the source-to-target plan with hashes |
+| `rejoinbi_deploy` | Deploy a manifest; `dry_run` defaults to `true` |
+| `rejoinbi_smoke_pages` | Resolve and request every published page |
+
+Both manifests point to the single `.mcp.json`. The MCP server is standard-library only and picks the first Python interpreter that can import `requests` (`REJOINBI_PYTHON`, then the launching interpreter, then `python3`/`python`, then the Windows `py -3` launcher). When none qualifies, `rejoinbi_doctor` reports the exact remediation: `pip install -r requirements.txt` or set `REJOINBI_PYTHON`.
+
 ## Package and sharing
 
-The repository root is the plugin artifact: `.codex-plugin/plugin.json`, `skills/`, `scripts/`, `docs/`, `examples/`, and the official `assets/app-icon.png`. The root `plugin.json` is the portable Agent Plugins manifest and `.codex-plugin/plugin.json` is the Codex compatibility overlay; keep both in sync. For the public Plugins Directory, upload a ZIP whose root contains a single `rejoinbi/` folder and complete review in the plugin submission portal. For Git distribution, `.agents/plugins/marketplace.json` exposes this same root as the `rejoinbi` marketplace.
+The repository root is the plugin artifact: `plugin.json`, `.codex-plugin/plugin.json`, `.mcp.json`, `server/`, `skills/`, `scripts/`, `docs/`, `examples/`, and the official `assets/app-icon.png`. The root `plugin.json` is the portable Agent Plugins manifest and `.codex-plugin/plugin.json` is the Codex compatibility overlay; keep both in sync. This is a desktop-only plugin, so for the public Plugins Directory upload a ZIP whose root contains a single `rejoinbi/` folder and complete review in the plugin submission portal. For Git distribution, `.agents/plugins/marketplace.json` exposes this same root as the `rejoinbi` marketplace.
 
 ~~~powershell
 python .\scripts\rejoinbi.py export-package
