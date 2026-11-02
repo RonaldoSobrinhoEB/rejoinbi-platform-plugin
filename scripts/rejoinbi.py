@@ -7980,7 +7980,11 @@ def should_ignore_export(dir_path: str, names: list[str]) -> set[str]:
 
 
 def write_install_notes(target: Path, package_zip: Path | None) -> None:
-    zip_line = f"- Zip package with manifest at zip root: `{package_zip.name}`\n" if package_zip else ""
+    zip_line = (
+        f"- Zip package `{package_zip.name}`: its single top-level folder `{package_zip.stem}` is the plugin root.\n"
+        if package_zip
+        else ""
+    )
     notes = f"""# Rejoin BI Plugin
 
 This folder is a shareable Codex plugin package generated from:
@@ -7994,7 +7998,7 @@ Copy the `rejoinbi-platform` folder into the recipient Codex plugins folder, or 
 Typical local path:
 
 ```powershell
-$HOME\\plugins\\rejoinbi-platform
+<plugin-root>
 ```
 
 ## Configure The Platform Address
@@ -8025,7 +8029,8 @@ Actual deletion requires exact confirmation flags such as `--confirm-name`, `--c
 
 ## Package Contents
 
-- Plugin manifest: `rejoinbi-platform\\.codex-plugin\\plugin.json`
+- Portable manifest: `rejoinbi-platform\\plugin.json`
+- Codex manifest: `rejoinbi-platform\\.codex-plugin\\plugin.json`
 - Skill instructions: `rejoinbi-platform\\skills\\rejoinbi-platform\\SKILL.md`
 - CLI: `rejoinbi-platform\\scripts\\rejoinbi.py`
 - Example dashboards: `rejoinbi-platform\\examples`

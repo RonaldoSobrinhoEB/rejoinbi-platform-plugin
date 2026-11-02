@@ -35,7 +35,7 @@ If that user cannot install Git:
 4. In Codex, add a marketplace and set `Origem` to that extracted local folder.
 5. Leave `Referencia do Git` and `Caminhos esparsos` empty.
 
-The marketplace manifest is at `.agents/plugins/marketplace.json`, and the plugin lives at `plugins/rejoinbi`.
+The marketplace manifest is at `.agents/plugins/marketplace.json` and points at the repository root, which is the plugin itself; there is no nested copy.
 
 ## Quick Diagnostic
 

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "rejoinbi",
+  "version": "0.4.42",
+  "description": "Operate Rejoin BI workspaces, uploads, pages, and safely scoped platform administration from Codex.",
+  "author": {
+    "name": "Ronaldo Sobrinho",
+    "url": "https://github.com/RonaldoSobrinhoEB"
+  },
+  "homepage": "https://rejoinbi.com.br",
+  "repository": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin",
+  "license": "Proprietary",
+  "keywords": [
+    "rejoinbi",
+    "business-intelligence",
+    "dashboards",
+    "workspace",
+    "scoped-automation",
+    "codex"
+  ],
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "interface": {
+        "displayName": "Rejoin BI",
+        "shortDescription": "Operate Rejoin BI from Codex",
+        "longDescription": "Rejoin BI connects Codex to one Rejoin BI platform address so you can inspect workspaces, deploy dashboards, publish platform-managed pages, transfer project files, and work with managed databases from a single scoped CLI. It validates every upload path before sending, reads the remote file back to compare hashes, and runs page smoke checks after publication. Every remote command must declare an exact operation scope, and the areas for user records, direct permissions, and permission groups stay isolated behind an explicit identity scope and confirmation flags. Intended for Rejoin BI owners and administrators operating their own platform. The bundled CLI runs locally with Python 3.11 or newer and requires an authenticated Rejoin BI account; the plugin hosts no server and never acts outside the platform address you select.",
+        "developerName": "Ronaldo Sobrinho",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Interactive",
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://rejoinbi.com.br",
+        "privacyPolicyURL": "https://rejoinbi.com.br/privacy",
+        "supportURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin/issues",
+        "termsOfServiceURL": "https://rejoinbi.com.br/terms",
+        "defaultPrompt": [
+          "Connect to my Rejoin BI platform",
+          "List Rejoin BI workspaces",
+          "Migrate this project database to Rejoin BI"
+        ],
+        "brandColor": "#004090",
+        "composerIcon": "./assets/app-icon.png",
+        "logo": "./assets/app-icon.png"
+      }
+    }
+  }
+}

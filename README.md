@@ -82,7 +82,7 @@ Retain authorization already given for the same purpose and target. An instructi
 
 ## Package and sharing
 
-The repository root is the plugin artifact: `.codex-plugin/plugin.json`, `skills/`, `scripts/`, `docs/`, `examples/`, and the official `assets/app-icon.png`. Submit artifact type `PLUGIN`, branch `main`, sparse path empty or `.`; see the Marketplace guide for release validation.
+The repository root is the plugin artifact: `.codex-plugin/plugin.json`, `skills/`, `scripts/`, `docs/`, `examples/`, and the official `assets/app-icon.png`. The root `plugin.json` is the portable Agent Plugins manifest and `.codex-plugin/plugin.json` is the Codex compatibility overlay; keep both in sync. For the public Plugins Directory, upload a ZIP whose root contains a single `rejoinbi/` folder and complete review in the plugin submission portal. For Git distribution, `.agents/plugins/marketplace.json` exposes this same root as the `rejoinbi` marketplace.
 
 ~~~powershell
 python .\scripts\rejoinbi.py export-package

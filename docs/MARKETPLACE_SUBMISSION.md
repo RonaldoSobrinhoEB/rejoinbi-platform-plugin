@@ -1,35 +1,36 @@
-# Codex Marketplace Submission
+# Codex Plugin Submission
 
-This repository is structured as a root Codex plugin artifact.
+This repository root is the plugin artifact. `plugin.json` is the portable Agent Plugins
+manifest and `.codex-plugin/plugin.json` is the Codex compatibility overlay. Both declare
+the same identity, interface metadata, and `requires_local_executor`; keep them in sync.
 
-Use these settings when submitting:
+The plugin is skills-only: it ships one skill and a local Python CLI, hosts no server, and
+runs only on the user's machine. That is why the manifests set `requires_local_executor`,
+which lists the plugin as Desktop only in the directory.
 
-- Artifact type: `PLUGIN`
-- GitHub repository: `RonaldoSobrinhoEB/rejoinbi-platform-plugin`
-- Git reference: `main`
-- Sparse path: empty or `.`
+## Official directory submission
 
-The required plugin manifest is available at:
+1. Confirm a verified developer identity in the OpenAI Platform organization settings; the
+   submission form does not open without it.
+2. Build the submission ZIP so its root contains exactly one `rejoinbi/` folder.
+3. Upload it in the plugin submission portal, resolve the automated findings, submit for
+   review, then publish when approved.
 
-```text
-.codex-plugin/plugin.json
-```
-
-The plugin intentionally avoids duplicated marketplace wrappers such as `.agents/`, `plugins/`, and `marketplace.json` so scanners can evaluate the artifact directly.
-
-## Compatibility checklist
-
-- Root `.codex-plugin/plugin.json` exists.
-- Manifest uses strict semantic versioning.
-- Manifest includes `homepage`, `repository`, `license`, `keywords`, and interface metadata aligned with Codex plugin conventions.
-- `defaultPrompt` contains three concise prompts.
-- Icon and logo use the Rejoin BI platform icon under `assets/app-icon.png`.
-- Keep this image asset included in the plugin archive so Codex displays the correct brand icon.
-- The plugin validates with `plugin-creator/scripts/validate_plugin.py`.
+Skills-only plugins do not need MCP review cases, a demo recording, or screenshots.
 
 ## Local validation
 
 ```powershell
-python "$HOME\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py" .
-python -m py_compile .\scripts\rejoinbi.py
+python -B -c "import json,pathlib;[json.loads(pathlib.Path(p).read_text(encoding='utf-8')) for p in ('plugin.json','.codex-plugin/plugin.json')]"
+python -B -m py_compile .\scripts\rejoinbi.py
+python -B -m pytest .\tests -q
+```
+
+## Git marketplace
+
+`.agents/plugins/marketplace.json` exposes this same repository root as the `rejoinbi`
+plugin, so no second copy of the plugin exists in the tree. Add it with:
+
+```powershell
+codex plugin marketplace add RonaldoSobrinhoEB/rejoinbi-platform-plugin --ref main
 ```
