@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "rejoinbi",
+  "name": "rejoinbi-release-assistant",
   "version": "0.7.0",
   "description": "Validate Rejoin BI release packages and deployment plans with a public, read-only MCP service.",
   "author": {
