@@ -23,7 +23,7 @@
     "com.openai": {
       "interface": {
         "displayName": "Rejoin BI",
-        "shortDescription": "Validate Rejoin BI releases before you publish",
+        "shortDescription": "Validate Rejoin BI releases",
         "longDescription": "Rejoin BI connects ChatGPT and Codex to a public read-only MCP service for checking Rejoin BI plugin packages and release plans. It validates rejoinbi-app.json manifests, checks whether upload paths stay project-relative or are unsafe, explains full versus changed-files deployment choices, maps common errors to safe next steps, and returns release-readiness checklists. It does not sign into a Rejoin BI platform, access workspace or customer data, deploy dashboards, or make changes. For platform administration and deployment, use the desktop Rejoin BI plugin with your own authorized account.",
         "developerName": "Ronaldo Sobrinho",
         "category": "Developer Tools",
