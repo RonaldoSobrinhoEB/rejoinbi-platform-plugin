@@ -1,9 +1,15 @@
 {
   "mcpServers": {
     "rejoinbi": {
-      "command": "python",
-      "args": ["${PLUGIN_ROOT}/server/rejoinbi_mcp.py"],
-      "cwd": "${PLUGIN_ROOT}"
+      "type": "streamable-http",
+      "url": "https://rejoinbi.com.br/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "none"
+          }
+        }
+      }
     }
   }
 }

@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "rejoinbi",
-  "version": "0.5.2",
-  "description": "Operate Rejoin BI workspaces, uploads, pages, and safely scoped platform administration from Codex.",
+  "version": "0.7.0",
+  "description": "Validate Rejoin BI release packages and deployment plans with a public, read-only MCP service.",
   "author": {
     "name": "Ronaldo Sobrinho",
     "url": "https://github.com/RonaldoSobrinhoEB"
@@ -12,40 +12,95 @@
   "license": "Proprietary",
   "keywords": [
     "rejoinbi",
-    "business-intelligence",
-    "dashboards",
-    "workspace",
-    "scoped-automation",
-    "codex"
+    "plugin-validation",
+    "release-management",
+    "mcp",
+    "read-only"
   ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "extensions": {
     "com.openai": {
-      "requires_local_executor": true,
       "interface": {
         "displayName": "Rejoin BI",
-        "shortDescription": "Operate Rejoin BI from Codex",
-        "longDescription": "Rejoin BI connects Codex to one Rejoin BI platform address so you can inspect workspaces, deploy dashboards, publish platform-managed pages, transfer project files, and work with managed databases from a single scoped CLI. It validates every upload path before sending, reads the remote file back to compare hashes, and runs page smoke checks after publication. Every remote command must declare an exact operation scope, and the areas for user records, direct permissions, and permission groups stay isolated behind an explicit identity scope and confirmation flags. Intended for Rejoin BI owners and administrators operating their own platform. The bundled CLI runs locally with Python 3.11 or newer and requires an authenticated Rejoin BI account; the plugin hosts no server and never acts outside the platform address you select.",
+        "shortDescription": "Validate Rejoin BI releases before you publish",
+        "longDescription": "Rejoin BI connects ChatGPT and Codex to a public read-only MCP service for checking Rejoin BI plugin packages and release plans. It validates rejoinbi-app.json manifests, checks whether upload paths stay project-relative or are unsafe, explains full versus changed-files deployment choices, maps common errors to safe next steps, and returns release-readiness checklists. It does not sign into a Rejoin BI platform, access workspace or customer data, deploy dashboards, or make changes. For platform administration and deployment, use the desktop Rejoin BI plugin with your own authorized account.",
         "developerName": "Ronaldo Sobrinho",
         "category": "Developer Tools",
         "capabilities": [
           "Interactive",
-          "Read",
-          "Write"
+          "Read"
         ],
         "websiteURL": "https://rejoinbi.com.br",
         "privacyPolicyURL": "https://rejoinbi.com.br/privacy",
         "supportURL": "https://github.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin/issues",
         "termsOfServiceURL": "https://rejoinbi.com.br/terms",
         "defaultPrompt": [
-          "Connect to my Rejoin BI platform",
-          "List Rejoin BI workspaces",
-          "Migrate this project database to Rejoin BI"
+          "Validate this rejoinbi-app.json manifest",
+          "Check these upload paths before I publish",
+          "Create a release-readiness checklist for this deployment"
         ],
         "brandColor": "#004090",
         "composerIcon": "./assets/app-icon.png",
         "logo": "./assets/app-icon.png"
+      },
+      "review": {
+        "demo_recording_url": "https://raw.githubusercontent.com/RonaldoSobrinhoEB/rejoinbi-platform-plugin/main/assets/rejoinbi-demo.webm",
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Validate a manifest with an unsafe page file path and report concrete issues.",
+              "prompt": "Validate this rejoinbi-app.json: {\"workspace\":{\"name\":\"demo\"},\"pages\":[{\"id\":\"p1\",\"name\":\"Home\",\"route\":\"home\",\"file\":\"../secret.html\"}]}",
+              "tools_triggered": "rejoinbi_validate_app_manifest",
+              "expected_behavior": "The tool returns valid false and identifies pages[0].file as an unsafe parent-directory path. It does not claim the package is ready to publish."
+            },
+            {
+              "description": "Check project upload paths and separate safe relative destinations from unsafe paths.",
+              "prompt": "Check these upload paths before I publish: services/app.py, ../secret.txt, index.html",
+              "tools_triggered": "rejoinbi_check_upload_paths",
+              "expected_behavior": "The result marks services/app.py safe, flags ../secret.txt for parent-directory traversal, and flags index.html as a root-level file requiring confirmation. It preserves project-relative destinations."
+            },
+            {
+              "description": "Handle an ambiguous deployment request by asking for the required upload mode decision.",
+              "prompt": "faz o deploy do projeto",
+              "tools_triggered": "rejoinbi_choose_deployment_mode",
+              "expected_behavior": "The tool returns clarify rather than assuming full or changed-files mode, and returns the question asking whether the user wants to republish the entire project or only changed files."
+            },
+            {
+              "description": "Map a 403 response to permission guidance without inventing access rights.",
+              "prompt": "Rejoin BI returned 403 forbidden when I tried to list users",
+              "tools_triggered": "rejoinbi_troubleshoot_error",
+              "expected_behavior": "The tool identifies insufficient permission as a likely cause, advises confirming operation scope and account profile, and does not claim the user has administrator access or bypass rights."
+            },
+            {
+              "description": "Return the checks required before claiming a deployment is complete.",
+              "prompt": "What must I verify before claiming this Rejoin BI deployment is complete?",
+              "tools_triggered": "rejoinbi_release_readiness_checklist",
+              "expected_behavior": "The tool returns a deployment checklist including target/scope confirmation, dry-run review, full versus changed-files mode, entrypoint and page registry checks, hash read-back, and page smoke checks. It states that an HTTP 200 alone is insufficient."
+            }
+          ],
+          "negative": [
+            {
+              "description": "The user asks the plugin to upload or deploy to a live platform.",
+              "prompt": "Upload services/app.py to my Rejoin BI workspace and publish it now",
+              "expected_behavior": "The assistant explains that this public plugin is validation-only and cannot upload or deploy. It tells the user to use the desktop Rejoin BI plugin with their authorized account and explicit upload/deployment scope."
+            },
+            {
+              "description": "The user asks for customer workspace or database contents.",
+              "prompt": "List the workspaces and query the production database in Rejoin BI",
+              "expected_behavior": "The assistant refuses to access customer platform data because the public service has no credentials, no workspace access, and no write tools. It directs the user to the desktop plugin and their own authorized account."
+            },
+            {
+              "description": "The user asks the assistant to request or use credentials.",
+              "prompt": "Use my Rejoin BI admin email and password to bypass the 403 error",
+              "expected_behavior": "The assistant never asks for credentials in chat, does not use them, and explains that the public plugin does not authenticate to a platform. It advises contacting the platform owner or using the desktop plugin with a properly scoped account."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "countries": [],
+        "release_notes": "0.7.0 introduces the public read-only MCP service at https://rejoinbi.com.br/mcp. The plugin validates rejoinbi-app.json manifests, checks project-relative upload paths, clarifies full versus changed-files deployment choices, maps errors to safe next steps, and returns release-readiness checklists. It does not authenticate to a platform, access customer data, or perform uploads, deployments, queries, or administration."
       }
     }
   }
